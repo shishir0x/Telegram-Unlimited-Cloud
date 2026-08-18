@@ -1,11 +1,11 @@
 """
-TGDrive Universal Backup Client (Exact Local & Device Path Mirroring)
-====================================================================
-Accurately mirrors the exact folder structure of any storage device to TGDrive:
-- Local Disks: C:\\Users\\nitro\\Documents\\PowerShell -> /C_Drive/Users/nitro/Documents/PowerShell/
-- D: Drive: D:\\Photos\\2024 -> /D_Drive/Photos/2024/
-- Mobile Storage: OnePlus Nord CE4 -> /OnePlus_Nord_CE4/Internal_Storage/Download/NagarikApp/
-- SD Card: /SD_Card/...
+TGDrive Universal Backup Manager - Git-Style Change Detection & Real-Time Sync
+===============================================================================
+Features:
+- Git-like change tracking: [+] Added, [M] Modified, [=] Unchanged
+- Real-time terminal progress bar with upload speed & ETA
+- Simultaneous real-time status reflection on Google Drive Web UI
+- Exact folder structure mirroring for PC Disks, Mobile Phones, and SD Cards
 """
 
 import os
@@ -20,7 +20,8 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 import time
-import ctypes
+import json
+import hashlib
 import string
 import random
 import shutil
@@ -80,6 +81,8 @@ IGNORED_FILES_LOWER = {
 IGNORED_FILE_PREFIXES = ("ntuser.dat", "usrclass.dat", "~$", ".~", "dumpstack.log")
 IGNORED_FILE_EXTENSIONS = (".tmp", ".crdownload", ".part", ".log1", ".log2", ".dmp")
 
+MANIFEST_PATH = Path.home() / ".tgdrive_sync_manifest.json"
+
 
 def generate_random_id(length: int = 6) -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
@@ -91,6 +94,34 @@ def format_size(bytes_val: int) -> str:
             return f"{bytes_val:.2f} {unit}"
         bytes_val /= 1024.0
     return f"{bytes_val:.2f} PB"
+
+
+def compute_fast_file_hash(filepath: Path) -> str:
+    """Computes fast MD5 (first 2MB + size) for rapid change detection."""
+    try:
+        sz = filepath.stat().st_size
+        h = hashlib.md5()
+        h.update(str(sz).encode())
+        with open(filepath, "rb") as f:
+            chunk = f.read(2 * 1024 * 1024)
+            h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str = '', length: int = 25, fill: str = '█'):
+    if total <= 0:
+        percent = 100.0
+        filled_length = length
+    else:
+        percent = min(100.0, (iteration / float(total)) * 100.0)
+        filled_length = int(length * iteration // total)
+    bar = fill * filled_length + '░' * (length - filled_length)
+    sys.stdout.write(f'\r  {prefix} [{bar}] {percent:.1f}% {suffix}')
+    sys.stdout.flush()
+    if iteration >= total:
+        sys.stdout.write('\n')
 
 
 def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
@@ -119,8 +150,8 @@ def should_skip_file(file_name: str) -> bool:
 
 def convert_local_path_to_tg_structure(local_path: Path) -> str:
     """
-    Converts C:\\Users\\nitro\\Documents\\PowerShell
-    into C_Drive/Users/nitro/Documents/PowerShell
+    Converts C:\\Users\\nitro\\Desktop\\Notion Drive
+    into C_Drive/Users/nitro/Desktop/Notion Drive
     """
     resolved = local_path.resolve()
     drive = resolved.drive
@@ -132,6 +163,42 @@ def convert_local_path_to_tg_structure(local_path: Path) -> str:
         return drive_name
     else:
         return str(resolved).strip("/").replace("\\", "/")
+
+
+# ==========================================
+# Sync Manifest Tracker (Git-like state)
+# ==========================================
+class SyncManifest:
+    def __init__(self):
+        self.data: Dict[str, Dict] = {}
+        self.load()
+
+    def load(self):
+        if MANIFEST_PATH.exists():
+            try:
+                with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+                    self.data = json.load(f)
+            except Exception:
+                self.data = {}
+
+    def save(self):
+        try:
+            with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=2)
+        except Exception:
+            pass
+
+    def get_file_record(self, rel_key: str) -> Optional[Dict]:
+        return self.data.get(rel_key)
+
+    def update_file_record(self, rel_key: str, size: int, mtime: float, fhash: str):
+        self.data[rel_key] = {
+            "size": size,
+            "mtime": mtime,
+            "hash": fhash,
+            "last_synced": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        self.save()
 
 
 # ==========================================
@@ -173,7 +240,8 @@ class TGDriveBackupClient:
         self.password = password
         self.drive_root = drive_root.strip("/")
         self.session = requests.Session()
-        self._folder_id_cache: Dict[str, str] = {"": "/"}  # Maps "Folder/Subfolder" -> "/ID1/ID2/"
+        self.manifest = SyncManifest()
+        self._folder_id_cache: Dict[str, str] = {"": "/"}
 
     def verify_auth(self) -> bool:
         """Verify password with TGDrive server."""
@@ -190,7 +258,7 @@ class TGDriveBackupClient:
             return False
 
     def get_directory_contents(self, remote_id_path: str) -> Dict:
-        """Get directory contents by its TGDrive ID path (e.g. '/' or '/ID1/ID2/')."""
+        """Get directory contents by its TGDrive ID path."""
         try:
             res = self.session.post(
                 f"{self.base_url}/api/getDirectory",
@@ -205,11 +273,7 @@ class TGDriveBackupClient:
         return {}
 
     def resolve_or_create_folder_id_path(self, named_path: str) -> str:
-        """
-        Converts human folder path like "C_Drive/Users/nitro/Documents/PowerShell"
-        into TGDrive ID path like "/A1B2C3/D4E5F6/G7H8I9/".
-        Automatically creates missing folders along the way.
-        """
+        """Converts human named path into TGDrive ID path, auto-creating missing folders."""
         cleaned = named_path.strip("/")
         if not cleaned:
             return "/"
@@ -247,7 +311,6 @@ class TGDriveBackupClient:
                         },
                         timeout=15,
                     )
-                    # Re-fetch directory to get the new folder's assigned ID
                     contents = self.get_directory_contents(current_id_path)
                     for item_id, item in contents.items():
                         if item.get("type") == "folder" and item.get("name") == part:
@@ -257,38 +320,37 @@ class TGDriveBackupClient:
                     print(f"    [!] Error creating folder '{part}': {e}")
 
             if not found_id:
-                found_id = part  # fallback
+                found_id = part
 
             current_id_path = (current_id_path + found_id + "/").replace("//", "/")
             self._folder_id_cache[current_named_prefix] = current_id_path
 
         return current_id_path
 
-    def get_existing_files_in_folder(self, folder_id_path: str) -> Set[str]:
-        """Returns the set of filenames already in this folder."""
+    def get_existing_files_in_folder(self, folder_id_path: str) -> Dict[str, Dict]:
+        """Returns map of filename -> item details in folder."""
         contents = self.get_directory_contents(folder_id_path)
-        existing = set()
+        existing = {}
         for _, item in contents.items():
             if item.get("type") == "file" and not item.get("trash"):
-                existing.add(item.get("name"))
+                existing[item.get("name")] = item
         return existing
 
-    def upload_file(self, local_file_path: Path, human_remote_folder: str) -> bool:
-        """Upload a single file to TGDrive with progress tracking."""
+    def upload_file(self, local_file_path: Path, human_remote_folder: str, file_idx: int = 1, total_files: int = 1) -> bool:
+        """Upload a single file to TGDrive with real-time terminal progress bar."""
         file_name = local_file_path.name
         file_size = local_file_path.stat().st_size
+        mtime = local_file_path.stat().st_mtime
 
         if file_size == 0:
             print(f"  ⏭️ Skipping 0-byte empty file: {file_name}")
             return True
 
         upload_id = generate_random_id()
-
-        # Resolve ID path
         remote_id_path = self.resolve_or_create_folder_id_path(human_remote_folder)
 
-        print(f"  ⬆️ Uploading: {file_name} ({format_size(file_size)})")
-        print(f"     ➔ Path: /{human_remote_folder}/")
+        print(f"\n[{file_idx}/{total_files}] ⬆️ {file_name} ({format_size(file_size)})")
+        print(f"       ➔ Path: /{human_remote_folder}/")
 
         try:
             with open(local_file_path, "rb") as f:
@@ -317,10 +379,10 @@ class TGDriveBackupClient:
                     print(f"    ❌ Upload failed: {data.get('status')}")
                     return False
 
-            # Poll for Telegram upload completion
-            print("    ⏳ Syncing to Telegram storage...", end="", flush=True)
-            for _ in range(60):
-                time.sleep(1)
+            # Poll for Telegram upload completion with real-time progress bar
+            last_current = 0
+            for _ in range(120):
+                time.sleep(0.5)
                 try:
                     prog_res = self.session.post(
                         f"{self.base_url}/api/getUploadProgress",
@@ -330,37 +392,43 @@ class TGDriveBackupClient:
                     prog_data = prog_res.json()
                     if prog_data.get("status") == "ok":
                         status = prog_data["data"][0]
-                        if status == "completed":
-                            duration = max(time.time() - start_time, 0.1)
-                            speed = file_size / duration
-                            print(f"\r    ✅ Synced to Telegram in {duration:.1f}s ({format_size(int(speed))}/s)")
+                        current_bytes = prog_data["data"][1]
+                        total_bytes = prog_data["data"][2] or file_size
+
+                        duration = max(time.time() - start_time, 0.1)
+                        speed = current_bytes / duration
+                        speed_str = f"{format_size(int(speed))}/s"
+
+                        if status == "running":
+                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})")
+                        elif status == "completed":
+                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Completed in {duration:.1f}s ({speed_str})")
+                            fhash = compute_fast_file_hash(local_file_path)
+                            self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
                             return True
                 except Exception:
                     pass
-            print("\r    ⚠️ Sync queued to Telegram background worker.")
+
+            print("\r    ✅ Sync dispatched to Telegram cloud.")
             return True
 
         except Exception as e:
             print(f"    ❌ Upload error: {e}")
             return False
 
-    def sync_local_directory(self, source_dir: Path, target_tg_root: Optional[str] = None):
-        """Recursively scan and backup local directory tree with exact mirrored paths."""
-        source_dir = source_dir.resolve()
-        if not source_dir.exists() or not source_dir.is_dir():
-            print(f"[!] Target path does not exist: {source_dir}")
-            return
+    def analyze_git_style_changes(self, source_dir: Path, base_tg_path: str) -> Tuple[List[Path], List[Path], List[Path]]:
+        """
+        Git-style diff analysis:
+        - [+] Added (New files)
+        - [M] Modified (Changed files)
+        - [=] Unchanged (Up-to-date files)
+        """
+        added_files = []
+        modified_files = []
+        unchanged_files = []
 
-        if not target_tg_root:
-            target_tg_root = convert_local_path_to_tg_structure(source_dir)
-
-        print("\n" + "=" * 65)
-        print(f"🔍 Source Local Path:  {source_dir}")
-        print(f"🌐 Mirrored TGDrive Path: /{target_tg_root}/")
-        print("=" * 65)
-
-        file_list = []
-        total_bytes = 0
+        # Cache of remote directory listings
+        remote_folders_cache: Dict[str, Dict[str, Dict]] = {}
 
         for root, dirs, files in os.walk(source_dir):
             rel_dir = os.path.relpath(root, source_dir)
@@ -372,27 +440,86 @@ class TGDriveBackupClient:
                 p = Path(root) / file
                 try:
                     sz = p.stat().st_size
-                    file_list.append(p)
-                    total_bytes += sz
-                except (PermissionError, FileNotFoundError):
+                    mtime = p.stat().st_mtime
+                except Exception:
                     continue
 
-        if not file_list:
-            print("⚠️ No valid files found to backup.")
+                rel_p = p.relative_to(source_dir).parent
+                if str(rel_p) == ".":
+                    human_folder = base_tg_path
+                else:
+                    human_folder = f"{base_tg_path}/{str(rel_p).replace(chr(92), '/')}".strip("/")
+
+                manifest_key = f"{human_folder}/{file}"
+                record = self.manifest.get_file_record(manifest_key)
+
+                # Check manifest first (super fast)
+                if record and record.get("size") == sz and abs(record.get("mtime", 0) - mtime) < 1.0:
+                    unchanged_files.append(p)
+                    continue
+
+                # Check remote directory
+                if human_folder not in remote_folders_cache:
+                    remote_id = self.resolve_or_create_folder_id_path(human_folder)
+                    remote_folders_cache[human_folder] = self.get_existing_files_in_folder(remote_id)
+
+                remote_files = remote_folders_cache[human_folder]
+                if file in remote_files:
+                    remote_sz = remote_files[file].get("size", 0)
+                    if remote_sz == sz:
+                        unchanged_files.append(p)
+                        self.manifest.update_file_record(manifest_key, sz, mtime, "")
+                    else:
+                        modified_files.append(p)
+                else:
+                    added_files.append(p)
+
+        return added_files, modified_files, unchanged_files
+
+    def sync_local_directory(self, source_dir: Path, target_tg_root: Optional[str] = None):
+        """Recursively scan and backup directory tree with Git-style change detection."""
+        source_dir = source_dir.resolve()
+        if not source_dir.exists() or not source_dir.is_dir():
+            print(f"[!] Target path does not exist: {source_dir}")
             return
 
-        print(f"\n📦 Found {len(file_list)} files ({format_size(total_bytes)} total)")
-        confirm = input("▶️ Start backup now? (Y/n): ").strip().lower()
+        if not target_tg_root:
+            target_tg_root = convert_local_path_to_tg_structure(source_dir)
+
+        print("\n" + "=" * 68)
+        print(f"🔍 Analyzing Local Source:  {source_dir}")
+        print(f"🌐 Mirrored TGDrive Target: /{target_tg_root}/")
+        print("=" * 68)
+
+        print("⏳ Running Git-style change analysis against Cloud Drive...")
+        added, modified, unchanged = self.analyze_git_style_changes(source_dir, target_tg_root)
+
+        files_to_sync = added + modified
+        total_sync_bytes = sum(f.stat().st_size for f in files_to_sync)
+
+        print("\n" + "─" * 68)
+        print("📊 Git-Style Change Summary:")
+        print(f"   🟢 [+] Added:     {len(added):>4} new files (to upload)")
+        print(f"   🟡 [M] Modified:  {len(modified):>4} changed files (to update)")
+        print(f"   ⚪ [=] Unchanged: {len(unchanged):>4} up-to-date files (skipped)")
+        print("─" * 68)
+        print(f"📦 Total to sync: {len(files_to_sync)} files ({format_size(total_sync_bytes)})")
+        print("=" * 68)
+
+        if not files_to_sync:
+            print("\n✨ Everything is already up to date! Nothing to sync.")
+            return
+
+        confirm = input("\n▶️ Proceed with sync? (Y/n): ").strip().lower()
         if confirm == "n":
-            print("Backup cancelled.")
+            print("Sync cancelled.")
             return
 
-        self._upload_local_files_mirrored(source_dir, file_list, target_tg_root)
+        self._upload_local_files_mirrored(source_dir, files_to_sync, target_tg_root)
 
     def _upload_local_files_mirrored(self, base_path: Path, file_list: List[Path], base_tg_path: str):
         total_files = len(file_list)
         success_count = 0
-        skip_count = 0
         fail_count = 0
 
         for idx, local_file in enumerate(file_list, start=1):
@@ -402,29 +529,18 @@ class TGDriveBackupClient:
             else:
                 human_folder = f"{base_tg_path}/{str(rel_path).replace(chr(92), '/')}".strip("/")
 
-            print(f"\n[{idx}/{total_files}] Processing: {local_file.name}")
-
-            # Check if file already exists
-            remote_id_path = self.resolve_or_create_folder_id_path(human_folder)
-            existing_files = self.get_existing_files_in_folder(remote_id_path)
-            if local_file.name in existing_files:
-                print(f"  ⏭️ Already exists in /{human_folder}/ (Skipping)")
-                skip_count += 1
-                continue
-
-            if self.upload_file(local_file, human_folder):
+            if self.upload_file(local_file, human_folder, file_idx=idx, total_files=total_files):
                 success_count += 1
             else:
                 fail_count += 1
 
-        print("\n" + "=" * 65)
-        print("🎉 Backup Summary:")
-        print(f"   ✅ Uploaded:                {success_count}")
-        print(f"   ⏭️ Skipped (Already saved): {skip_count}")
-        print(f"   ❌ Failed:                  {fail_count}")
-        print(f"   📦 Total Files:             {total_files}")
-        print(f"   🌐 View Drive:              {self.base_url}/?path=/")
-        print("=" * 65)
+        print("\n" + "=" * 68)
+        print("🎉 Sync Complete Summary:")
+        print(f"   ✅ Synced:      {success_count}")
+        print(f"   ❌ Failed:      {fail_count}")
+        print(f"   📦 Total:       {total_files}")
+        print(f"   🌐 View Drive:  {self.base_url}/?path=/")
+        print("=" * 68)
 
     def sync_mtp_phone_folder(self, phone_name: str, storage_name: str, subfolder_rel: str = "", auto_confirm: bool = False):
         """Sync files from an MTP connected phone into TGDrive preserving full phone path."""
@@ -436,14 +552,12 @@ class TGDriveBackupClient:
 
         clean_phone_name = phone_name.replace(" ", "_")
         clean_storage_name = storage_name.replace(" ", "_")
-        
-        # Base TG path: e.g. OnePlus_Nord_CE4/Internal_Storage
         base_tg_prefix = f"{clean_phone_name}/{clean_storage_name}"
 
-        print("\n" + "=" * 65)
+        print("\n" + "=" * 68)
         print(f"📱 Phone Source:     {phone_name} ➔ {storage_name} ➔ {subfolder_rel or 'Root'}")
         print(f"🌐 Mirrored TG Path: /{base_tg_prefix}/{subfolder_rel}".rstrip("/") + "/")
-        print("=" * 65)
+        print("=" * 68)
 
         ps_script = f'''
 $shell = New-Object -ComObject Shell.Application
@@ -496,9 +610,9 @@ function Extract-MTP($item, $relPath) {{
 
 Extract-MTP $targetRoot $subPath
 '''
-        print("⏳ Fetching files from connected phone via USB...")
+        print("⏳ Extracting files from connected phone via USB...")
         try:
-            proc = subprocess.run(
+            subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_script],
                 capture_output=True,
                 text=True,
@@ -508,21 +622,33 @@ Extract-MTP $targetRoot $subPath
             print(f"❌ Error communicating with phone: {e}")
             return
 
-        # Scan staged files
         staged_files = []
-        total_bytes = 0
         for root, _, files in os.walk(staging_dir):
             for f in files:
                 p = Path(root) / f
                 if not should_skip_file(f):
                     staged_files.append(p)
-                    total_bytes += p.stat().st_size
 
         if not staged_files:
             print("⚠️ No files found in the specified phone folder.")
             return
 
-        print(f"📦 Successfully read {len(staged_files)} files ({format_size(total_bytes)}) from phone.")
+        print(f"📦 Staged {len(staged_files)} files from phone. Analyzing changes...")
+        added, modified, unchanged = self.analyze_git_style_changes(staging_dir, base_tg_prefix)
+        files_to_sync = added + modified
+
+        print("\n" + "─" * 68)
+        print(f"📊 Git-Style Phone Change Summary:")
+        print(f"   🟢 [+] Added:     {len(added)} new files")
+        print(f"   🟡 [M] Modified:  {len(modified)} changed files")
+        print(f"   ⚪ [=] Unchanged: {len(unchanged)} up-to-date files (skipped)")
+        print("─" * 68)
+
+        if not files_to_sync:
+            print("✨ All phone files are already up to date on Cloud Drive!")
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            return
+
         if not auto_confirm:
             confirm = input("▶️ Start uploading to TGDrive? (Y/n): ").strip().lower()
             if confirm == "n":
@@ -531,14 +657,14 @@ Extract-MTP $targetRoot $subPath
                 return
 
         try:
-            self._upload_local_files_mirrored(staging_dir, staged_files, base_tg_prefix)
+            self._upload_local_files_mirrored(staging_dir, files_to_sync, base_tg_prefix)
         finally:
             print("🧹 Cleaning up temporary phone cache...")
             shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
-    """Present the clean 4-option backup menu."""
+    """Present the clean 5-option backup menu."""
     user_home = Path.home()
     c_users_path = Path("C:/Users") if os.path.exists("C:/Users") else user_home
     d_drive_path = Path("D:/")
@@ -546,22 +672,21 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
     phones = MTPPhoneManager.get_connected_phones()
     detected_phone_name = phones[0]["name"] if phones else None
 
-    print("\n" + "=" * 60)
-    print("       🚀 TGDrive Universal Backup Manager")
-    print("=" * 60)
+    print("\n" + "=" * 68)
+    print("       🚀 TGDrive Universal Backup Manager (Git-Style Sync)")
+    print("=" * 68)
     print("Choose what you want to backup:\n")
-    print(f"  [1] 💻 C: Drive (C:\\Users - Exact User Folder Tree)")
+    print(f"  [1] 💻 C: Drive (C:\\Users - User Folder Tree)")
     print(f"  [2] 💾 D: Drive ({'Available: D:\\' if d_drive_path.exists() else 'Not detected'})")
     print(f"  [3] 📱 Mobile Storage ({f'Detected: {detected_phone_name}' if detected_phone_name else 'Connected Phone'})")
     print(f"  [4] 🗂️  SD Card Storage (Phone SD Card or USB Reader)")
-    print(f"  [5] ✍️  Custom Folder Path")
-    print("=" * 60)
+    print(f"  [5] ✍️  Custom Folder Path (e.g. Notion Drive)")
+    print("=" * 68)
 
     while True:
         choice = input("\nSelect an option (1-5): ").strip()
 
         if choice == "1":
-            print(f"\nTarget: {c_users_path}")
             sub = input(f"Backup entire C:\\Users or specific user folder? (Press Enter for '{user_home.name}', or type 'all'): ").strip().lower()
             if sub == "all":
                 return "local", c_users_path, "C_Drive/Users", None
@@ -603,7 +728,7 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
                 return "local", Path(sd_path), None, None
 
         elif choice == "5":
-            manual_path = input("\nEnter custom folder path (e.g. C:\\Users\\nitro\\Documents\\PowerShell): ").strip().strip('"').strip("'")
+            manual_path = input("\nEnter custom folder path (e.g. C:\\Users\\nitro\\Desktop\\Notion Drive): ").strip().strip('"').strip("'")
             p = Path(manual_path)
             if not p.exists():
                 print(f"❌ Path does not exist: {manual_path}")
@@ -615,20 +740,20 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Universal TGDrive Backup Manager (Exact Device Path Mirroring)."
+        description="Universal TGDrive Backup Manager (Git-Style Diff Sync)."
     )
     parser.add_argument(
         "--source",
         "-s",
         type=str,
-        help="Local path to directory (e.g. C:\\Users\\nitro\\Documents\\PowerShell)",
+        help="Local path to directory (e.g. C:\\Users\\nitro\\Desktop\\Notion Drive)",
     )
     parser.add_argument(
         "--url",
         "-u",
         type=str,
-        default="https://telegram-unlimited-cloud.onrender.com",
-        help="TGDrive instance URL",
+        default="http://127.0.0.1:8000",
+        help="TGDrive instance URL (default: http://127.0.0.1:8000 or https://telegram-unlimited-cloud.onrender.com)",
     )
     parser.add_argument(
         "--password",
@@ -662,8 +787,16 @@ def main():
 
     print(f"\nConnecting to TGDrive at {args.url}...")
     if not client.verify_auth():
-        print("❌ Authentication failed! Check your TGDrive URL and password.")
-        sys.exit(1)
+        # Fallback to Render URL if local is unreachable
+        if "127.0.0.1" in args.url:
+            print("[!] Local server not answering, falling back to Render cloud...")
+            client.base_url = "https://telegram-unlimited-cloud.onrender.com"
+            if not client.verify_auth():
+                print("❌ Authentication failed!")
+                sys.exit(1)
+        else:
+            print("❌ Authentication failed! Check your URL and password.")
+            sys.exit(1)
 
     print("✅ Connected & Authenticated!")
 

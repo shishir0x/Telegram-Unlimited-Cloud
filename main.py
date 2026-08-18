@@ -228,6 +228,32 @@ async def get_upload_progress(request: Request):
         return JSONResponse({"status": "not found"})
 
 
+@app.post("/api/getActiveUploads")
+async def get_active_uploads(request: Request):
+    from utils.uploader import PROGRESS_CACHE
+
+    data = await request.json()
+    if data.get("password") != ADMIN_PASSWORD:
+        return JSONResponse({"status": "Invalid password"})
+
+    active = []
+    for upload_id, prog in list(PROGRESS_CACHE.items()):
+        status = prog[0]
+        current = prog[1]
+        total = prog[2]
+        filename = prog[3] if len(prog) > 3 else "File"
+        if status == "running":
+            active.append({
+                "id": upload_id,
+                "status": status,
+                "current": current,
+                "total": total,
+                "filename": filename
+            })
+
+    return JSONResponse({"status": "ok", "active": active})
+
+
 @app.post("/api/cancelUpload")
 async def cancel_upload(request: Request):
     from utils.uploader import STOP_TRANSMISSION

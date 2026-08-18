@@ -26,6 +26,52 @@ document.getElementById('pass-login').addEventListener('click', async () => {
 
 })
 
+// Background Active Upload Monitor
+let WAS_UPLOADING = false;
+setInterval(async () => {
+    if (!getPassword() || getCurrentPath().includes('/share_')) return;
+    try {
+        const res = await postJson('/api/getActiveUploads', {});
+        if (res.status === 'ok' && res.active && res.active.length > 0) {
+            WAS_UPLOADING = true;
+            const currentItem = res.active[0];
+            const uploaderCard = document.getElementById('file-uploader');
+            if (uploaderCard) uploaderCard.classList.add('active');
+
+            const filenameEl = document.getElementById('upload-filename');
+            const statusEl = document.getElementById('upload-status');
+            const sizeEl = document.getElementById('upload-filesize');
+            const percentEl = document.getElementById('upload-percent');
+            const progressFill = document.getElementById('progress-bar');
+
+            if (filenameEl) filenameEl.innerText = currentItem.filename || 'Syncing file...';
+            if (statusEl) statusEl.innerText = `Uploading ${res.active.length} item(s) to Cloud...`;
+
+            const total = currentItem.total || 0;
+            const current = currentItem.current || 0;
+            if (sizeEl) sizeEl.innerText = total > 0 ? (total / (1024 * 1024)).toFixed(2) + ' MB' : 'Processing...';
+
+            const pct = total > 0 ? Math.min(Math.round((current / total) * 100), 99) : 0;
+            if (percentEl) percentEl.innerText = pct + '%';
+            if (progressFill) progressFill.style.width = pct + '%';
+        } else if (WAS_UPLOADING) {
+            WAS_UPLOADING = false;
+            const statusEl = document.getElementById('upload-status');
+            const percentEl = document.getElementById('upload-percent');
+            const progressFill = document.getElementById('progress-bar');
+            if (statusEl) statusEl.innerText = '✅ Sync Complete!';
+            if (percentEl) percentEl.innerText = '100%';
+            if (progressFill) progressFill.style.width = '100%';
+
+            setTimeout(() => {
+                const uploaderCard = document.getElementById('file-uploader');
+                if (uploaderCard) uploaderCard.classList.remove('active');
+                getCurrentDirectory();
+            }, 1800);
+        }
+    } catch {}
+}, 2000);
+
 async function getCurrentDirectory() {
     let path = getCurrentPath()
     if (path === 'redirect') {
