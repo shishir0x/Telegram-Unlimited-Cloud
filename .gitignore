@@ -1,0 +1,39 @@
+# Environment & Secrets
+.env
+.env.*
+*.env
+*.session
+*.session-journal
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Local Data & Logs
+cache/
+downloads/
+*.data
+logs.txt
+*.log
+
+# Temp / Scratch Scripts
+verify_api.py
+test_backup.txt
+init_db.txt
+t.py
+t2.py
+config copy.py
+
+# IDE / Editor Files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env/
