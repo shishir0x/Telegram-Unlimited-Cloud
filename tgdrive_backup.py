@@ -467,7 +467,7 @@ function Extract-MTP($item, $relPath) {{
     }}
 }}
 
-Extract-MTP $targetRoot ""
+Extract-MTP $targetRoot $subPath
 '''
         print("⏳ Fetching files from connected phone via USB...")
         try:
