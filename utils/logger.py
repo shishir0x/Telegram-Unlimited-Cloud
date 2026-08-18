@@ -9,7 +9,11 @@ class TqdmLoggingHandler(logging.Handler):
             tqdm.write(msg)
             self.flush()
         except Exception:
-            self.handleError(record)
+            try:
+                safe_msg = self.format(record).encode("utf-8", errors="replace").decode("utf-8")
+                tqdm.write(safe_msg)
+            except Exception:
+                pass
 
 
 class Logger:
@@ -23,7 +27,7 @@ class Logger:
             self.logger.handlers.clear()
 
         # FileHandler for logging to a file
-        file_handler = logging.FileHandler("logs.txt", mode="w")
+        file_handler = logging.FileHandler("logs.txt", mode="w", encoding="utf-8")
         file_handler.setFormatter(self.formatter)
         self.logger.addHandler(file_handler)
 

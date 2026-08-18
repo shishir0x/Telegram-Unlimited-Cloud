@@ -702,13 +702,12 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
         elif choice == "3":
             if detected_phone_name:
                 print(f"\n📱 Connected Phone Detected: {detected_phone_name}")
-                sub = input("Folder to backup on phone [Default: Download/NagarikApp, or type folder / press Enter for all]: ").strip()
-                if not sub:
-                    sub = "Download/NagarikApp"
+                print(f"   Target: This PC\\{detected_phone_name}\\Internal shared storage")
+                sub = input("Folder to backup (Press Enter to backup ALL phone folders, or type a folder like 'Download', 'DCIM', 'Pictures'): ").strip()
                 return "mtp", Path("."), None, {
                     "phone": detected_phone_name,
                     "storage": "Internal shared storage",
-                    "subfolder": "" if sub == "all" else sub
+                    "subfolder": "" if sub.lower() in ["all", ""] else sub
                 }
             else:
                 p_str = input("Enter Phone Mount / Folder path: ").strip().strip('"').strip("'")
@@ -717,11 +716,12 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
         elif choice == "4":
             if detected_phone_name:
                 print(f"\n📱 Reading SD Card on Phone: {detected_phone_name}")
-                sub = input("Folder on SD card to backup (Press Enter for all): ").strip()
+                print(f"   Target: This PC\\{detected_phone_name}\\SD card")
+                sub = input("Folder on SD card (Press Enter to backup ALL SD card folders, or type a folder): ").strip()
                 return "mtp", Path("."), None, {
                     "phone": detected_phone_name,
                     "storage": "SD card",
-                    "subfolder": sub
+                    "subfolder": "" if sub.lower() in ["all", ""] else sub
                 }
             else:
                 sd_path = input("Enter SD Card Drive Letter (e.g. E:\\ or F:\\): ").strip().strip('"').strip("'")
