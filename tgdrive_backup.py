@@ -1,9 +1,13 @@
 """
-TGDrive Auto-Backup & Storage Scanner
-====================================
-Automatically scans local disks, SD cards, USB drives, and folders,
-allowing you to choose what to backup and uploads the exact nested
-folder structure to your TGDrive instance.
+TGDrive Auto-Backup Client
+==========================
+Clean 4-target backup manager:
+1. C: Drive (C:\\Users)
+2. D: Drive (D:\\)
+3. Mobile Storage
+4. SD Card Storage
+
+Filters out Windows/Android system files, temp cache, and registry files.
 """
 
 import os
@@ -18,6 +22,59 @@ import requests
 from pathlib import Path
 from typing import List, Dict, Set, Tuple, Optional
 
+# System directories to ignore (Windows, Android, Dev junk)
+IGNORED_DIRS = {
+    # Windows System Folders
+    "appdata",
+    "application data",
+    "local settings",
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "$recycle.bin",
+    "$winreagent",
+    "system volume information",
+    "recovery",
+    "config.msi",
+    "msocache",
+    # Android System Folders
+    "android/data",
+    "android/obb",
+    ".trash",
+    ".thumbnails",
+    "lost.dir",
+    ".android_secure",
+    ".estrongs",
+    # Development / Cache Junk
+    "node_modules",
+    "__pycache__",
+    ".git",
+    ".vscode",
+    ".idea",
+    ".venv",
+    "venv",
+    ".cache",
+    ".temp",
+}
+
+# System files to ignore
+IGNORED_FILES_LOWER = {
+    "desktop.ini",
+    "thumbs.db",
+    "iconcache.db",
+    "ntuser.ini",
+    ".ds_store",
+    ".nomedia",
+    "hiberfil.sys",
+    "pagefile.sys",
+    "swapfile.sys",
+}
+
+# Prefixes/Extensions for system & temporary lock files
+IGNORED_FILE_PREFIXES = ("ntuser.dat", "usrclass.dat", "~$", ".~", "dumpstack.log")
+IGNORED_FILE_EXTENSIONS = (".tmp", ".crdownload", ".part", ".log1", ".log2", ".dmp")
+
 
 def generate_random_id(length: int = 6) -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
@@ -31,93 +88,51 @@ def format_size(bytes_val: int) -> str:
     return f"{bytes_val:.2f} PB"
 
 
-def get_drive_type_label(drive_path: str) -> str:
-    if os.name != "nt":
-        return "Local Storage"
-    try:
-        drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive_path)
-        types = {
-            2: "📱 Removable (SD Card / USB)",
-            3: "💾 Fixed Local Disk",
-            4: "🌐 Network Drive",
-            5: "💿 CD/DVD Drive",
-            6: "⚡ RAM Disk",
-        }
-        return types.get(drive_type, "💾 Disk Drive")
-    except Exception:
-        return "💾 Disk Drive"
+def should_skip_directory(dir_name: str, full_rel_path: str) -> bool:
+    name_lower = dir_name.lower()
+    path_lower = full_rel_path.lower().replace("\\", "/")
+
+    if name_lower in IGNORED_DIRS:
+        return True
+    if any(ignored in path_lower for ignored in IGNORED_DIRS):
+        return True
+    if name_lower.startswith((".", "$")):
+        return True
+    return False
 
 
-def get_available_storage_targets() -> List[Dict[str, str]]:
-    targets = []
+def should_skip_file(file_name: str) -> bool:
+    name_lower = file_name.lower()
+    if name_lower in IGNORED_FILES_LOWER:
+        return True
+    if any(name_lower.startswith(p) for p in IGNORED_FILE_PREFIXES):
+        return True
+    if any(name_lower.endswith(e) for e in IGNORED_FILE_EXTENSIONS):
+        return True
+    return False
 
-    # 1. Detect all Windows Drive Letters (C:\, D:\, E:\, etc.)
+
+def find_removable_drives() -> List[str]:
+    """Find plugged-in SD cards / USB flash drives."""
+    removable = []
     if os.name == "nt":
         bitmask = ctypes.windll.kernel32.GetLogicalDrives()
         for letter in string.ascii_uppercase:
             if bitmask & 1:
                 drive_path = f"{letter}:\\"
                 if os.path.exists(drive_path):
-                    label = get_drive_type_label(drive_path)
                     try:
-                        usage = shutil.disk_usage(drive_path)
-                        free_str = format_size(usage.free)
-                        total_str = format_size(usage.total)
-                        desc = f"{label} [{letter}:] ({free_str} free / {total_str})"
+                        dtype = ctypes.windll.kernel32.GetDriveTypeW(drive_path)
+                        if dtype == 2:  # DRIVE_REMOVABLE
+                            removable.append(drive_path)
                     except Exception:
-                        desc = f"{label} [{letter}:]"
-                    targets.append({
-                        "name": f"Drive {letter}:",
-                        "path": drive_path,
-                        "description": desc,
-                        "is_drive": True
-                    })
+                        pass
             bitmask >>= 1
-    else:
-        # Unix / macOS / Linux / Android
-        for mount in ["/storage/emulated/0", "/sdcard", "/Volumes", os.path.expanduser("~")]:
-            if os.path.exists(mount):
-                targets.append({
-                    "name": os.path.basename(mount) or mount,
-                    "path": mount,
-                    "description": f"Storage: {mount}",
-                    "is_drive": True
-                })
-
-    # 2. Check for Specific Project Folders (e.g. Notion Drive, Projects, etc.)
-    user_home = Path.home()
-    notion_drive = user_home / "Desktop" / "Notion Drive"
-    if notion_drive.exists():
-        targets.append({
-            "name": "Notion Drive",
-            "path": str(notion_drive),
-            "description": f"📂 Notion Drive ({notion_drive})",
-            "is_drive": False
-        })
-
-    # 3. Standard User Library Folders
-    common_folders = [
-        ("Desktop", user_home / "Desktop"),
-        ("Documents", user_home / "Documents"),
-        ("Downloads", user_home / "Downloads"),
-        ("Pictures / Photos", user_home / "Pictures"),
-        ("Videos", user_home / "Videos"),
-    ]
-
-    for name, folder_path in common_folders:
-        if folder_path.exists():
-            targets.append({
-                "name": name,
-                "path": str(folder_path),
-                "description": f"📁 {name} ({folder_path})",
-                "is_drive": False
-            })
-
-    return targets
+    return removable
 
 
 class TGDriveBackupClient:
-    def __init__(self, base_url: str, password: str, drive_root: str = "/Backup"):
+    def __init__(self, base_url: str, password: str, drive_root: str):
         self.base_url = base_url.rstrip("/")
         self.password = password
         self.drive_root = "/" + drive_root.strip("/") + "/"
@@ -135,7 +150,7 @@ class TGDriveBackupClient:
             data = res.json()
             return data.get("status") == "ok"
         except Exception as e:
-            print(f"[!] Connection failed to {self.base_url}: {e}")
+            print(f"[!] Connection error to {self.base_url}: {e}")
             return False
 
     def get_existing_items(self, remote_folder: str) -> Tuple[Set[str], Set[str]]:
@@ -195,7 +210,7 @@ class TGDriveBackupClient:
                     if status in ["ok", "Folder with the name already exist in current directory"]:
                         self._created_folders.add(target_path)
                 except Exception as e:
-                    print(f"    [!] Error creating folder '{part}' in '{current_path}': {e}")
+                    print(f"    [!] Error creating folder '{part}': {e}")
 
             current_path = target_path
             self._created_folders.add(current_path)
@@ -206,11 +221,10 @@ class TGDriveBackupClient:
         file_size = local_file_path.stat().st_size
         upload_id = generate_random_id()
 
-        # Ensure folder exists
         self.ensure_remote_folder_chain(remote_folder)
 
         print(f"  ⬆️ Uploading: {file_name} ({format_size(file_size)})")
-        print(f"     ➔ Destination: {remote_folder}")
+        print(f"     ➔ Folder: {remote_folder}")
 
         try:
             with open(local_file_path, "rb") as f:
@@ -240,7 +254,7 @@ class TGDriveBackupClient:
                     return False
 
             # Poll for Telegram upload completion
-            print("    ⏳ Syncing to Telegram storage channel...", end="", flush=True)
+            print("    ⏳ Syncing to Telegram storage...", end="", flush=True)
             for _ in range(60):
                 time.sleep(1)
                 try:
@@ -267,27 +281,35 @@ class TGDriveBackupClient:
             return False
 
     def sync_directory(self, source_dir: Path):
-        """Recursively scan and backup the entire directory tree."""
+        """Recursively scan and backup directory tree with system file exclusion."""
         source_dir = source_dir.resolve()
         if not source_dir.exists() or not source_dir.is_dir():
-            print(f"[!] Source folder does not exist: {source_dir}")
+            print(f"[!] Target path does not exist: {source_dir}")
             return
 
-        print(f"\n" + "=" * 60)
-        print(f"📂 Scanning storage directory: {source_dir}")
-        print(f"🌐 Remote TGDrive Destination: {self.base_url}{self.drive_root}")
-        print("=" * 60)
+        print("\n" + "=" * 65)
+        print(f"🔍 Scanning clean user files in: {source_dir}")
+        print("   (Automatically filtering out Windows/Android system files)")
+        print(f"🌐 Remote Destination: {self.base_url}{self.drive_root}")
+        print("=" * 65)
 
         total_files = 0
         total_bytes = 0
         file_list = []
 
         for root, dirs, files in os.walk(source_dir):
-            # Skip hidden folders / git
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ["$RECYCLE.BIN", "System Volume Information", "node_modules", "__pycache__"]]
+            rel_dir = os.path.relpath(root, source_dir)
+            
+            # Prune ignored directories in-place so os.walk skips descending into them
+            dirs[:] = [
+                d for d in dirs
+                if not should_skip_directory(d, os.path.join(rel_dir, d))
+            ]
+
             for file in files:
-                if file.startswith("~$") or file.endswith(".tmp"):
+                if should_skip_file(file):
                     continue
+
                 p = Path(root) / file
                 try:
                     sz = p.stat().st_size
@@ -298,11 +320,11 @@ class TGDriveBackupClient:
                     continue
 
         if total_files == 0:
-            print("⚠️ No files found to backup in this location.")
+            print("⚠️ No valid user files found to backup.")
             return
 
-        print(f"📦 Discovered: {total_files} files ({format_size(total_bytes)} total)")
-        confirm = input("\n▶️ Proceed with backup? (Y/n): ").strip().lower()
+        print(f"\n📦 Found {total_files} clean files ({format_size(total_bytes)} total)")
+        confirm = input("▶️ Start backup now? (Y/n): ").strip().lower()
         if confirm == "n":
             print("Backup cancelled.")
             return
@@ -323,7 +345,7 @@ class TGDriveBackupClient:
             # Check if file already exists in remote folder
             _, existing_files = self.get_existing_items(remote_folder)
             if local_file.name in existing_files:
-                print(f"  ⏭️ Already backed up in {remote_folder} (Skipping)")
+                print(f"  ⏭️ Already exists in {remote_folder} (Skipping)")
                 skip_count += 1
                 continue
 
@@ -332,83 +354,107 @@ class TGDriveBackupClient:
             else:
                 fail_count += 1
 
-        print("\n" + "=" * 60)
-        print("🎉 Backup Completed!")
+        print("\n" + "=" * 65)
+        print("🎉 Backup Summary:")
         print(f"   ✅ Uploaded:                {success_count}")
         print(f"   ⏭️ Skipped (Already saved): {skip_count}")
         print(f"   ❌ Failed:                  {fail_count}")
         print(f"   📦 Total Files:             {total_files}")
-        print(f"   🌐 View your drive:         {self.base_url}/?path={self.drive_root}")
-        print("=" * 60)
+        print(f"   🌐 View Drive:              {self.base_url}/?path={self.drive_root}")
+        print("=" * 65)
 
 
-def interactive_target_selector() -> Tuple[Path, str]:
-    targets = get_available_storage_targets()
+def show_clean_menu() -> Tuple[Path, str]:
+    """Present the clean 4-option backup menu."""
+    user_home = Path.home()
+    c_users_path = Path("C:/Users") if os.path.exists("C:/Users") else user_home
+    d_drive_path = Path("D:/")
 
-    print("\n" + "=" * 65)
-    print("       🚀 TGDrive Storage Backup & Device Scanner")
-    print("=" * 65)
-    print("Detected Storage Disks & Locations:\n")
+    removable_drives = find_removable_drives()
+    default_sd = Path(removable_drives[0]) if removable_drives else None
 
-    for i, t in enumerate(targets, start=1):
-        print(f"  [{i}] {t['description']}")
-
-    custom_idx = len(targets) + 1
-    print(f"  [{custom_idx}] ✍️  Custom Path (Type a custom folder path)")
-    print("=" * 65)
+    print("\n" + "=" * 60)
+    print("       🚀 TGDrive Universal Backup Manager")
+    print("=" * 60)
+    print("Choose what you want to backup:\n")
+    print(f"  [1] 💻 C: Drive (C:\\Users - User Profile & Files)")
+    print(f"  [2] 💾 D: Drive ({'Available: D:\\' if d_drive_path.exists() else 'Not detected'})")
+    print(f"  [3] 📱 Mobile Storage (Internal Phone / DCIM / Media)")
+    print(f"  [4] 🗂️  SD Card Storage ({f'Detected: {default_sd}' if default_sd else 'Removable Memory Card'})")
+    print(f"  [5] ✍️  Custom Folder Path")
+    print("=" * 60)
 
     while True:
-        choice = input(f"\nSelect a disk or folder to backup (1-{custom_idx}): ").strip()
-        if not choice:
-            continue
-        try:
-            choice_num = int(choice)
-            if 1 <= choice_num <= len(targets):
-                selected = targets[choice_num - 1]
-                source_path = Path(selected["path"])
-                folder_name = selected["name"].replace(":", "").replace(" ", "_").replace("/", "_")
-                
-                # If a whole disk is selected, ask if they want a subfolder or whole disk
-                if selected.get("is_drive"):
-                    print(f"\nYou selected entire drive: {source_path}")
-                    sub = input("Do you want to backup a specific folder inside it? (Press Enter for entire drive, or type folder name): ").strip()
-                    if sub:
-                        candidate = source_path / sub
-                        if candidate.exists():
-                            source_path = candidate
-                            folder_name = candidate.name
-                
-                default_dest = f"/{folder_name}"
-                return source_path, default_dest
-            elif choice_num == custom_idx:
-                manual_path = input("\nEnter custom folder path: ").strip().strip('"').strip("'")
-                p = Path(manual_path)
-                if not p.exists():
-                    print(f"❌ Path does not exist: {manual_path}")
-                    continue
-                return p, f"/{p.name}"
+        choice = input("\nSelect an option (1-5): ").strip()
+        
+        if choice == "1":
+            # Backup C:\Users (or current user's profile)
+            print(f"\nTarget: {c_users_path}")
+            sub = input(f"Backup entire C:\\Users or specific user folder? (Press Enter for '{user_home.name}' folder, or type 'all'): ").strip().lower()
+            if sub == "all":
+                return c_users_path, "/C_Users_Backup"
             else:
-                print("Invalid choice number. Try again.")
-        except ValueError:
-            print("Please enter a valid number.")
+                return user_home, f"/{user_home.name}_Backup"
+
+        elif choice == "2":
+            if not d_drive_path.exists():
+                print("❌ D: Drive not found on this computer.")
+                continue
+            return d_drive_path, "/D_Drive_Backup"
+
+        elif choice == "3":
+            # Mobile storage path
+            print("\n📱 Mobile Storage Backup:")
+            print("Connect your phone via USB (File Transfer / MTP) or enter the path where your phone storage is mounted.")
+            phone_path = input("Enter Phone / Mobile folder path (e.g. E:\\ or D:\\Phone or custom path): ").strip().strip('"').strip("'")
+            p = Path(phone_path)
+            if not p.exists():
+                print(f"❌ Path not found: {phone_path}")
+                continue
+            return p, "/Mobile_Storage_Backup"
+
+        elif choice == "4":
+            # SD Card Storage
+            if default_sd and default_sd.exists():
+                print(f"\nDetected SD Card at: {default_sd}")
+                use_detected = input("Use this SD Card? (Y/n): ").strip().lower()
+                if use_detected != "n":
+                    return default_sd, "/SD_Card_Backup"
+            
+            sd_path = input("Enter SD Card Drive Letter or Path (e.g. E:\\ or F:\\): ").strip().strip('"').strip("'")
+            p = Path(sd_path)
+            if not p.exists():
+                print(f"❌ SD Card path not found: {sd_path}")
+                continue
+            return p, "/SD_Card_Backup"
+
+        elif choice == "5":
+            manual_path = input("\nEnter custom folder path: ").strip().strip('"').strip("'")
+            p = Path(manual_path)
+            if not p.exists():
+                print(f"❌ Path does not exist: {manual_path}")
+                continue
+            return p, f"/{p.name}_Backup"
+        else:
+            print("Please enter a valid choice (1-5).")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Backup local disk / SD card folder tree to TGDrive."
+        description="Universal TGDrive Backup Manager."
     )
     parser.add_argument(
         "--source",
         "-s",
         type=str,
-        help="Local path to directory or SD card (e.g. D:\\Photos or C:\\Users\\nitro\\Desktop\\Notion Drive)",
+        help="Local path to directory (e.g. C:\\Users or D:\\)",
     )
     parser.add_argument(
         "--url",
         "-u",
         type=str,
         default="https://telegram-unlimited-cloud.onrender.com",
-        help="TGDrive instance URL (default: https://telegram-unlimited-cloud.onrender.com)",
+        help="TGDrive instance URL",
     )
     parser.add_argument(
         "--password",
@@ -422,16 +468,16 @@ def main():
         "-d",
         type=str,
         default=None,
-        help="Remote destination root folder on TGDrive (e.g. /Notion_Drive)",
+        help="Remote destination folder on TGDrive",
     )
 
     args = parser.parse_args()
 
     if args.source:
         source_path = Path(args.source)
-        dest_folder = args.dest or f"/{source_path.name}"
+        dest_folder = args.dest or f"/{source_path.name}_Backup"
     else:
-        source_path, suggested_dest = interactive_target_selector()
+        source_path, suggested_dest = show_clean_menu()
         dest_folder = args.dest or suggested_dest
 
     custom_dest = input(f"\nTGDrive Destination Folder [Default: {dest_folder}]: ").strip()
@@ -449,7 +495,7 @@ def main():
         print("❌ Authentication failed! Check your TGDrive URL and password.")
         sys.exit(1)
 
-    print("✅ Authenticated successfully with TGDrive!")
+    print("✅ Connected & Authenticated!")
     client.sync_directory(source_path)
 
 
