@@ -298,7 +298,6 @@ async def backup_drive_data(loop=True):
                 config.STORAGE_CHANNEL,
                 config.DATABASE_BACKUP_MSG_ID,
                 media=media_doc,
-                file_name="drive.data",
             )
 
             DRIVE_DATA.isUpdated = False
@@ -347,30 +346,20 @@ async def loadDriveData():
 
     client = get_client()
     try:
-        try:
-            msg: Message = await client.get_messages(
-                config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
-            )
-        except Exception as e:
-            logger.error(f"Error fetching backup message: {e}")
+        msg: Message = await client.get_messages(
+            config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
+        )
 
-            # Forcefully terminates the program immediately
-            os.kill(os.getpid(), signal.SIGKILL)
-
-        if not msg.document:
-            logger.error(f"Error fetching backup message: {e}")
-
-            # Forcefully terminates the program immediately
-            os.kill(os.getpid(), signal.SIGKILL)
-
-        if msg.document.file_name == "drive.data":
-            dl_path = await msg.download()
+        if msg and msg.document:
+            os.makedirs("cache", exist_ok=True)
+            target_file = os.path.abspath("cache/drive.data")
+            dl_path = await msg.download(file_name=target_file)
             with open(dl_path, "rb") as f:
                 DRIVE_DATA = dill.load(f)
 
             logger.info("Drive data loaded from Telegram backup.")
         else:
-            raise Exception("Backup drive.data file not found on Telegram.")
+            raise Exception("Backup document not found on Telegram message.")
     except Exception as e:
         logger.warning(f"Backup load failed: {e}")
         logger.info("Creating new drive.data file.")
