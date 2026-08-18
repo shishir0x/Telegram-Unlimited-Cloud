@@ -4,202 +4,361 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TG Drive</title>
+    <title>Google Drive - TG Unlimited Cloud</title>
     <link rel="stylesheet" href="static/home.css" />
 
-    <!-- Fonts Start -->
+    <!-- Google Fonts: Google Sans & Roboto -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap"
-        rel="stylesheet" />
-    <!-- Fonts End -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+    <link rel="icon" href="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" />
 </head>
 
 <body>
-    <div class="container">
-        <!-- Sidebar Start -->
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <img src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png" />
-                <span>TG Drive</span>
-            </div>
-
-            <button id="new-button" class="new-button">
-                <img src="static/assets/plus-icon.svg" />New
+    <!-- Top Google Drive App Bar -->
+    <header class="gd-header">
+        <div class="gd-header-left">
+            <button class="gd-icon-btn menu-toggle" id="sidebar-toggle" title="Main menu">
+                <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
             </button>
+            <a href="/?path=/" class="gd-logo-container">
+                <img class="gd-logo-img" src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png" alt="Google Drive" />
+                <span class="gd-logo-text">Drive</span>
+                <span class="gd-cloud-badge">TG Unlimited</span>
+            </a>
+        </div>
 
-            <div id="new-upload" class="new-upload">
-                <input id="new-upload-focus" type="text"
-                    style="height: 0px; width: 0px; border: none; position: absolute" readonly />
-                <div id="new-folder-btn">
-                    <img src="static/assets/folder-icon.svg" />
-                    New Folder
-                </div>
-                <hr />
-                <div id="file-upload-btn">
-                    <img src="static/assets/upload-icon.svg" />
-                    File Upload
-                </div>
-                <input type="file" id="fileInput" style="height: 0px; width: 0px; border: none; position: absolute" />
-                <hr />
-                <div id="url-upload-btn">
-                    <img src="static/assets/link-icon.svg" />
-                    URL Upload
-                </div>
-            </div>
-
-            <div class="sidebar-menu">
-                <a class="selected-item" href="/?path=/"><img src="static/assets/home-icon.svg" />Home</a>
-                <a class="unselected-item" href="/?path=/trash"><img src="static/assets/trash-icon.svg" />Trash</a>
+        <div class="gd-header-center">
+            <div class="gd-search-box" id="gd-search-container">
+                <button class="gd-search-icon-btn" id="search-btn">
+                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                </button>
+                <form id="search-form" class="gd-search-form">
+                    <input id="file-search" type="text" placeholder="Search in Drive" autocomplete="off" />
+                </form>
+                <button class="gd-search-clear-btn" id="search-clear-btn" title="Clear search" style="display: none;">
+                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+                <button class="gd-filter-btn" id="search-filter-btn" title="Search options">
+                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+                </button>
             </div>
         </div>
-        <!-- Sidebar End -->
 
-        <div id="bg-blur" class="bg-blur"></div>
-
-        <!-- Create New Folder Start -->
-        <div id="create-new-folder" class="create-new-folder">
-            <span>New Folder</span>
-            <input type="text" id="new-folder-name" placeholder="Enter Folder Name" autocomplete="off" />
-            <div>
-                <button id="new-folder-cancel">Cancel</button>
-                <button id="new-folder-create">Create</button>
+        <div class="gd-header-right">
+            <div class="gd-status-pill" title="Telegram Cloud Backend Connected">
+                <span class="gd-status-dot"></span>
+                <span>Cloud Online</span>
+            </div>
+            <button class="gd-icon-btn" id="settings-btn" title="Settings">
+                <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+            </button>
+            <div class="gd-profile-avatar" id="profile-avatar" title="Admin Account">
+                <span>A</span>
             </div>
         </div>
-        <!-- Create New Folder End -->
+    </header>
 
-        <!-- File / Folder Rename Start -->
-        <div id="rename-file-folder" class="create-new-folder">
-            <span>Edit File/Folder Name</span>
-            <input type="text" id="rename-name" placeholder="Enter File/Folder Name" autocomplete="off" />
-            <div>
-                <button id="rename-cancel">Cancel</button>
-                <button id="rename-create">Rename</button>
-            </div>
-        </div>
-        <!-- File / Folder Rename End -->
+    <!-- Main Workspace Layout -->
+    <div class="gd-workspace">
+        <!-- Sidebar Navigation -->
+        <aside class="gd-sidebar" id="gd-sidebar">
+            <!-- Google Drive "+ New" Pill Button -->
+            <div class="gd-new-btn-wrapper">
+                <button id="new-button" class="gd-new-button">
+                    <svg class="gd-new-plus-icon" viewBox="0 0 36 36">
+                        <path fill="#4285F4" d="M16 16v14h4V16h14v-4H20V-2h-4v14H2v4h14z"/>
+                        <path fill="#FBBC05" d="M30 16H20l-4-4h14v4z"/>
+                        <path fill="#EA4335" d="M16 2v14h4V2z"/>
+                        <path fill="#34A853" d="M16 16H2v4h14z"/>
+                    </svg>
+                    <span>New</span>
+                </button>
 
-        <!-- Remote Upload Start -->
-        <div id="new-url-upload" class="create-new-folder">
-            <span>Url Upload</span>
-            <input type="text" id="remote-url" placeholder="Enter Direct Download Link Of File" autocomplete="off" />
-            <div id="single-threaded-div">
-                <input type="checkbox" name="single-threaded-toggle" id="single-threaded-toggle">
-                <label for="single-threaded-toggle">Single Threaded</label>
-                <a href="#"><img src="static/assets/info-icon-small.svg" alt="Info"></a>
-            </div>
-            <div>
-                <button id="remote-cancel">Cancel</button>
-                <button id="remote-start">Upload</button>
-            </div>
-        </div>
-        <!-- Remote Upload End -->
-
-        <!-- Get Password Start -->
-        <div id="get-password" class="create-new-folder">
-            <span>Admin Login</span>
-            <input type="text" id="auth-pass" placeholder="Enter Password" autocomplete="off" />
-            <div>
-                <button id="pass-login">Login</button>
-            </div>
-        </div>
-        <!-- Get Password End -->
-
-        <!-- File Uploader Start -->
-        <div id="file-uploader" class="file-uploader">
-            <span class="upload-head">🚀 Uploading File...</span>
-            <span id="upload-filename" class="upload-info">Filename : </span>
-            <span id="upload-filesize" class="upload-info">Filesize :</span>
-            <span id="upload-status" class="upload-info">Status : </span>
-            <span id="upload-percent" class="upload-info">Progress : </span>
-            <div class="progress">
-                <div class="progress-bar" id="progress-bar"></div>
-            </div>
-            <div class="btn-div">
-                <button id="cancel-file-upload">Cancel Upload</button>
-            </div>
-        </div>
-        <!-- File Uploader End -->
-
-        <!-- File / Folder Details Modal Start -->
-        <div id="file-details-modal" class="create-new-folder details-modal">
-            <div class="details-header">
-                <span id="details-title">📄 File Properties</span>
-                <button id="details-close-btn" class="close-x-btn">&times;</button>
-            </div>
-            <div class="details-body">
-                <div class="details-row">
-                    <span class="detail-label">Name:</span>
-                    <span id="detail-name" class="detail-val font-semibold"></span>
-                </div>
-                <div class="details-row">
-                    <span class="detail-label">Type:</span>
-                    <span id="detail-type" class="detail-val"></span>
-                </div>
-                <div class="details-row">
-                    <span class="detail-label">Size:</span>
-                    <span id="detail-size" class="detail-val"></span>
-                </div>
-                <div class="details-row">
-                    <span class="detail-label">Location:</span>
-                    <span id="detail-location" class="detail-val"></span>
-                </div>
-                <div class="details-row">
-                    <span class="detail-label">Owner:</span>
-                    <span id="detail-owner" class="detail-val"></span>
-                </div>
-                <div class="details-row">
-                    <span class="detail-label">Date Uploaded:</span>
-                    <span id="detail-date" class="detail-val"></span>
-                </div>
-                <div class="details-row">
-                    <span class="detail-label">Telegram Msg ID:</span>
-                    <span id="detail-msg-id" class="detail-val font-mono"></span>
-                </div>
-                <div class="details-row">
-                    <span class="detail-label">Direct Link:</span>
-                    <div class="link-copy-container">
-                        <input type="text" id="detail-link-input" readonly />
-                        <button id="detail-copy-link-btn">Copy</button>
+                <!-- New Action Dropdown -->
+                <div id="new-upload" class="gd-new-dropdown">
+                    <input id="new-upload-focus" type="text" readonly style="position: absolute; opacity: 0; width: 0; height: 0;" />
+                    <div id="new-folder-btn" class="gd-dropdown-item">
+                        <svg viewBox="0 0 24 24" class="gd-dropdown-svg"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+                        <span>New folder</span>
+                    </div>
+                    <div class="gd-dropdown-divider"></div>
+                    <div id="file-upload-btn" class="gd-dropdown-item">
+                        <svg viewBox="0 0 24 24" class="gd-dropdown-svg"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+                        <span>File upload</span>
+                    </div>
+                    <input type="file" id="fileInput" multiple style="display: none;" />
+                    <div id="url-upload-btn" class="gd-dropdown-item">
+                        <svg viewBox="0 0 24 24" class="gd-dropdown-svg"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                        <span>URL / Remote upload</span>
                     </div>
                 </div>
             </div>
-            <div class="details-footer">
-                <button id="detail-open-btn" class="primary-action-btn">Open / Preview</button>
-                <button id="detail-download-btn" class="secondary-action-btn">Download</button>
-            </div>
-        </div>
-        <!-- File / Folder Details Modal End -->
 
-        <!-- Main Content Start -->
-        <div class="main-content">
-            <div class="header">
-                <div class="search-bar">
-                    <img src="static/assets/search-icon.svg" />
-                    <form id="search-form">
-                        <input id="file-search" type="text" placeholder="Search in Drive" autocomplete="off" />
-                    </form>
+            <!-- Navigation Links -->
+            <nav class="gd-nav-menu">
+                <a href="/?path=/" id="nav-my-drive" class="gd-nav-item selected-item">
+                    <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M19 13H5v-2h14v2z M12 3C6.48 3 2 7.48 2 13s4.48 10 10 10 10-4.48 10-10S17.52 3 12 3zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                    <span>My Drive</span>
+                </a>
+                <a href="/?path=/" id="nav-computers" class="gd-nav-item unselected-item">
+                    <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>
+                    <span>Computers & Phones</span>
+                </a>
+                <div class="gd-nav-divider"></div>
+                <a href="/?path=/trash" id="nav-trash" class="gd-nav-item unselected-item">
+                    <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zm2 15H7V6h10v13zM9 8h2v9H9zm4 0h2v9h-2z"/></svg>
+                    <span>Trash</span>
+                </a>
+            </nav>
+
+            <!-- Storage Indicator -->
+            <div class="gd-storage-section">
+                <div class="gd-storage-header">
+                    <svg viewBox="0 0 24 24" class="gd-storage-svg"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM19 18H6c-2.21 0-4-1.79-4-4 0-2.05 1.53-3.76 3.56-3.97l1.07-.11.5-.95C8.08 7.14 9.94 6 12 6c2.62 0 4.88 1.86 5.39 4.43l.3 1.5 1.53.11c1.56.1 2.78 1.41 2.78 2.96 0 1.65-1.35 3-3 3z"/></svg>
+                    <span>Storage</span>
+                </div>
+                <div class="gd-progress-bar-container">
+                    <div class="gd-progress-bar-fill" style="width: 100%;"></div>
+                </div>
+                <div class="gd-storage-text">
+                    <strong>Unlimited</strong> cloud storage active
+                </div>
+                <div class="gd-storage-subtext">Backed by Telegram Cloud</div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="gd-main-content">
+            <!-- Breadcrumbs and Action Bar -->
+            <div class="gd-action-bar">
+                <div class="gd-breadcrumbs-container" id="breadcrumbs-container">
+                    <!-- Populated dynamically: My Drive > C_Drive > Users ... -->
+                    <span class="gd-crumb gd-crumb-root" data-path="/">My Drive</span>
+                </div>
+
+                <div class="gd-view-toggles">
+                    <button class="gd-tool-btn" id="toggle-list-view" title="List layout" active>
+                        <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+                    </button>
+                    <button class="gd-tool-btn" id="toggle-grid-view" title="Grid layout">
+                        <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M4 11h5V5H4v6zm0 7h5v-6H4v6zm6 0h5v-6h-5v6zm6 0h5v-6h-5v6zm-6-7h5V5h-5v6zm6-6v6h5V5h-5z"/></svg>
+                    </button>
+                    <button class="gd-tool-btn" id="toggle-info-pane" title="View details">
+                        <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                    </button>
                 </div>
             </div>
 
-            <div class="directory">
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="width: 40%;">Name</th>
-                            <th style="width: 15%;">Type</th>
-                            <th style="width: 12%;">Owner</th>
-                            <th style="width: 18%;">Date Modified</th>
-                            <th style="width: 10%;">Size</th>
-                            <th style="width: 5%; text-align: center;">More</th>
-                        </tr>
-                    </thead>
-                    <tbody id="directory-data"></tbody>
-                </table>
+            <!-- Content Area: Table / Grid -->
+            <div class="gd-content-viewport" id="content-viewport">
+                <!-- Drop Zone Overlay -->
+                <div class="gd-drop-overlay" id="drop-overlay">
+                    <svg viewBox="0 0 24 24" class="gd-drop-svg"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                    <span class="gd-drop-text">Drop files here to upload instantly to Drive</span>
+                </div>
+
+                <!-- List View (Default Table) -->
+                <div class="gd-table-container" id="list-view-container">
+                    <table class="gd-drive-table">
+                        <thead>
+                            <tr>
+                                <th class="col-name">Name</th>
+                                <th class="col-type">Type</th>
+                                <th class="col-owner">Owner</th>
+                                <th class="col-date">Last modified</th>
+                                <th class="col-size">File size</th>
+                                <th class="col-more"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="directory-data"></tbody>
+                    </table>
+                </div>
+
+                <!-- Grid View (Cards Container) -->
+                <div class="gd-grid-container" id="grid-view-container" style="display: none;">
+                    <div class="gd-grid-section-title" id="grid-folders-title">Folders</div>
+                    <div class="gd-grid-folders" id="grid-folders-data"></div>
+
+                    <div class="gd-grid-section-title" id="grid-files-title">Files</div>
+                    <div class="gd-grid-files" id="grid-files-data"></div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Inspector Pane (Google Drive Details & Activity) -->
+        <aside class="gd-inspector" id="gd-inspector">
+            <div class="gd-inspector-header">
+                <div class="gd-inspector-title-row">
+                    <span id="insp-header-title">File Details</span>
+                    <button class="gd-icon-btn close-btn" id="close-inspector-btn">&times;</button>
+                </div>
+                <div class="gd-inspector-tabs">
+                    <button class="gd-insp-tab active" id="tab-details">Details</button>
+                    <button class="gd-insp-tab" id="tab-activity">Activity</button>
+                </div>
+            </div>
+
+            <div class="gd-inspector-body" id="inspector-body">
+                <!-- Preview / Icon Banner -->
+                <div class="gd-insp-banner" id="insp-banner">
+                    <div class="gd-insp-big-icon" id="insp-big-icon">📄</div>
+                    <div class="gd-insp-filename" id="insp-filename">Select a file</div>
+                </div>
+
+                <!-- Who has access -->
+                <div class="gd-insp-card">
+                    <div class="gd-insp-card-title">Who has access</div>
+                    <div class="gd-insp-access-row">
+                        <div class="gd-avatar-sm">A</div>
+                        <div class="gd-access-info">
+                            <span class="gd-access-name">Admin (You)</span>
+                            <span class="gd-access-role">Owner</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Properties -->
+                <div class="gd-insp-card">
+                    <div class="gd-insp-card-title">System Properties</div>
+                    <div class="gd-insp-prop-row">
+                        <span class="prop-label">Type</span>
+                        <span class="prop-val" id="insp-prop-type">--</span>
+                    </div>
+                    <div class="gd-insp-prop-row">
+                        <span class="prop-label">Size</span>
+                        <span class="prop-val" id="insp-prop-size">--</span>
+                    </div>
+                    <div class="gd-insp-prop-row">
+                        <span class="prop-label">Storage used</span>
+                        <span class="prop-val" id="insp-prop-storage">--</span>
+                    </div>
+                    <div class="gd-insp-prop-row">
+                        <span class="prop-label">Location</span>
+                        <span class="prop-val" id="insp-prop-location">--</span>
+                    </div>
+                    <div class="gd-insp-prop-row">
+                        <span class="prop-label">Owner</span>
+                        <span class="prop-val" id="insp-prop-owner">Admin</span>
+                    </div>
+                    <div class="gd-insp-prop-row">
+                        <span class="prop-label">Modified</span>
+                        <span class="prop-val" id="insp-prop-date">--</span>
+                    </div>
+                    <div class="gd-insp-prop-row">
+                        <span class="prop-label">Telegram Msg</span>
+                        <span class="prop-val font-mono" id="insp-prop-msg-id">--</span>
+                    </div>
+                </div>
+
+                <!-- Direct Link Action -->
+                <div class="gd-insp-card">
+                    <div class="gd-insp-card-title">Link Sharing</div>
+                    <div class="gd-link-copy-box">
+                        <input type="text" id="insp-link-input" readonly />
+                        <button id="insp-copy-btn" class="gd-primary-btn-sm">Copy</button>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="gd-insp-actions">
+                    <button id="insp-open-btn" class="gd-primary-btn">Preview</button>
+                    <button id="insp-download-btn" class="gd-secondary-btn">Download</button>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Modals & Overlays -->
+    <div id="bg-blur" class="bg-blur"></div>
+
+    <!-- Create New Folder Modal -->
+    <div id="create-new-folder" class="gd-modal">
+        <div class="gd-modal-title">New folder</div>
+        <div class="gd-modal-body">
+            <input type="text" id="new-folder-name" placeholder="Untitled folder" autocomplete="off" />
+        </div>
+        <div class="gd-modal-footer">
+            <button id="new-folder-cancel" class="gd-secondary-btn">Cancel</button>
+            <button id="new-folder-create" class="gd-primary-btn">Create</button>
+        </div>
+    </div>
+
+    <!-- Rename File/Folder Modal -->
+    <div id="rename-file-folder" class="gd-modal">
+        <div class="gd-modal-title">Rename</div>
+        <div class="gd-modal-body">
+            <input type="text" id="rename-name" placeholder="New name" autocomplete="off" />
+        </div>
+        <div class="gd-modal-footer">
+            <button id="rename-cancel" class="gd-secondary-btn">Cancel</button>
+            <button id="rename-create" class="gd-primary-btn">OK</button>
+        </div>
+    </div>
+
+    <!-- Remote URL Upload Modal -->
+    <div id="new-url-upload" class="gd-modal">
+        <div class="gd-modal-title">Upload from URL</div>
+        <div class="gd-modal-body">
+            <input type="text" id="remote-url" placeholder="Paste direct download URL here" autocomplete="off" />
+            <div class="gd-checkbox-row">
+                <input type="checkbox" id="single-threaded-toggle">
+                <label for="single-threaded-toggle">Single-threaded stream</label>
+            </div>
+        </div>
+        <div class="gd-modal-footer">
+            <button id="remote-cancel" class="gd-secondary-btn">Cancel</button>
+            <button id="remote-start" class="gd-primary-btn">Upload</button>
+        </div>
+    </div>
+
+    <!-- Admin Login Modal -->
+    <div id="get-password" class="gd-modal">
+        <div class="gd-modal-title">🔐 Sign in to TG Drive</div>
+        <div class="gd-modal-body">
+            <p class="gd-login-subtext">Enter your admin password to access your cloud storage</p>
+            <input type="password" id="auth-pass" placeholder="Password" autocomplete="off" />
+        </div>
+        <div class="gd-modal-footer">
+            <button id="pass-login" class="gd-primary-btn">Sign In</button>
+        </div>
+    </div>
+
+    <!-- Google Drive Floating Upload Status Card (Bottom Right) -->
+    <div id="file-uploader" class="gd-upload-floating-card">
+        <div class="gd-upload-card-header">
+            <span class="gd-upload-title" id="upload-status">Uploading items...</span>
+            <button id="cancel-file-upload" class="gd-upload-close-btn">&times;</button>
+        </div>
+        <div class="gd-upload-card-body">
+            <div class="gd-upload-item-name" id="upload-filename">filename.ext</div>
+            <div class="gd-upload-meta">
+                <span id="upload-filesize">0 KB</span>
+                <span id="upload-percent">0%</span>
+            </div>
+            <div class="gd-upload-progress-track">
+                <div class="gd-upload-progress-fill" id="progress-bar"></div>
             </div>
         </div>
     </div>
+
+    <!-- Media Lightbox / Preview Modal -->
+    <div id="media-preview-modal" class="gd-preview-lightbox">
+        <div class="gd-preview-topbar">
+            <span id="preview-filename" class="gd-preview-name">Preview</span>
+            <div class="gd-preview-actions">
+                <button id="preview-download-btn" class="gd-icon-btn" title="Download">
+                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                </button>
+                <button id="preview-close-btn" class="gd-icon-btn" title="Close">
+                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+            </div>
+        </div>
+        <div class="gd-preview-content" id="preview-content-holder"></div>
+    </div>
+
+    <!-- Scripts -->
     <script src="static/js/extra.js"></script>
     <script src="static/js/apiHandler.js"></script>
     <script src="static/js/sidebar.js"></script>

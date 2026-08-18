@@ -124,16 +124,13 @@ fileInput.addEventListener('change', async (e) => {
         return;
     }
 
-    // Showing file uploader
-    document.getElementById('bg-blur').style.zIndex = '2';
-    document.getElementById('bg-blur').style.opacity = '0.1';
-    document.getElementById('file-uploader').style.zIndex = '3';
-    document.getElementById('file-uploader').style.opacity = '1';
+    // Showing Google Drive floating uploader widget
+    const uploaderCard = document.getElementById('file-uploader');
+    if (uploaderCard) uploaderCard.classList.add('active');
 
-    document.getElementById('upload-filename').innerText = 'Filename: ' + file.name;
-    document.getElementById('upload-filesize').innerText = 'Filesize: ' + (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-    document.getElementById('upload-status').innerText = 'Status: Uploading To Backend Server';
-
+    document.getElementById('upload-filename').innerText = file.name;
+    document.getElementById('upload-filesize').innerText = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+    document.getElementById('upload-status').innerText = 'Uploading to Drive...';
 
     const formData = new FormData();
     formData.append('file', file);
@@ -151,12 +148,12 @@ fileInput.addEventListener('change', async (e) => {
         if (e.lengthComputable) {
             const percentComplete = (e.loaded / e.total) * 100;
             progressBar.style.width = percentComplete + '%';
-            uploadPercent.innerText = 'Progress : ' + percentComplete.toFixed(2) + '%';
+            uploadPercent.innerText = percentComplete.toFixed(0) + '%';
         }
     });
 
     uploadRequest.upload.addEventListener('load', async () => {
-        await updateSaveProgress(id)
+        await updateSaveProgress(id);
     });
 
     uploadRequest.upload.addEventListener('error', () => {
@@ -171,10 +168,11 @@ cancelButton.addEventListener('click', () => {
     if (uploadStep === 1) {
         uploadRequest.abort();
     } else if (uploadStep === 2) {
-        const data = { 'id': uploadID }
-        postJson('/api/cancelUpload', data)
+        const data = { 'id': uploadID };
+        postJson('/api/cancelUpload', data);
     }
-    alert('Upload canceled');
+    const uploaderCard = document.getElementById('file-uploader');
+    if (uploaderCard) uploaderCard.classList.remove('active');
     window.location.reload();
 });
 
