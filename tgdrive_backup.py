@@ -8,11 +8,21 @@ Recursively backs up:
 4. SD Card Storage (Phone SD Card or USB Card Reader)
 5. Custom Path
 
-Uploads files while preserving the exact nested folder structure in TGDrive.
+Uploads files while mapping folder names to TGDrive Folder IDs so
+that the nested folder hierarchy displays perfectly in the web UI.
 """
 
 import os
 import sys
+
+# Ensure UTF-8 output encoding on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import time
 import ctypes
 import string
@@ -122,25 +132,18 @@ class MTPPhoneManager:
         try:
             import win32com.client
             shell = win32com.client.Dispatch("Shell.Application")
+            this_pc = shell.Namespace(17) # ssfDRIVES
+            phones = []
+            for item in this_pc.Items():
+                path_str = str(item.Path)
+                if "usb#" in path_str.lower() or "wpdbusenumroot" in path_str.lower() or "::" in path_str:
+                    phones.append({"name": item.Name, "item": item})
+            return phones
         except Exception:
-            # Fallback using python comtypes or powershell
             return MTPPhoneManager._get_phones_via_powershell()
-
-        this_pc = shell.Namespace(17) # ssfDRIVES
-        phones = []
-        for item in this_pc.Items():
-            # MTP devices don't have standard drive letters like C:\
-            path_str = str(item.Path)
-            if "usb#" in path_str.lower() or "wpdbusenumroot" in path_str.lower() or "::" in path_str:
-                phones.append({
-                    "name": item.Name,
-                    "item": item
-                })
-        return phones
 
     @staticmethod
     def _get_phones_via_powershell():
-        # Fallback to powershell query if win32com is not installed
         import subprocess
         cmd = '''$s = New-Object -ComObject Shell.Application; $s.Namespace(17).Items() | Where-Object { $_.Path -like "*usb#*" -or $_.Path -like "*::*" } | Select-Object -ExpandProperty Name'''
         try:
@@ -155,9 +158,9 @@ class TGDriveBackupClient:
     def __init__(self, base_url: str, password: str, drive_root: str):
         self.base_url = base_url.rstrip("/")
         self.password = password
-        self.drive_root = "/" + drive_root.strip("/") + "/"
+        self.drive_root = drive_root.strip("/")
         self.session = requests.Session()
-        self._created_folders: Set[str] = set()
+        self._folder_id_cache: Dict[str, str] = {"": "/"}  # Maps "Name/Subname" -> "/ID1/ID2/"
 
     def verify_auth(self) -> bool:
         """Verify password with TGDrive server."""
@@ -173,84 +176,108 @@ class TGDriveBackupClient:
             print(f"[!] Connection error to {self.base_url}: {e}")
             return False
 
-    def get_existing_items(self, remote_folder: str) -> Tuple[Set[str], Set[str]]:
-        """Get existing subfolders and files in a remote directory to enable resume/skip."""
+    def get_directory_contents(self, remote_id_path: str) -> Dict:
+        """Get directory contents by its TGDrive ID path (e.g. '/' or '/ID1/ID2/')."""
         try:
             res = self.session.post(
                 f"{self.base_url}/api/getDirectory",
-                json={"password": self.password, "path": remote_folder},
+                json={"password": self.password, "path": remote_id_path},
                 timeout=15,
             )
             data = res.json()
-            if data.get("status") != "ok":
-                return set(), set()
+            if data.get("status") == "ok":
+                return data.get("data", {}).get("contents", {})
+        except Exception as e:
+            print(f"[!] Error reading directory {remote_id_path}: {e}")
+        return {}
 
-            contents = data.get("data", {}).get("contents", {})
-            folders = set()
-            files = set()
+    def resolve_or_create_folder_id_path(self, named_path: str) -> str:
+        """
+        Converts human folder path like "Phone_Backup/Download/NagarikApp"
+        into TGDrive ID path like "/A1B2C3/D4E5F6/G7H8I9/".
+        Automatically creates missing folders along the way.
+        """
+        cleaned = named_path.strip("/")
+        if not cleaned:
+            return "/"
 
-            for item_id, item in contents.items():
-                if item.get("trash"):
-                    continue
-                if item.get("type") == "folder":
-                    folders.add(item.get("name"))
-                elif item.get("type") == "file":
-                    files.add(item.get("name"))
+        if cleaned in self._folder_id_cache:
+            return self._folder_id_cache[cleaned]
 
-            return folders, files
-        except Exception:
-            return set(), set()
-
-    def ensure_remote_folder_chain(self, remote_folder_path: str):
-        """Recursively ensure that all parent directories exist on TGDrive."""
-        cleaned = ("/" + remote_folder_path.strip("/") + "/").replace("//", "/")
-        if cleaned == "/" or cleaned in self._created_folders:
-            return
-
-        parts = [p for p in cleaned.split("/") if p]
-        current_path = "/"
+        parts = cleaned.split("/")
+        current_id_path = "/"
+        current_named_prefix = ""
 
         for part in parts:
-            existing_folders, _ = self.get_existing_items(current_path)
-            target_path = (current_path + part + "/").replace("//", "/")
+            current_named_prefix = f"{current_named_prefix}/{part}".strip("/")
+            if current_named_prefix in self._folder_id_cache:
+                current_id_path = self._folder_id_cache[current_named_prefix]
+                continue
 
-            if part not in existing_folders and target_path not in self._created_folders:
+            contents = self.get_directory_contents(current_id_path)
+            found_id = None
+
+            for item_id, item in contents.items():
+                if item.get("type") == "folder" and not item.get("trash"):
+                    if item.get("name") == part:
+                        found_id = item.get("id") or item_id
+                        break
+
+            if not found_id:
+                # Create the folder
                 try:
                     res = self.session.post(
                         f"{self.base_url}/api/createNewFolder",
                         json={
                             "password": self.password,
-                            "path": current_path,
+                            "path": current_id_path,
                             "name": part,
                         },
                         timeout=15,
                     )
-                    data = res.json()
-                    status = data.get("status")
-                    if status in ["ok", "Folder with the name already exist in current directory"]:
-                        self._created_folders.add(target_path)
+                    # Re-fetch directory to get the new folder's assigned ID
+                    contents = self.get_directory_contents(current_id_path)
+                    for item_id, item in contents.items():
+                        if item.get("type") == "folder" and item.get("name") == part:
+                            found_id = item.get("id") or item_id
+                            break
                 except Exception as e:
                     print(f"    [!] Error creating folder '{part}': {e}")
 
-            current_path = target_path
-            self._created_folders.add(current_path)
+            if not found_id:
+                found_id = part  # fallback
 
-    def upload_file(self, local_file_path: Path, remote_folder: str) -> bool:
+            current_id_path = (current_id_path + found_id + "/").replace("//", "/")
+            self._folder_id_cache[current_named_prefix] = current_id_path
+
+        return current_id_path
+
+    def get_existing_files_in_folder(self, folder_id_path: str) -> Set[str]:
+        """Returns the set of filenames already in this folder."""
+        contents = self.get_directory_contents(folder_id_path)
+        existing = set()
+        for _, item in contents.items():
+            if item.get("type") == "file" and not item.get("trash"):
+                existing.add(item.get("name"))
+        return existing
+
+    def upload_file(self, local_file_path: Path, human_remote_folder: str) -> bool:
         """Upload a single file to TGDrive with progress tracking."""
         file_name = local_file_path.name
         file_size = local_file_path.stat().st_size
         upload_id = generate_random_id()
 
-        self.ensure_remote_folder_chain(remote_folder)
+        # Resolve ID path
+        remote_id_path = self.resolve_or_create_folder_id_path(human_remote_folder)
 
         print(f"  ⬆️ Uploading: {file_name} ({format_size(file_size)})")
-        print(f"     ➔ Destination: {remote_folder}")
+        print(f"     ➔ Folder: /{human_remote_folder}/")
 
         try:
             with open(local_file_path, "rb") as f:
                 files = {"file": (file_name, f)}
                 form_data = {
-                    "path": remote_folder,
+                    "path": remote_id_path,
                     "password": self.password,
                     "id": upload_id,
                     "total_size": str(file_size),
@@ -309,38 +336,32 @@ class TGDriveBackupClient:
 
         print("\n" + "=" * 65)
         print(f"🔍 Scanning clean files in: {source_dir}")
-        print(f"🌐 Remote Destination: {self.base_url}{self.drive_root}")
+        print(f"🌐 Destination Folder on TGDrive: /{self.drive_root}/")
         print("=" * 65)
 
-        total_files = 0
-        total_bytes = 0
         file_list = []
+        total_bytes = 0
 
         for root, dirs, files in os.walk(source_dir):
             rel_dir = os.path.relpath(root, source_dir)
-            dirs[:] = [
-                d for d in dirs
-                if not should_skip_directory(d, os.path.join(rel_dir, d))
-            ]
+            dirs[:] = [d for d in dirs if not should_skip_directory(d, os.path.join(rel_dir, d))]
 
             for file in files:
                 if should_skip_file(file):
                     continue
-
                 p = Path(root) / file
                 try:
                     sz = p.stat().st_size
                     file_list.append(p)
-                    total_files += 1
                     total_bytes += sz
                 except (PermissionError, FileNotFoundError):
                     continue
 
-        if total_files == 0:
+        if not file_list:
             print("⚠️ No valid user files found to backup.")
             return
 
-        print(f"\n📦 Found {total_files} files ({format_size(total_bytes)} total)")
+        print(f"\n📦 Found {len(file_list)} files ({format_size(total_bytes)} total)")
         confirm = input("▶️ Start backup now? (Y/n): ").strip().lower()
         if confirm == "n":
             print("Backup cancelled.")
@@ -357,20 +378,21 @@ class TGDriveBackupClient:
         for idx, local_file in enumerate(file_list, start=1):
             rel_path = local_file.relative_to(base_path).parent
             if str(rel_path) == ".":
-                remote_folder = self.drive_root
+                human_folder = self.drive_root
             else:
-                remote_folder = (self.drive_root + str(rel_path).replace("\\", "/") + "/").replace("//", "/")
+                human_folder = f"{self.drive_root}/{str(rel_path).replace(chr(92), '/')}".strip("/")
 
             print(f"\n[{idx}/{total_files}] Processing: {local_file.name}")
 
             # Check if file already exists
-            _, existing_files = self.get_existing_items(remote_folder)
+            remote_id_path = self.resolve_or_create_folder_id_path(human_folder)
+            existing_files = self.get_existing_files_in_folder(remote_id_path)
             if local_file.name in existing_files:
-                print(f"  ⏭️ Already exists in {remote_folder} (Skipping)")
+                print(f"  ⏭️ Already exists in /{human_folder}/ (Skipping)")
                 skip_count += 1
                 continue
 
-            if self.upload_file(local_file, remote_folder):
+            if self.upload_file(local_file, human_folder):
                 success_count += 1
             else:
                 fail_count += 1
@@ -381,10 +403,10 @@ class TGDriveBackupClient:
         print(f"   ⏭️ Skipped (Already saved): {skip_count}")
         print(f"   ❌ Failed:                  {fail_count}")
         print(f"   📦 Total Files:             {total_files}")
-        print(f"   🌐 View Drive:              {self.base_url}/?path={self.drive_root}")
+        print(f"   🌐 View Drive:              {self.base_url}/?path=/")
         print("=" * 65)
 
-    def sync_mtp_phone_folder(self, phone_name: str, storage_name: str, subfolder_rel: str = ""):
+    def sync_mtp_phone_folder(self, phone_name: str, storage_name: str, subfolder_rel: str = "", auto_confirm: bool = False):
         """Sync files from an MTP connected phone into TGDrive."""
         import subprocess
         staging_dir = Path(tempfile.gettempdir()) / "tgdrive_phone_staging"
@@ -396,7 +418,6 @@ class TGDriveBackupClient:
         print(f"📱 Scanning Phone: {phone_name} ➔ {storage_name} ➔ {subfolder_rel or 'Root'}")
         print("=" * 65)
 
-        # PowerShell script to recursively extract MTP files with relative paths
         ps_script = f'''
 $shell = New-Object -ComObject Shell.Application
 $destFolder = $shell.Namespace("{str(staging_dir)}")
@@ -409,7 +430,7 @@ $storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_n
 if (-not $storage) {{ Write-Error "Storage not found"; exit 1 }}
 
 $targetRoot = $storage
-$subPath = "{subfolder_rel.replace('/', '\\')}".Trim('\\')
+$subPath = "{subfolder_rel.replace('/', chr(92))}".Trim('\\')
 if ($subPath) {{
     $parts = $subPath.Split('\\')
     foreach ($p in $parts) {{
@@ -434,8 +455,13 @@ function Extract-MTP($item, $relPath) {{
             }}
         }} else {{
             if ($name -notlike "~$*" -and $name -notlike ".*") {{
-                Write-Output "COPY:$relPath/$name"
-                $localFolderObj.CopyHere($sub, 16) # 16 = Overwrite / Yes to All
+                $localFolderObj.CopyHere($sub, 16)
+                $destFile = Join-Path $localTargetDir $name
+                $timeout = 0
+                while ((-not (Test-Path $destFile) -or (Get-Item $destFile).Length -eq 0) -and $timeout -lt 20) {{
+                    Start-Sleep -Milliseconds 250
+                    $timeout++
+                }}
             }}
         }}
     }}
@@ -469,16 +495,17 @@ Extract-MTP $targetRoot ""
             return
 
         print(f"📦 Successfully read {len(staged_files)} files ({format_size(total_bytes)}) from phone.")
-        confirm = input("▶️ Start uploading to TGDrive? (Y/n): ").strip().lower()
-        if confirm == "n":
-            print("Upload cancelled.")
-            shutil.rmtree(staging_dir, ignore_errors=True)
-            return
+        if not auto_confirm:
+            confirm = input("▶️ Start uploading to TGDrive? (Y/n): ").strip().lower()
+            if confirm == "n":
+                print("Upload cancelled.")
+                shutil.rmtree(staging_dir, ignore_errors=True)
+                return
 
         try:
             self._upload_file_list(staging_dir, staged_files)
         finally:
-            print("🧹 Cleaning up local temporary staging files...")
+            print("🧹 Cleaning up temporary phone cache...")
             shutil.rmtree(staging_dir, ignore_errors=True)
 
 
@@ -488,7 +515,6 @@ def show_clean_menu() -> Tuple[str, Path, str, Optional[Dict]]:
     c_users_path = Path("C:/Users") if os.path.exists("C:/Users") else user_home
     d_drive_path = Path("D:/")
 
-    # Detect connected MTP phones
     phones = MTPPhoneManager.get_connected_phones()
     detected_phone_name = phones[0]["name"] if phones else None
 
@@ -510,15 +536,15 @@ def show_clean_menu() -> Tuple[str, Path, str, Optional[Dict]]:
             print(f"\nTarget: {c_users_path}")
             sub = input(f"Backup entire C:\\Users or specific user folder? (Press Enter for '{user_home.name}', or type 'all'): ").strip().lower()
             if sub == "all":
-                return "local", c_users_path, "/C_Users_Backup", None
+                return "local", c_users_path, "C_Users_Backup", None
             else:
-                return "local", user_home, f"/{user_home.name}_Backup", None
+                return "local", user_home, f"{user_home.name}_Backup", None
 
         elif choice == "2":
             if not d_drive_path.exists():
                 print("❌ D: Drive not found on this computer.")
                 continue
-            return "local", d_drive_path, "/D_Drive_Backup", None
+            return "local", d_drive_path, "D_Drive_Backup", None
 
         elif choice == "3":
             if detected_phone_name:
@@ -526,27 +552,27 @@ def show_clean_menu() -> Tuple[str, Path, str, Optional[Dict]]:
                 sub = input("Folder to backup on phone [Default: Download/NagarikApp, or type folder name / press Enter for all]: ").strip()
                 if not sub:
                     sub = "Download/NagarikApp"
-                return "mtp", Path("."), f"/{sub.split('/')[-1] if sub != 'all' else 'Phone_Backup'}", {
+                return "mtp", Path("."), f"{sub.split('/')[-1] if sub != 'all' else 'Phone_Backup'}", {
                     "phone": detected_phone_name,
                     "storage": "Internal",
                     "subfolder": "" if sub == "all" else sub
                 }
             else:
                 p_str = input("Enter Phone Mount / Folder path: ").strip().strip('"').strip("'")
-                return "local", Path(p_str), "/Mobile_Storage_Backup", None
+                return "local", Path(p_str), "Mobile_Storage_Backup", None
 
         elif choice == "4":
             if detected_phone_name:
                 print(f"\n📱 Reading SD Card on Phone: {detected_phone_name}")
                 sub = input("Folder on SD card to backup (Press Enter for all): ").strip()
-                return "mtp", Path("."), "/SD_Card_Backup", {
+                return "mtp", Path("."), "SD_Card_Backup", {
                     "phone": detected_phone_name,
                     "storage": "SD card",
                     "subfolder": sub
                 }
             else:
                 sd_path = input("Enter SD Card Drive Letter (e.g. E:\\ or F:\\): ").strip().strip('"').strip("'")
-                return "local", Path(sd_path), "/SD_Card_Backup", None
+                return "local", Path(sd_path), "SD_Card_Backup", None
 
         elif choice == "5":
             manual_path = input("\nEnter custom folder path: ").strip().strip('"').strip("'")
@@ -554,7 +580,7 @@ def show_clean_menu() -> Tuple[str, Path, str, Optional[Dict]]:
             if not p.exists():
                 print(f"❌ Path does not exist: {manual_path}")
                 continue
-            return "local", p, f"/{p.name}_Backup", None
+            return "local", p, f"{p.name}_Backup", None
         else:
             print("Please enter a valid choice (1-5).")
 
@@ -596,7 +622,7 @@ def main():
     if args.source:
         mode = "local"
         source_path = Path(args.source)
-        dest_folder = args.dest or f"/{source_path.name}_Backup"
+        dest_folder = args.dest or f"{source_path.name}_Backup"
         mtp_info = None
     else:
         mode, source_path, suggested_dest, mtp_info = show_clean_menu()
