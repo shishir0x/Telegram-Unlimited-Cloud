@@ -1,18 +1,27 @@
-# Use the official Python base image
-FROM python:3.11.7-slim AS base
+FROM python:3.11.7-slim
 
-# Set the working directory inside the container
-WORKDIR /app
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PORT=7860
 
-# Copy the requirements file to the working directory and install dependencies
+# Create user with UID 1000 for Hugging Face Spaces compatibility
+RUN useradd -m -u 1000 user
+
+WORKDIR /home/user/app
+
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code to the working directory
-COPY . .
+# Copy application files and set permissions
+COPY --chown=user:user . .
 
-# Expose the port on which the application will run
-EXPOSE 8080
+# Ensure cache directory exists and is writable
+RUN mkdir -p /home/user/app/cache /home/user/app/downloads && \
+    chown -R user:user /home/user/app
 
-# Run the FastAPI application using uvicorn server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+USER user
+
+EXPOSE 7860
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
