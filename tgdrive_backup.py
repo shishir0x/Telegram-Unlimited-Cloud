@@ -265,6 +265,10 @@ class TGDriveBackupClient:
         """Upload a single file to TGDrive with progress tracking."""
         file_name = local_file_path.name
         file_size = local_file_path.stat().st_size
+        if file_size == 0:
+            print(f"  ⏭️ Skipping 0-byte empty file: {file_name}")
+            return True
+
         upload_id = generate_random_id()
 
         # Resolve ID path
