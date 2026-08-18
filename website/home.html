@@ -122,6 +122,56 @@
         </div>
         <!-- File Uploader End -->
 
+        <!-- File / Folder Details Modal Start -->
+        <div id="file-details-modal" class="create-new-folder details-modal">
+            <div class="details-header">
+                <span id="details-title">📄 File Properties</span>
+                <button id="details-close-btn" class="close-x-btn">&times;</button>
+            </div>
+            <div class="details-body">
+                <div class="details-row">
+                    <span class="detail-label">Name:</span>
+                    <span id="detail-name" class="detail-val font-semibold"></span>
+                </div>
+                <div class="details-row">
+                    <span class="detail-label">Type:</span>
+                    <span id="detail-type" class="detail-val"></span>
+                </div>
+                <div class="details-row">
+                    <span class="detail-label">Size:</span>
+                    <span id="detail-size" class="detail-val"></span>
+                </div>
+                <div class="details-row">
+                    <span class="detail-label">Location:</span>
+                    <span id="detail-location" class="detail-val"></span>
+                </div>
+                <div class="details-row">
+                    <span class="detail-label">Owner:</span>
+                    <span id="detail-owner" class="detail-val"></span>
+                </div>
+                <div class="details-row">
+                    <span class="detail-label">Date Uploaded:</span>
+                    <span id="detail-date" class="detail-val"></span>
+                </div>
+                <div class="details-row">
+                    <span class="detail-label">Telegram Msg ID:</span>
+                    <span id="detail-msg-id" class="detail-val font-mono"></span>
+                </div>
+                <div class="details-row">
+                    <span class="detail-label">Direct Link:</span>
+                    <div class="link-copy-container">
+                        <input type="text" id="detail-link-input" readonly />
+                        <button id="detail-copy-link-btn">Copy</button>
+                    </div>
+                </div>
+            </div>
+            <div class="details-footer">
+                <button id="detail-open-btn" class="primary-action-btn">Open / Preview</button>
+                <button id="detail-download-btn" class="secondary-action-btn">Download</button>
+            </div>
+        </div>
+        <!-- File / Folder Details Modal End -->
+
         <!-- Main Content Start -->
         <div class="main-content">
             <div class="header">
@@ -130,7 +180,6 @@
                     <form id="search-form">
                         <input id="file-search" type="text" placeholder="Search in Drive" autocomplete="off" />
                     </form>
-
                 </div>
             </div>
 
@@ -138,9 +187,12 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Name</th>
-                            <th>File Size</th>
-                            <th>More</th>
+                            <th style="width: 40%;">Name</th>
+                            <th style="width: 15%;">Type</th>
+                            <th style="width: 12%;">Owner</th>
+                            <th style="width: 18%;">Date Modified</th>
+                            <th style="width: 10%;">Size</th>
+                            <th style="width: 5%; text-align: center;">More</th>
                         </tr>
                     </thead>
                     <tbody id="directory-data"></tbody>
