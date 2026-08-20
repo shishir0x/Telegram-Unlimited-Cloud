@@ -720,11 +720,6 @@ class TGDriveBackupClient:
             }, "Sync complete: All files are up to date.")
             return
 
-        confirm = input("\n▶️ Proceed with upload? (Y/n): ").strip().lower()
-        if confirm == "n":
-            print("Sync cancelled.")
-            return
-
         # ── Step 4: Upload with live status ──────────────────────────────────
         total_count = len(files_to_sync)
         remaining_bytes = total_sync_bytes
@@ -906,13 +901,6 @@ Scan-MTP $targetRoot ""
                 "remaining_items": 0
             }, "Phone sync complete: All files are up to date.")
             return
-
-        if not auto_confirm:
-            confirm = input("\n▶️ Start syncing to TGDrive? (Y/n): ").strip().lower()
-            if confirm == "n":
-                print("Sync cancelled.")
-                shutil.rmtree(staging_dir, ignore_errors=True)
-                return
 
         # ── Step 4: Incremental Folder-by-Folder Extract & Upload ────────────
         from collections import defaultdict
