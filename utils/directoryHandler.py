@@ -15,14 +15,28 @@ cache_dir.mkdir(parents=True, exist_ok=True)
 drive_cache_path = cache_dir / "drive.data"
 
 
-def getRandomID():
+def ensure_drive_data():
     global DRIVE_DATA
+    if DRIVE_DATA is None:
+        if drive_cache_path.exists():
+            try:
+                with open(drive_cache_path, "rb") as f:
+                    DRIVE_DATA = dill.load(f)
+            except Exception:
+                DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
+        else:
+            DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
+    return DRIVE_DATA
+
+
+def getRandomID():
+    drive = ensure_drive_data()
     while True:
         id = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        if not DRIVE_DATA:
+        if not drive:
             return id
-        if id not in DRIVE_DATA.used_ids:
-            DRIVE_DATA.used_ids.append(id)
+        if id not in drive.used_ids:
+            drive.used_ids.append(id)
             return id
 
 
@@ -79,14 +93,14 @@ class NewDriveData:
         logger.info(f"Creating new folder '{name}' in path '{path}'.")
 
         folder = Folder(name, path)
-        if path == "/":
-            directory_folder: Folder = self.contents[path]
+        if path == "/" or not path:
+            directory_folder: Folder = self.contents["/"]
             directory_folder.contents[folder.id] = folder
         else:
-            paths = path.strip("/").split("/")
+            paths = [p for p in path.strip("/").split("/") if p]
             directory_folder: Folder = self.contents["/"]
-            for path in paths:
-                directory_folder = directory_folder.contents[path]
+            for p in paths:
+                directory_folder = directory_folder.contents[p]
             directory_folder.contents[folder.id] = folder
 
         self.save()
@@ -96,37 +110,39 @@ class NewDriveData:
         logger.info(f"Creating new file '{name}' in path '{path}'.")
 
         file = File(name, file_id, size, path)
-        if path == "/":
-            directory_folder: Folder = self.contents[path]
+        if path == "/" or not path:
+            directory_folder: Folder = self.contents["/"]
             directory_folder.contents[file.id] = file
         else:
-            paths = path.strip("/").split("/")
+            paths = [p for p in path.strip("/").split("/") if p]
             directory_folder: Folder = self.contents["/"]
-            for path in paths:
-                directory_folder = directory_folder.contents[path]
+            for p in paths:
+                directory_folder = directory_folder.contents[p]
             directory_folder.contents[file.id] = file
 
         self.save()
 
     def get_directory(
         self, path: str, is_admin: bool = True, auth: str = None
-    ) -> Folder:
+    ):
         folder_data: Folder = self.contents["/"]
         auth_success = False
         auth_home_path = None
 
-        if path != "/":
-            path = path.strip("/")
-
-            if "/" in path:
-                path = path.split("/")
+        if path and path != "/":
+            clean_path = path.strip("/")
+            if "/" in clean_path:
+                paths = [p for p in clean_path.split("/") if p]
             else:
-                path = [path]
+                paths = [clean_path]
 
-            for folder in path:
-                folder_data = folder_data.contents[folder]
+            for p in paths:
+                if not hasattr(folder_data, "contents") or p not in folder_data.contents:
+                    logger.warning(f"Folder '{p}' not found in '{path}'.")
+                    return None
+                folder_data = folder_data.contents[p]
 
-                if auth in folder_data.auth_hashes:
+                if auth and hasattr(folder_data, "auth_hashes") and auth in folder_data.auth_hashes:
                     auth_success = True
                     auth_home_path = (
                         "/" + folder_data.path.strip("/") + "/" + folder_data.id
@@ -142,95 +158,206 @@ class NewDriveData:
 
         return folder_data
 
-    def get_folder_auth(self, path: str) -> None:
+    def get_folder_auth(self, path: str) -> str:
         auth = getRandomID()
         folder_data: Folder = self.contents["/"]
 
-        if path != "/":
-            path = path.strip("/")
-
-            if "/" in path:
-                path = path.split("/")
-            else:
-                path = [path]
-
-            for folder in path:
-                folder_data = folder_data.contents[folder]
+        if path and path != "/":
+            clean_path = path.strip("/")
+            paths = [p for p in clean_path.split("/") if p]
+            for p in paths:
+                if hasattr(folder_data, "contents") and p in folder_data.contents:
+                    folder_data = folder_data.contents[p]
 
         folder_data.auth_hashes.append(auth)
         self.save()
         logger.info(f"Authorization hash generated for path '{path}'.")
         return auth
 
-    def get_file(self, path) -> File:
-        if len(path.strip("/").split("/")) > 0:
-            folder_path = "/" + "/".join(path.strip("/").split("/")[:-1])
-            file_id = path.strip("/").split("/")[-1]
+    def get_file(self, path: str) -> File:
+        clean = path.strip("/")
+        if "/" in clean:
+            folder_path = "/" + "/".join(clean.split("/")[:-1])
+            file_id = clean.split("/")[-1]
         else:
             folder_path = "/"
-            file_id = path.strip("/")
+            file_id = clean
 
         folder_data = self.get_directory(folder_path)
-        return folder_data.contents[file_id]
+        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+            return folder_data.contents[file_id]
+        raise KeyError(f"File not found: {path}")
 
     def rename_file_folder(self, path: str, new_name: str) -> None:
-        if len(path.strip("/").split("/")) > 0:
-            folder_path = "/" + "/".join(path.strip("/").split("/")[:-1])
-            file_id = path.strip("/").split("/")[-1]
+        clean = path.strip("/")
+        if "/" in clean:
+            folder_path = "/" + "/".join(clean.split("/")[:-1])
+            file_id = clean.split("/")[-1]
         else:
             folder_path = "/"
-            file_id = path.strip("/")
+            file_id = clean
         folder_data = self.get_directory(folder_path)
-        folder_data.contents[file_id].name = new_name
-        self.save()
-        logger.info(f"Item at path '{path}' renamed to '{new_name}'.")
+        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+            folder_data.contents[file_id].name = new_name
+            self.save()
+            logger.info(f"Item at path '{path}' renamed to '{new_name}'.")
 
     def trash_file_folder(self, path: str, trash: bool) -> None:
         action = "Trashing" if trash else "Restoring"
-
-        if len(path.strip("/").split("/")) > 0:
-            folder_path = "/" + "/".join(path.strip("/").split("/")[:-1])
-            file_id = path.strip("/").split("/")[-1]
+        clean = path.strip("/")
+        if "/" in clean:
+            folder_path = "/" + "/".join(clean.split("/")[:-1])
+            file_id = clean.split("/")[-1]
         else:
             folder_path = "/"
-            file_id = path.strip("/")
+            file_id = clean
         folder_data = self.get_directory(folder_path)
-        folder_data.contents[file_id].trash = trash
-        self.save()
-        logger.info(f"Item at path '{path}' {action.lower()} successfully.")
+        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+            folder_data.contents[file_id].trash = trash
+            self.save()
+            logger.info(f"Item at path '{path}' {action.lower()} successfully.")
 
     def get_trashed_files_folders(self):
         root_dir = self.get_directory("/")
         trash_data = {}
 
         def traverse_directory(folder):
-            for item in folder.contents.values():
-                if item.type == "folder":
-                    if item.trash:
-                        trash_data[item.id] = item
-                    else:
-                        # Recursively traverse the subfolder
-                        traverse_directory(item)
-                elif item.type == "file":
-                    if item.trash:
-                        trash_data[item.id] = item
+            if hasattr(folder, "contents"):
+                for item in folder.contents.values():
+                    if item.type == "folder":
+                        if item.trash:
+                            trash_data[item.id] = item
+                        else:
+                            traverse_directory(item)
+                    elif item.type == "file":
+                        if item.trash:
+                            trash_data[item.id] = item
 
         traverse_directory(root_dir)
         return trash_data
 
     def delete_file_folder(self, path: str) -> None:
-
-        if len(path.strip("/").split("/")) > 0:
-            folder_path = "/" + "/".join(path.strip("/").split("/")[:-1])
-            file_id = path.strip("/").split("/")[-1]
+        clean = path.strip("/")
+        if "/" in clean:
+            folder_path = "/" + "/".join(clean.split("/")[:-1])
+            file_id = clean.split("/")[-1]
         else:
             folder_path = "/"
-            file_id = path.strip("/")
+            file_id = clean
 
         folder_data = self.get_directory(folder_path)
-        del folder_data.contents[file_id]
+        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+            del folder_data.contents[file_id]
+            self.save()
+            logger.info(f"Item at path '{path}' deleted successfully.")
+
+    def _find_folder_by_id(self, folder_id: str):
+        def traverse(folder):
+            if hasattr(folder, "contents"):
+                if folder_id in folder.contents and folder.contents[folder_id].type == "folder":
+                    return folder.contents[folder_id]
+                for child in folder.contents.values():
+                    if child.type == "folder":
+                        res = traverse(child)
+                        if res:
+                            return res
+            return None
+        return traverse(self.contents.get("/"))
+
+    def get_breadcrumbs(self, path: str) -> list:
+        crumbs = [{"name": "My Drive", "path": "/", "id": "root"}]
+        if path == "/" or not path or path == "redirect":
+            return crumbs
+        if path.startswith("/trash") or path == "trash":
+            return [{"name": "Trash", "path": "/trash", "id": "trash"}]
+        if "/search_" in path or path.startswith("search_") or path.startswith("/search"):
+            q = path.split("_", 1)[1] if "_" in path else ""
+            import urllib.parse
+            q_decoded = urllib.parse.unquote(q)
+            return [
+                {"name": "My Drive", "path": "/", "id": "root"},
+                {"name": f'Search: "{q_decoded}"', "path": path, "id": "search"}
+            ]
+
+        # Strip share prefix & any accidental query parameters
+        clean = path.replace("/share_", "").replace("share_", "").strip("/")
+        if "&" in clean:
+            clean = clean.split("&")[0].strip("/")
+        if not clean:
+            return crumbs
+
+        parts = [p for p in clean.split("/") if p]
+        curr = self.contents.get("/")
+        acc_path = ""
+        is_share = path.startswith("/share_") or path.startswith("share_")
+
+        for part in parts:
+            acc_path += f"/{part}"
+            target_path = f"/share_{acc_path.strip('/')}" if is_share else acc_path
+            if curr and hasattr(curr, "contents") and part in curr.contents:
+                child = curr.contents[part]
+                crumbs.append({"name": child.name, "path": target_path, "id": child.id})
+                curr = child
+            else:
+                found = self._find_folder_by_id(part)
+                if found:
+                    crumbs.append({"name": found.name, "path": target_path, "id": found.id})
+                    curr = found
+                else:
+                    crumbs.append({"name": part, "path": target_path, "id": part})
+                    curr = None
+
+        return crumbs
+
+    def move_file_folder(self, src_path: str, dest_folder_path: str) -> None:
+        src_path = ("/" + src_path.strip("/")).replace("//", "/")
+        dest_folder_path = ("/" + dest_folder_path.strip("/")).replace("//", "/")
+
+        if len(src_path.strip("/").split("/")) > 1:
+            src_parent_path = "/" + "/".join(src_path.strip("/").split("/")[:-1])
+            src_item_id = src_path.strip("/").split("/")[-1]
+        else:
+            src_parent_path = "/"
+            src_item_id = src_path.strip("/")
+
+        # Cannot move into the same parent folder
+        if src_parent_path == dest_folder_path:
+            logger.info(f"Item '{src_item_id}' is already in destination '{dest_folder_path}'.")
+            return
+
+        # Prevent moving a folder into itself or its subfolders
+        if dest_folder_path == src_path or dest_folder_path.startswith(src_path + "/"):
+            raise ValueError("Cannot move a folder into itself or a subfolder.")
+
+        src_folder = self.get_directory(src_parent_path)
+        dest_folder = self.get_directory(dest_folder_path)
+
+        if not src_folder or src_item_id not in src_folder.contents:
+            raise KeyError(f"Source item not found: {src_path}")
+        if not dest_folder:
+            raise KeyError(f"Destination folder not found: {dest_folder_path}")
+
+        item = src_folder.contents.pop(src_item_id)
+
+        # Update item's path
+        if item.type == "folder":
+            item.path = ("/" + dest_folder_path.strip("/") + "/").replace("//", "/")
+
+            def update_children_paths(folder, parent_path):
+                for child in folder.contents.values():
+                    if child.type == "folder":
+                        child.path = ("/" + parent_path.strip("/") + "/" + folder.id + "/").replace("//", "/")
+                        update_children_paths(child, child.path)
+                    else:
+                        child.path = ("/" + parent_path.strip("/") + "/" + folder.id).replace("//", "/")
+
+            update_children_paths(item, dest_folder_path)
+        else:
+            item.path = dest_folder_path if dest_folder_path == "/" else dest_folder_path
+
+        dest_folder.contents[item.id] = item
         self.save()
-        logger.info(f"Item at path '{path}' deleted successfully.")
+        logger.info(f"Moved item '{item.name}' ({item.id}) from '{src_path}' to '{dest_folder_path}'.")
 
     def search_file_folder(self, query: str):
         logger.info(f"Searching for items matching query '{query}'.")
@@ -248,6 +375,7 @@ class NewDriveData:
         traverse_directory(root_dir)
         logger.info(f"Search completed. Found {len(search_results)} matching items.")
         return search_results
+
 
 
 class NewBotMode:

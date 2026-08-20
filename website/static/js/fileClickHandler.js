@@ -1,11 +1,13 @@
 function openFolder() {
-    let path = (getCurrentPath() + '/' + this.getAttribute('data-id') + '/').replaceAll('//', '/');
-
-    const auth = getFolderAuthFromPath();
-    if (auth) {
-        path = path + '&auth=' + auth;
+    const folderId = this.getAttribute('data-id');
+    const folderItem = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[folderId] : null;
+    let targetPath;
+    if (folderItem && folderItem.path) {
+        targetPath = (folderItem.path + '/' + folderId).replaceAll('//', '/');
+    } else {
+        targetPath = (getCurrentPath() + '/' + folderId).replaceAll('//', '/');
     }
-    window.location.href = `/?path=${path}`;
+    navigateToPath(targetPath);
 }
 
 function openFile() {
@@ -115,43 +117,62 @@ function renameFileFolder() {
 document.addEventListener('DOMContentLoaded', () => {
     const renameCancel = document.getElementById('rename-cancel');
     const renameCreate = document.getElementById('rename-create');
+    const renameInput = document.getElementById('rename-name');
     const bgBlur = document.getElementById('bg-blur');
     const renameModal = document.getElementById('rename-file-folder');
 
+    function closeRenameModal() {
+        if (renameInput) renameInput.value = '';
+        if (bgBlur) bgBlur.style.opacity = '0';
+        if (renameModal) renameModal.style.opacity = '0';
+        setTimeout(() => {
+            if (bgBlur) bgBlur.style.zIndex = '-1';
+            if (renameModal) renameModal.style.zIndex = '-1';
+        }, 200);
+    }
+
     if (renameCancel) {
-        renameCancel.addEventListener('click', () => {
-            document.getElementById('rename-name').value = '';
-            bgBlur.style.opacity = '0';
-            renameModal.style.opacity = '0';
-            setTimeout(() => {
-                bgBlur.style.zIndex = '-1';
-                renameModal.style.zIndex = '-1';
-            }, 200);
-        });
+        renameCancel.addEventListener('click', closeRenameModal);
+    }
+
+    async function handleRenameSubmit() {
+        const name = renameInput.value.trim();
+        if (name === '') {
+            alert('Name cannot be empty');
+            return;
+        }
+
+        const id = renameModal.getAttribute('data-id');
+        const moreDiv = document.getElementById(`more-option-${id}`);
+        const path = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id;
+
+        const data = {
+            'name': name,
+            'path': path.replaceAll('//', '/')
+        };
+
+        const response = await postJson('/api/renameFileFolder', data);
+        if (response.status === 'ok') {
+            closeRenameModal();
+            showToast(`Renamed to "${name}" ✏️`);
+            broadcastDriveChange('RENAME', { name, path: data.path });
+            getCurrentDirectory();
+        } else {
+            alert('Failed to rename file/folder: ' + (response.status || 'Error'));
+        }
     }
 
     if (renameCreate) {
-        renameCreate.addEventListener('click', async () => {
-            const name = document.getElementById('rename-name').value;
-            if (name === '') {
-                alert('Name cannot be empty');
-                return;
-            }
+        renameCreate.addEventListener('click', handleRenameSubmit);
+    }
 
-            const id = renameModal.getAttribute('data-id');
-            const path = document.getElementById(`more-option-${id}`).getAttribute('data-path') + '/' + id;
-
-            const data = {
-                'name': name,
-                'path': path
-            };
-
-            const response = await postJson('/api/renameFileFolder', data);
-            if (response.status === 'ok') {
-                window.location.reload();
-            } else {
-                alert('Failed to rename file/folder: ' + (response.status || 'Error'));
-                window.location.reload();
+    if (renameInput) {
+        renameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleRenameSubmit();
+            } else if (e.key === 'Escape') {
+                closeRenameModal();
             }
         });
     }
@@ -160,18 +181,20 @@ document.addEventListener('DOMContentLoaded', () => {
 // Trash & Restore
 async function trashFileFolder() {
     const id = this.getAttribute('id').split('-')[1];
-    const path = document.getElementById(`more-option-${id}`).getAttribute('data-path') + '/' + id;
+    const moreDiv = document.getElementById(`more-option-${id}`);
+    const path = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id;
     const data = {
-        'path': path,
+        'path': path.replaceAll('//', '/'),
         'trash': true
     };
     const response = await postJson('/api/trashFileFolder', data);
 
     if (response.status === 'ok') {
-        window.location.reload();
+        showToast('Moved item to Trash 🗑️');
+        broadcastDriveChange('TRASH', { path: data.path });
+        getCurrentDirectory();
     } else {
         alert('Failed to Send File/Folder to Trash');
-        window.location.reload();
     }
 }
 
@@ -179,39 +202,45 @@ async function restoreFileFolder() {
     const id = this.getAttribute('id').split('-')[1];
     const path = this.getAttribute('data-path') + '/' + id;
     const data = {
-        'path': path,
+        'path': path.replaceAll('//', '/'),
         'trash': false
     };
     const response = await postJson('/api/trashFileFolder', data);
 
     if (response.status === 'ok') {
-        window.location.reload();
+        showToast('Restored item from Trash 🔄');
+        broadcastDriveChange('RESTORE', { path: data.path });
+        getCurrentDirectory();
     } else {
         alert('Failed to Restore File/Folder');
-        window.location.reload();
     }
 }
 
 async function deleteFileFolder() {
+    if (!confirm('Are you sure you want to permanently delete this item? This action cannot be undone.')) {
+        return;
+    }
     const id = this.getAttribute('id').split('-')[1];
     const path = this.getAttribute('data-path') + '/' + id;
     const data = {
-        'path': path
+        'path': path.replaceAll('//', '/')
     };
     const response = await postJson('/api/deleteFileFolder', data);
 
     if (response.status === 'ok') {
-        window.location.reload();
+        showToast('Item permanently deleted 🗑️');
+        broadcastDriveChange('DELETE', { path: data.path });
+        getCurrentDirectory();
     } else {
         alert('Failed to Delete File/Folder');
-        window.location.reload();
     }
 }
 
 async function shareFile() {
     const fileName = (this.parentElement.getAttribute('data-name') || '').toLowerCase();
     const id = this.getAttribute('id').split('-')[1];
-    const path = document.getElementById(`more-option-${id}`).getAttribute('data-path') + '/' + id;
+    const moreDiv = document.getElementById(`more-option-${id}`);
+    const path = ((moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id).replaceAll('//', '/');
     const root_url = getRootUrl();
     const auth = getFolderAuthFromPath();
 
@@ -228,18 +257,20 @@ async function shareFile() {
     }
 
     copyTextToClipboard(link);
-    alert('Link copied to clipboard! 📋');
+    showToast('File link copied to clipboard! 📋');
 }
 
 async function shareFolder() {
     const id = this.getAttribute('id').split('-')[2];
-    let path = document.getElementById(`more-option-${id}`).getAttribute('data-path') + '/' + id;
+    const moreDiv = document.getElementById(`more-option-${id}`);
+    let path = ((moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id).replaceAll('//', '/');
     const root_url = getRootUrl();
 
     const auth = await getFolderShareAuth(path);
-    path = path.slice(1);
+    if (!auth) return;
+    path = path.replace(/^\/+/, '');
 
     let link = `${root_url}/?path=/share_${path}&auth=${auth}`;
     copyTextToClipboard(link);
-    alert('Folder share link copied to clipboard! 📋');
+    showToast('Folder share link copied to clipboard! 📋');
 }

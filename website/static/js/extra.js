@@ -1,28 +1,125 @@
-function getCurrentPath() {
-    const url = new URL(window.location.href);
-    const path = url.searchParams.get('path')
-    if (path === null) {
-        window.location.href = '/?path=/'
-        return 'redirect'
+// BroadcastChannel for real-time cross-tab / cross-window sync
+const DRIVE_SYNC_CHANNEL = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('tg_drive_sync') : null;
+
+function broadcastDriveChange(action = 'REFRESH', details = {}) {
+    try {
+        if (DRIVE_SYNC_CHANNEL) {
+            DRIVE_SYNC_CHANNEL.postMessage({ type: action, details, timestamp: Date.now() });
+        }
+        localStorage.setItem('tg_drive_last_sync', JSON.stringify({ action, details, timestamp: Date.now() }));
+    } catch (e) {
+        console.warn('Sync broadcast error:', e);
     }
-    return path
+}
+
+// Listen for cross-window / cross-tab changes
+if (DRIVE_SYNC_CHANNEL) {
+    DRIVE_SYNC_CHANNEL.onmessage = (event) => {
+        if (event.data && (event.data.type === 'REFRESH' || event.data.type === 'MOVE' || event.data.type === 'UPLOAD')) {
+            if (typeof getCurrentDirectory === 'function' && getPassword()) {
+                getCurrentDirectory();
+            }
+        }
+    };
+}
+window.addEventListener('storage', (event) => {
+    if (event.key === 'tg_drive_last_sync') {
+        if (typeof getCurrentDirectory === 'function' && getPassword()) {
+            getCurrentDirectory();
+        }
+    }
+});
+
+function getCurrentPath() {
+    try {
+        const url = new URL(window.location.href);
+        let path = url.searchParams.get('path');
+        if (path === null) {
+            return '/';
+        }
+        // Clean trailing spaces and any malformed query substrings
+        if (path.includes('&auth=')) {
+            path = path.split('&auth=')[0];
+        }
+        path = path.trim();
+        return path || '/';
+    } catch {
+        return '/';
+    }
 }
 
 function getFolderAuthFromPath() {
-    const url = new URL(window.location.href);
-    const auth = url.searchParams.get('auth')
-    return auth
-}
-
-// Changing sidebar section class
-if (getCurrentPath() !== '/') {
-    const sections = document.querySelector('.sidebar-menu').getElementsByTagName('a')
-    sections[0].setAttribute('class', 'unselected-item')
-
-    if (getCurrentPath().includes('/trash')) {
-        sections[1].setAttribute('class', 'selected-item')
+    try {
+        const url = new URL(window.location.href);
+        const auth = url.searchParams.get('auth');
+        return auth || null;
+    } catch {
+        return null;
     }
 }
+
+// Single Page Application (SPA) smooth router
+function navigateToPath(targetPath, pushState = true) {
+    if (!targetPath) targetPath = '/';
+    let cleanPath = targetPath.replaceAll('//', '/');
+    if (cleanPath !== '/' && cleanPath.endsWith('/')) {
+        cleanPath = cleanPath.slice(0, -1);
+    }
+
+    const auth = getFolderAuthFromPath();
+    const url = new URL(window.location.href);
+    url.searchParams.set('path', cleanPath);
+    if (auth && cleanPath.startsWith('/share')) {
+        url.searchParams.set('auth', auth);
+    } else if (!cleanPath.startsWith('/share')) {
+        url.searchParams.delete('auth');
+    }
+
+    if (pushState) {
+        window.history.pushState({ path: cleanPath }, '', url.toString());
+    }
+
+    // Update sidebar active highlights immediately
+    updateSidebarNavSelection(cleanPath);
+
+    // Fetch and render directory smoothly without full page reload
+    if (typeof getCurrentDirectory === 'function') {
+        getCurrentDirectory();
+    }
+}
+
+function updateSidebarNavSelection(path) {
+    const isTrash = path.startsWith('/trash');
+    const isSearch = path.startsWith('/search');
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navComputers = document.getElementById('nav-computers');
+    const navTrash = document.getElementById('nav-trash');
+    const newBtn = document.getElementById('new-button');
+
+    if (navMyDrive && navTrash) {
+        if (isTrash) {
+            navMyDrive.className = 'gd-nav-item unselected-item';
+            if (navComputers) navComputers.className = 'gd-nav-item unselected-item';
+            navTrash.className = 'gd-nav-item selected-item';
+            if (newBtn) newBtn.style.display = 'none';
+        } else {
+            navMyDrive.className = 'gd-nav-item selected-item';
+            if (navComputers) navComputers.className = 'gd-nav-item unselected-item';
+            navTrash.className = 'gd-nav-item unselected-item';
+            if (newBtn) newBtn.style.display = 'inline-flex';
+        }
+    }
+}
+
+// Handle Browser Back / Forward buttons natively
+window.addEventListener('popstate', (e) => {
+    updateSidebarNavSelection(getCurrentPath());
+    if (typeof getCurrentDirectory === 'function') {
+        getCurrentDirectory();
+    }
+});
+
+// Sidebar section active states are handled in sidebar.js on DOMContentLoaded
 
 function convertBytes(bytes) {
     const kilobyte = 1024;
@@ -117,3 +214,37 @@ function removeSlash(text) {
     let trimmedStr = text.replace(new RegExp(`^${charactersToRemove}|${charactersToRemove}$`, 'g'), '');
     return trimmedStr;
 }
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function showToast(message, duration = 3000) {
+    let container = document.getElementById('gd-toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'gd-toast-container';
+        container.className = 'gd-toast-container';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = 'gd-toast';
+    toast.innerHTML = message;
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => {
+        toast.classList.add('show');
+    });
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}

@@ -86,7 +86,12 @@ async def initialize_clients():
         logger.error("No Clients Were Initialized")
 
         # Forcefully terminates the program immediately
-        os.kill(os.getpid(), signal.SIGKILL)
+        try:
+            sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+            os.kill(os.getpid(), sig)
+        except Exception:
+            sys.exit(1)
+
 
     if len(premium_clients) == 0:
         logger.info("No Premium Clients Were Initialized")

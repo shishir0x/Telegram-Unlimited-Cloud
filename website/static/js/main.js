@@ -1,8 +1,10 @@
 // Google Drive Main Application Controller
 let CURRENT_DIRECTORY_DATA = {};
 let DIRECTORY_ITEMS = {};
+let CURRENT_BREADCRUMBS = [];
 let SELECTED_ITEM_ID = null;
 let CURRENT_VIEW_MODE = localStorage.getItem('gd_view_mode') || 'list'; // 'list' or 'grid'
+window.DRAGGED_DRIVE_ITEM = null;
 
 // Helper: Get File Badges & Icons
 function getFileBadge(item) {
@@ -56,63 +58,222 @@ function formatDate(dateStr) {
     }
 }
 
-// Build Interactive Breadcrumbs
-function updateBreadcrumbs() {
+// Drag & Drop cross-window / tab state helpers
+function getDraggedItem(e) {
+    if (window.DRAGGED_DRIVE_ITEM) {
+        return window.DRAGGED_DRIVE_ITEM;
+    }
+    if (e && e.dataTransfer) {
+        try {
+            const jsonStr = e.dataTransfer.getData('application/json');
+            if (jsonStr) {
+                const parsed = JSON.parse(jsonStr);
+                if (parsed && parsed.path) return parsed;
+            }
+        } catch {}
+        try {
+            const txt = e.dataTransfer.getData('text/plain');
+            if (txt && txt.startsWith('/')) {
+                const parts = txt.split('/');
+                return { path: txt, id: parts[parts.length - 1], name: 'Item' };
+            }
+        } catch {}
+    }
+    try {
+        const saved = localStorage.getItem('tg_dragged_item');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.path) return parsed;
+        }
+    } catch {}
+    return null;
+}
+
+function clearDraggedItem() {
+    window.DRAGGED_DRIVE_ITEM = null;
+    try {
+        localStorage.removeItem('tg_dragged_item');
+    } catch {}
+}
+
+// Build Interactive Breadcrumbs with Proper Folder Names (Google Drive style)
+function updateBreadcrumbs(breadcrumbs) {
     const container = document.getElementById('breadcrumbs-container');
     if (!container) return;
 
     const rawPath = getCurrentPath();
-    if (rawPath === '/' || rawPath === '' || rawPath === 'redirect') {
-        container.innerHTML = `<span class="gd-crumb gd-crumb-active" data-path="/">My Drive</span>`;
+    const isTrash = rawPath.startsWith('/trash');
+    const isSearch = rawPath.startsWith('/search');
+
+    if (isTrash) {
+        container.innerHTML = `<span class="gd-crumb gd-crumb-active" data-path="/trash">Trash</span>`;
+        document.title = 'Trash - Google Drive';
         return;
     }
 
-    if (rawPath.startsWith('/trash')) {
-        container.innerHTML = `<span class="gd-crumb gd-crumb-active">Trash</span>`;
-        return;
-    }
-
-    if (rawPath.startsWith('/search')) {
-        const q = rawPath.replace('/search_', '');
+    if (isSearch) {
+        const q = rawPath.replace('/search_', '').replace('/search', '');
+        const queryDecoded = decodeURIComponent(q);
         container.innerHTML = `
-            <span class="gd-crumb" onclick="window.location.href='/?path=/'">My Drive</span>
+            <span class="gd-crumb gd-crumb-target" data-path="/" onclick="navigateToPath('/')">My Drive</span>
             <span class="gd-crumb-sep">›</span>
-            <span class="gd-crumb gd-crumb-active">Search: "${decodeURIComponent(q)}"</span>
+            <span class="gd-crumb gd-crumb-active">Search: "${escapeHtml(queryDecoded)}"</span>
         `;
+        document.title = `Search: "${queryDecoded}" - Google Drive`;
         return;
     }
 
-    const clean = rawPath.replace('/share_', '').replace(/^\/+|\/+$/g, '');
-    const parts = clean.split('/').filter(Boolean);
+    if (!breadcrumbs || breadcrumbs.length === 0) {
+        breadcrumbs = [{ name: 'My Drive', path: '/', id: 'root' }];
+    }
 
-    let html = `<span class="gd-crumb" onclick="window.location.href='/?path=/'">My Drive</span>`;
-    let accumulatedPath = '';
+    CURRENT_BREADCRUMBS = breadcrumbs;
 
-    for (let i = 0; i < parts.length; i++) {
-        accumulatedPath += '/' + parts[i];
-        const isLast = i === parts.length - 1;
-        const displayName = parts[i];
+    // Update document title to the active folder name
+    const currentFolder = breadcrumbs[breadcrumbs.length - 1];
+    const currentFolderName = currentFolder ? (currentFolder.name || 'My Drive') : 'My Drive';
+    document.title = `${currentFolderName} - Google Drive`;
 
-        html += `<span class="gd-crumb-sep">›</span>`;
+    let html = '';
+    for (let i = 0; i < breadcrumbs.length; i++) {
+        const item = breadcrumbs[i];
+        const isLast = i === breadcrumbs.length - 1;
+        const displayName = item.name || (i === 0 ? 'My Drive' : item.id);
+
+        if (i > 0) {
+            html += `<span class="gd-crumb-sep">›</span>`;
+        }
+
         if (isLast) {
-            html += `<span class="gd-crumb gd-crumb-active">${displayName}</span>`;
+            html += `<span class="gd-crumb gd-crumb-active gd-crumb-target" data-path="${item.path}" data-id="${item.id}" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>`;
         } else {
-            const targetUrl = `/?path=${accumulatedPath}`;
-            html += `<span class="gd-crumb" onclick="window.location.href='${targetUrl}'">${displayName}</span>`;
+            html += `<span class="gd-crumb gd-crumb-target" data-path="${item.path}" data-id="${item.id}" onclick="navigateToPath('${item.path}')" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>`;
         }
     }
 
     container.innerHTML = html;
+
+    // Attach Drag & Drop to each breadcrumb item (so user can drop onto ancestor folders)
+    container.querySelectorAll('.gd-crumb-target').forEach(crumbEl => {
+        const targetPath = crumbEl.getAttribute('data-path');
+        const targetId = crumbEl.getAttribute('data-id');
+        if (!targetPath) return;
+
+        crumbEl.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            crumbEl.classList.add('gd-crumb-drop-hover');
+            e.dataTransfer.dropEffect = 'move';
+        });
+
+        crumbEl.addEventListener('dragleave', (e) => {
+            crumbEl.classList.remove('gd-crumb-drop-hover');
+        });
+
+        crumbEl.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            crumbEl.classList.remove('gd-crumb-drop-hover');
+
+            const draggedItem = getDraggedItem(e);
+            if (draggedItem) {
+                const srcPath = draggedItem.path;
+                if (srcPath === targetPath) return;
+                moveFileFolder(srcPath, targetPath);
+                clearDraggedItem();
+            } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                showToast(`Uploading ${e.dataTransfer.files.length} file(s) into "${crumbEl.innerText.trim()}"...`);
+                uploadFilesQueue(e.dataTransfer.files, targetPath);
+            }
+        });
+    });
+}
+
+// Drag & Drop Helpers for Items (Supports cross-window / browser-to-browser drag & drop)
+function handleItemDragStart(e) {
+    const id = this.getAttribute('data-id');
+    const item = DIRECTORY_ITEMS[id];
+    if (!item) return;
+
+    const fullPath = (item.path + '/' + item.id).replaceAll('//', '/');
+    const dragData = {
+        id: item.id,
+        name: item.name,
+        path: fullPath,
+        type: item.type,
+        source: 'tg-drive'
+    };
+
+    window.DRAGGED_DRIVE_ITEM = dragData;
+
+    try {
+        const payloadStr = JSON.stringify(dragData);
+        e.dataTransfer.setData('application/json', payloadStr);
+        e.dataTransfer.setData('text/plain', fullPath);
+        localStorage.setItem('tg_dragged_item', payloadStr);
+    } catch {}
+
+    e.dataTransfer.effectAllowed = 'move';
+    this.classList.add('is-dragging');
+}
+
+function handleItemDragEnd(e) {
+    this.classList.remove('is-dragging');
+    clearDraggedItem();
+    document.querySelectorAll('.gd-drop-hover, .gd-crumb-drop-hover, .gd-nav-drop-hover').forEach(el => {
+        el.classList.remove('gd-drop-hover', 'gd-crumb-drop-hover', 'gd-nav-drop-hover');
+    });
+}
+
+function handleFolderDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.classList.add('gd-drop-hover');
+    e.dataTransfer.dropEffect = 'move';
+}
+
+function handleFolderDragLeave(e) {
+    this.classList.remove('gd-drop-hover');
+}
+
+function handleFolderDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.classList.remove('gd-drop-hover');
+
+    const folderId = this.getAttribute('data-id');
+    const folderItem = DIRECTORY_ITEMS[folderId];
+    if (!folderItem) return;
+
+    const targetFolderPath = (folderItem.path + '/' + folderItem.id).replaceAll('//', '/');
+    const draggedItem = getDraggedItem(e);
+
+    if (draggedItem) {
+        if (draggedItem.id === folderId) {
+            showToast('⚠️ Cannot move a folder into itself');
+            clearDraggedItem();
+            return;
+        }
+        if (draggedItem.path === targetFolderPath) {
+            clearDraggedItem();
+            return;
+        }
+        moveFileFolder(draggedItem.path, targetFolderPath);
+        clearDraggedItem();
+    } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        showToast(`Uploading ${e.dataTransfer.files.length} file(s) into "${folderItem.name}"...`);
+        uploadFilesQueue(e.dataTransfer.files, targetFolderPath);
+    }
 }
 
 // Main Directory Renderer
-function showDirectory(data) {
+function showDirectory(data, breadcrumbs) {
     CURRENT_DIRECTORY_DATA = data;
     const contents = data['contents'] || {};
     DIRECTORY_ITEMS = contents;
     const isTrash = getCurrentPath().startsWith('/trash');
 
-    updateBreadcrumbs();
+    updateBreadcrumbs(breadcrumbs);
 
     const tableBody = document.getElementById('directory-data');
     const gridFolders = document.getElementById('grid-folders-data');
@@ -162,15 +323,15 @@ function showDirectory(data) {
 
         // Table Row
         tableHtml += `
-            <tr data-path="${item.path}" data-id="${item.id}" data-name="${item.name}" class="body-tr folder-tr">
+            <tr draggable="${!isTrash}" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr">
                 <td>
                     <div class="td-align file-name-cell">
                         ${badge}
-                        <span class="file-name-text" title="${item.name}">${item.name}</span>
+                        <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
                     </div>
                 </td>
                 <td><div class="td-align"><span class="type-pill pill-folder">Folder</span></div></td>
-                <td><div class="td-align"><span class="owner-pill">${owner}</span></div></td>
+                <td><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
                 <td><div class="td-align date-text">${dateStr}</div></td>
                 <td><div class="td-align size-text">--</div></td>
                 <td>
@@ -184,13 +345,14 @@ function showDirectory(data) {
         // Grid Folder Chip
         const folderChip = document.createElement('div');
         folderChip.className = 'gd-folder-chip folder-tr';
+        folderChip.setAttribute('draggable', !isTrash);
         folderChip.setAttribute('data-id', item.id);
         folderChip.setAttribute('data-path', item.path);
         folderChip.setAttribute('data-name', item.name);
         folderChip.innerHTML = `
             <div class="gd-folder-chip-left">
                 <img class="item-icon-img" src="static/assets/folder-solid-icon.svg">
-                <span class="gd-folder-chip-name" title="${item.name}">${item.name}</span>
+                <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
             </div>
             <a data-id="${item.id}" class="more-btn"><img src="static/assets/more-icon.svg"></a>
         `;
@@ -198,9 +360,9 @@ function showDirectory(data) {
 
         // Context / More Menus
         if (isTrash) {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${item.name}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete</div></div>`;
+            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${item.name}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -214,15 +376,15 @@ function showDirectory(data) {
 
         // Table Row
         tableHtml += `
-            <tr data-path="${item.path}" data-id="${item.id}" data-name="${item.name}" class="body-tr file-tr">
+            <tr draggable="${!isTrash}" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr">
                 <td>
                     <div class="td-align file-name-cell">
                         ${badge}
-                        <span class="file-name-text" title="${item.name}">${item.name}</span>
+                        <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
                     </div>
                 </td>
                 <td><div class="td-align"><span class="type-pill">${category}</span></div></td>
-                <td><div class="td-align"><span class="owner-pill">${owner}</span></div></td>
+                <td><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
                 <td><div class="td-align date-text">${dateStr}</div></td>
                 <td><div class="td-align size-text">${size}</div></td>
                 <td>
@@ -236,6 +398,7 @@ function showDirectory(data) {
         // Grid File Card
         const fileCard = document.createElement('div');
         fileCard.className = 'gd-file-card file-tr';
+        fileCard.setAttribute('draggable', !isTrash);
         fileCard.setAttribute('data-id', item.id);
         fileCard.setAttribute('data-path', item.path);
         fileCard.setAttribute('data-name', item.name);
@@ -244,7 +407,7 @@ function showDirectory(data) {
                 <span style="font-size: 2.2rem;">${getBigIconEmoji(item)}</span>
             </div>
             <div class="gd-file-card-body">
-                <div class="gd-file-card-name" title="${item.name}">${item.name}</div>
+                <div class="gd-file-card-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
                 <div class="gd-file-card-meta">
                     <span>${category}</span>
                     <span>${size}</span>
@@ -255,30 +418,45 @@ function showDirectory(data) {
 
         // Context / More Menus
         if (isTrash) {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${item.name}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete</div></div>`;
+            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${item.name}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
     tableBody.innerHTML = tableHtml;
 
-    // Attach Click and Double Click Events
+    // Attach Click and Double Click & Drag Events
     if (!isTrash) {
+        // Folders
         document.querySelectorAll('.folder-tr').forEach(el => {
             el.ondblclick = openFolder;
             el.onclick = function (e) {
                 if (e.target.closest('.more-btn')) return;
                 selectItem(this.getAttribute('data-id'));
             };
+
+            // Draggable item
+            el.addEventListener('dragstart', handleItemDragStart);
+            el.addEventListener('dragend', handleItemDragEnd);
+
+            // Drop target folder
+            el.addEventListener('dragover', handleFolderDragOver);
+            el.addEventListener('dragleave', handleFolderDragLeave);
+            el.addEventListener('drop', handleFolderDrop);
         });
 
+        // Files
         document.querySelectorAll('.file-tr').forEach(el => {
             el.ondblclick = openFilePreview;
             el.onclick = function (e) {
                 if (e.target.closest('.more-btn')) return;
                 selectItem(this.getAttribute('data-id'));
             };
+
+            // Draggable item
+            el.addEventListener('dragstart', handleItemDragStart);
+            el.addEventListener('dragend', handleItemDragEnd);
         });
     }
 
@@ -316,15 +494,24 @@ function selectItem(id) {
     // Populate Inspector
     const isFolder = item.type === 'folder';
     const rootUrl = getRootUrl();
-    const filePath = (item.path + '/' + item.id).replace('//', '/');
-    const directUrl = `${rootUrl}/file?path=${filePath}`;
+    const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+    const directUrl = `${rootUrl}/file?path=${encodeURIComponent(filePath)}`;
+
+    // Build human-readable location path
+    let readableLocation = 'My Drive';
+    if (CURRENT_BREADCRUMBS && CURRENT_BREADCRUMBS.length > 0) {
+        readableLocation = CURRENT_BREADCRUMBS.map(c => c.name).join(' / ');
+    }
+
+    const headerTitle = document.getElementById('insp-header-title');
+    if (headerTitle) headerTitle.innerText = isFolder ? 'Folder Details' : 'File Details';
 
     document.getElementById('insp-filename').innerText = item.name;
     document.getElementById('insp-big-icon').innerText = getBigIconEmoji(item);
     document.getElementById('insp-prop-type').innerText = item.category || (isFolder ? 'Folder' : 'File');
     document.getElementById('insp-prop-size').innerText = isFolder ? '--' : `${convertBytes(item.size)} (${(item.size || 0).toLocaleString()} bytes)`;
     document.getElementById('insp-prop-storage').innerText = isFolder ? '0 bytes (virtual)' : convertBytes(item.size);
-    document.getElementById('insp-prop-location').innerText = item.path || 'My Drive';
+    document.getElementById('insp-prop-location').innerText = readableLocation;
     document.getElementById('insp-prop-owner').innerText = item.owner || 'Admin (You)';
     document.getElementById('insp-prop-date').innerText = item.upload_date || '--';
     document.getElementById('insp-prop-msg-id').innerText = item.file_id ? `#${item.file_id}` : (isFolder ? 'Virtual' : '--');
@@ -346,15 +533,15 @@ function applyViewMode(mode) {
     const gridBtn = document.getElementById('toggle-grid-view');
 
     if (mode === 'grid') {
-        listContainer.style.display = 'none';
-        gridContainer.style.display = 'block';
-        listBtn.removeAttribute('active');
-        gridBtn.setAttribute('active', '');
+        if (listContainer) listContainer.style.display = 'none';
+        if (gridContainer) gridContainer.style.display = 'block';
+        if (listBtn) listBtn.removeAttribute('active');
+        if (gridBtn) gridBtn.setAttribute('active', '');
     } else {
-        listContainer.style.display = 'block';
-        gridContainer.style.display = 'none';
-        gridBtn.removeAttribute('active');
-        listBtn.setAttribute('active', '');
+        if (listContainer) listContainer.style.display = 'block';
+        if (gridContainer) gridContainer.style.display = 'none';
+        if (gridBtn) gridBtn.removeAttribute('active');
+        if (listBtn) listBtn.setAttribute('active', '');
     }
 }
 
@@ -365,9 +552,9 @@ function openFilePreview() {
     if (!item) return;
 
     const fileName = item.name.toLowerCase();
-    const path = (item.path + '/' + item.id).replace('//', '/');
+    const path = (item.path + '/' + item.id).replaceAll('//', '/');
     const rootUrl = getRootUrl();
-    const directUrl = `${rootUrl}/file?path=${path}`;
+    const directUrl = `${rootUrl}/file?path=${encodeURIComponent(path)}`;
     const streamUrl = `${rootUrl}/stream?url=${encodeURIComponent(directUrl)}`;
 
     const lightbox = document.getElementById('media-preview-modal');
@@ -375,60 +562,149 @@ function openFilePreview() {
     const holder = document.getElementById('preview-content-holder');
     const dlBtn = document.getElementById('preview-download-btn');
 
-    title.innerText = item.name;
-    dlBtn.onclick = () => window.open(directUrl, '_blank');
+    if (title) title.innerText = item.name;
+    if (dlBtn) dlBtn.onclick = () => window.open(directUrl, '_blank');
 
-    holder.innerHTML = '';
-
-    if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi')) {
-        holder.innerHTML = `<video controls autoplay style="max-width: 90vw; max-height: 80vh;"><source src="${streamUrl}" type="video/mp4">Your browser does not support video playback.</video>`;
-    } else if (fileName.endsWith('.mp3') || fileName.endsWith('.wav') || fileName.endsWith('.ogg') || fileName.endsWith('.flac') || fileName.endsWith('.m4a')) {
-        holder.innerHTML = `<audio controls autoplay style="width: 400px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>`;
-    } else if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.png') || fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.svg')) {
-        holder.innerHTML = `<img src="${directUrl}" alt="${item.name}">`;
-    } else if (fileName.endsWith('.pdf')) {
-        holder.innerHTML = `<iframe src="${directUrl}"></iframe>`;
-    } else {
-        // Fallback open directly in browser tab
-        window.open(directUrl, '_blank');
-        return;
+    if (holder) {
+        holder.innerHTML = '';
+        if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi')) {
+            holder.innerHTML = `<video controls autoplay style="max-width: 90vw; max-height: 80vh;"><source src="${streamUrl}" type="video/mp4">Your browser does not support video playback.</video>`;
+        } else if (fileName.endsWith('.mp3') || fileName.endsWith('.wav') || fileName.endsWith('.ogg') || fileName.endsWith('.flac') || fileName.endsWith('.m4a')) {
+            holder.innerHTML = `<audio controls autoplay style="width: 400px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>`;
+        } else if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.png') || fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.svg')) {
+            holder.innerHTML = `<img src="${directUrl}" alt="${escapeHtml(item.name)}">`;
+        } else if (fileName.endsWith('.pdf')) {
+            holder.innerHTML = `<iframe src="${directUrl}"></iframe>`;
+        } else {
+            window.open(directUrl, '_blank');
+            return;
+        }
     }
 
-    lightbox.classList.add('active');
+    if (lightbox) lightbox.classList.add('active');
 }
 
-// Drag & Drop Upload Zone
+// Drag & Drop Upload Zone (Explorer to Browser & Sidebar drop targets)
 function setupDragAndDrop() {
-    const viewport = document.getElementById('content-viewport');
     const dropOverlay = document.getElementById('drop-overlay');
+    let dragCounter = 0;
 
-    if (!viewport || !dropOverlay) return;
+    window.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        // Show drop overlay when dragging external files or cross-window items
+        if (dropOverlay) {
+            dropOverlay.classList.add('active');
+        }
+    });
 
     window.addEventListener('dragover', (e) => {
         e.preventDefault();
-        dropOverlay.classList.add('active');
+        if (dropOverlay) {
+            dropOverlay.classList.add('active');
+        }
     });
 
     window.addEventListener('dragleave', (e) => {
-        if (e.relatedTarget === null || e.clientX === 0 || e.clientY === 0) {
+        dragCounter--;
+        if (dragCounter <= 0 && dropOverlay) {
+            dragCounter = 0;
             dropOverlay.classList.remove('active');
         }
     });
 
     window.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropOverlay.classList.remove('active');
+        dragCounter = 0;
+        if (dropOverlay) dropOverlay.classList.remove('active');
 
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            const fileInput = document.getElementById('fileInput');
-            fileInput.files = e.dataTransfer.files;
-            const event = new Event('change');
-            fileInput.dispatchEvent(event);
+        // Only handle generic viewport drop if not dropped on a specific folder or nav target
+        if (e.target.closest('.folder-tr') || e.target.closest('.gd-crumb-target') || e.target.closest('#nav-my-drive') || e.target.closest('#nav-trash')) {
+            return;
+        }
+
+        e.preventDefault();
+
+        const draggedItem = getDraggedItem(e);
+        if (draggedItem) {
+            const currentPath = getCurrentPath();
+            if (draggedItem.path !== currentPath) {
+                moveFileFolder(draggedItem.path, currentPath);
+            }
+            clearDraggedItem();
+        } else if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            uploadFilesQueue(e.dataTransfer.files, getCurrentPath());
         }
     });
+
+    // Sidebar Navigation Drop Targets
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navTrash = document.getElementById('nav-trash');
+
+    if (navMyDrive) {
+        navMyDrive.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navMyDrive.classList.add('gd-nav-drop-hover');
+            e.dataTransfer.dropEffect = 'move';
+        });
+
+        navMyDrive.addEventListener('dragleave', () => {
+            navMyDrive.classList.remove('gd-nav-drop-hover');
+        });
+
+        navMyDrive.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navMyDrive.classList.remove('gd-nav-drop-hover');
+
+            const draggedItem = getDraggedItem(e);
+            if (draggedItem) {
+                moveFileFolder(draggedItem.path, '/');
+                clearDraggedItem();
+            } else if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                uploadFilesQueue(e.dataTransfer.files, '/');
+            }
+        });
+    }
+
+    if (navTrash) {
+        navTrash.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navTrash.classList.add('gd-nav-drop-hover');
+            e.dataTransfer.dropEffect = 'move';
+        });
+
+        navTrash.addEventListener('dragleave', () => {
+            navTrash.classList.remove('gd-nav-drop-hover');
+        });
+
+        navTrash.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navTrash.classList.remove('gd-nav-drop-hover');
+
+            const draggedItem = getDraggedItem(e);
+            if (draggedItem) {
+                const data = {
+                    'path': draggedItem.path,
+                    'trash': true
+                };
+                const res = await postJson('/api/trashFileFolder', data);
+                if (res.status === 'ok') {
+                    showToast('Moved item to Trash 🗑️');
+                    broadcastDriveChange('TRASH', { path: data.path });
+                    getCurrentDirectory();
+                } else {
+                    alert('Failed to send item to Trash');
+                }
+                clearDraggedItem();
+            }
+        });
+    }
 }
 
-// Search Form
+// App Initialization
 document.addEventListener('DOMContentLoaded', () => {
     const searchForm = document.getElementById('search-form');
     const searchInput = document.getElementById('file-search');
@@ -439,7 +715,7 @@ document.addEventListener('DOMContentLoaded', () => {
             e.preventDefault();
             const q = searchInput.value.trim();
             if (!q) return;
-            window.location = `/?path=/search_${encodeURIComponent(q)}`;
+            navigateToPath(`/search_${encodeURIComponent(q)}`);
         });
 
         searchInput.addEventListener('input', () => {
@@ -452,7 +728,7 @@ document.addEventListener('DOMContentLoaded', () => {
             searchClear.addEventListener('click', () => {
                 searchInput.value = '';
                 searchClear.style.display = 'none';
-                window.location = '/?path=/';
+                navigateToPath('/');
             });
         }
     }
@@ -485,8 +761,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (inspCopyBtn && inspLinkInput) {
         inspCopyBtn.addEventListener('click', () => {
             copyTextToClipboard(inspLinkInput.value);
-            inspCopyBtn.innerText = 'Copied! ✅';
-            setTimeout(() => { inspCopyBtn.innerText = 'Copy'; }, 2000);
+            showToast('Link copied to clipboard! 📋');
         });
     }
 
@@ -500,7 +775,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const item = DIRECTORY_ITEMS[SELECTED_ITEM_ID];
             if (!item) return;
             if (item.type === 'folder') {
-                window.location.href = `/?path=${(item.path + '/' + item.id).replace('//', '/')}`;
+                const folderPath = (item.path + '/' + item.id).replaceAll('//', '/');
+                navigateToPath(folderPath);
             } else {
                 openFilePreview.call({ getAttribute: () => SELECTED_ITEM_ID });
             }
@@ -512,7 +788,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!SELECTED_ITEM_ID) return;
             const item = DIRECTORY_ITEMS[SELECTED_ITEM_ID];
             if (!item) return;
-            const directUrl = `${getRootUrl()}/file?path=${(item.path + '/' + item.id).replace('//', '/')}`;
+            const directUrl = `${getRootUrl()}/file?path=${encodeURIComponent((item.path + '/' + item.id).replaceAll('//', '/'))}`;
             window.open(directUrl, '_blank');
         });
     }
@@ -520,18 +796,28 @@ document.addEventListener('DOMContentLoaded', () => {
     // Preview Lightbox Close
     const previewClose = document.getElementById('preview-close-btn');
     const previewLightbox = document.getElementById('media-preview-modal');
-    if (previewClose && previewLightbox) {
-        previewClose.addEventListener('click', () => {
+    function closePreviewLightbox() {
+        if (previewLightbox) {
             previewLightbox.classList.remove('active');
-            document.getElementById('preview-content-holder').innerHTML = '';
-        });
+            const holder = document.getElementById('preview-content-holder');
+            if (holder) holder.innerHTML = '';
+        }
     }
+    if (previewClose && previewLightbox) {
+        previewClose.addEventListener('click', closePreviewLightbox);
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closePreviewLightbox();
+        }
+    });
 
     setupDragAndDrop();
     applyViewMode(CURRENT_VIEW_MODE);
 
     // Initial Auth / Fetch
-    if (getCurrentPath().includes('/share_')) {
+    const initialPath = getCurrentPath();
+    if (initialPath.includes('/share_')) {
         getCurrentDirectory();
     } else {
         if (getPassword() === null) {

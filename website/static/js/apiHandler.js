@@ -99,28 +99,26 @@ setInterval(async () => {
 }, 2000);
 
 async function getCurrentDirectory() {
-    let path = getCurrentPath()
-    if (path === 'redirect') {
-        return
-    }
+    let path = getCurrentPath();
     try {
-        const auth = getFolderAuthFromPath()
-        const data = { 'path': path, 'auth': auth }
-        const json = await postJson('/api/getDirectory', data)
+        const auth = getFolderAuthFromPath();
+        const data = { 'path': path, 'auth': auth };
+        const json = await postJson('/api/getDirectory', data);
 
         if (json.status === 'ok') {
-            if (getCurrentPath().startsWith('/share')) {
-                const sections = document.querySelector('.sidebar-menu').getElementsByTagName('a')
-
-                if (removeSlash(json['auth_home_path']) === removeSlash(path.split('_')[1])) {
-                    sections[0].setAttribute('class', 'selected-item')
-                } else {
-                    sections[0].setAttribute('class', 'unselected-item')
+            if (path.startsWith('/share')) {
+                const navMyDrive = document.getElementById('nav-my-drive');
+                if (navMyDrive) {
+                    if (removeSlash(json['auth_home_path']) === removeSlash(path.split('_')[1])) {
+                        navMyDrive.className = 'gd-nav-item selected-item';
+                    } else {
+                        navMyDrive.className = 'gd-nav-item unselected-item';
+                    }
+                    navMyDrive.href = `/?path=/share_${removeSlash(json['auth_home_path'])}&auth=${auth}`;
                 }
-                sections[0].href = `/?path=/share_${removeSlash(json['auth_home_path'])}&auth=${auth}`
             }
 
-            showDirectory(json['data'])
+            showDirectory(json['data'], json['breadcrumbs'] || []);
         } else if (json.status === 'Invalid password' || json.status === 'Unauthorized folder access') {
             localStorage.removeItem('password');
             const bg = document.getElementById('bg-blur');
@@ -128,187 +126,267 @@ async function getCurrentDirectory() {
             if (bg) { bg.style.zIndex = '100'; bg.style.opacity = '1'; }
             if (login) { login.style.zIndex = '101'; login.style.opacity = '1'; }
         } else {
-            alert('Directory not accessible: ' + (json.status || 'Not Found'))
+            showToast('Directory not accessible: ' + (json.status || 'Not Found'));
         }
     }
     catch (err) {
-        console.error(err)
-        alert('Could not access current directory')
+        console.error(err);
+        showToast('Could not access current directory');
     }
 }
 
 async function createNewFolder() {
-    const folderName = document.getElementById('new-folder-name').value;
-    const path = getCurrentPath()
-    if (path === 'redirect') {
-        return
-    }
+    const folderName = document.getElementById('new-folder-name').value.trim();
+    const path = getCurrentPath();
     if (folderName.length > 0) {
         const data = {
             'name': folderName,
             'path': path
-        }
+        };
         try {
-            const json = await postJson('/api/createNewFolder', data)
+            const json = await postJson('/api/createNewFolder', data);
 
             if (json.status === 'ok') {
-                window.location.reload();
+                const modal = document.getElementById('create-new-folder');
+                const bgBlur = document.getElementById('bg-blur');
+                if (modal) modal.style.opacity = '0';
+                if (bgBlur) bgBlur.style.opacity = '0';
+                setTimeout(() => {
+                    if (modal) modal.style.zIndex = '-1';
+                    if (bgBlur) bgBlur.style.zIndex = '-1';
+                }, 200);
+                showToast(`Folder "${folderName}" created! 📁`);
+                broadcastDriveChange('NEW_FOLDER', { name: folderName, path });
+                getCurrentDirectory();
             } else {
-                alert(json.status)
+                alert(json.status);
             }
         }
         catch (err) {
-            alert('Error Creating Folder')
+            alert('Error Creating Folder');
         }
     } else {
-        alert('Folder Name Cannot Be Empty')
+        alert('Folder Name Cannot Be Empty');
     }
 }
 
+async function moveFileFolder(srcPath, destPath) {
+    const data = {
+        'src_path': srcPath,
+        'dest_path': destPath
+    };
+    try {
+        const json = await postJson('/api/moveFileFolder', data);
+        if (json.status === 'ok') {
+            showToast('Item moved successfully! 📦');
+            broadcastDriveChange('MOVE', { srcPath, destPath });
+            getCurrentDirectory();
+        } else {
+            alert('Failed to move item: ' + (json.status || 'Error'));
+        }
+    } catch (err) {
+        console.error(err);
+        alert('Error moving item');
+    }
+}
 
 async function getFolderShareAuth(path) {
-    const data = { 'path': path }
-    const json = await postJson('/api/getFolderShareAuth', data)
+    const data = { 'path': path };
+    const json = await postJson('/api/getFolderShareAuth', data);
     if (json.status === 'ok') {
-        return json.auth
+        return json.auth;
     } else {
-        alert('Error Getting Folder Share Auth')
+        alert('Error Getting Folder Share Auth');
     }
 }
 
-// File Uploader Start
+// File Uploader Start (Supports Multiple Files & Batch Queue)
 
-const MAX_FILE_SIZE = MAX_FILE_SIZE__SDGJDG // Will be replaced by the python
+const MAX_FILE_SIZE = MAX_FILE_SIZE__SDGJDG; // Replaced dynamically by server
 
 const fileInput = document.getElementById('fileInput');
 const progressBar = document.getElementById('progress-bar');
 const cancelButton = document.getElementById('cancel-file-upload');
 const uploadPercent = document.getElementById('upload-percent');
+
 let uploadRequest = null;
 let uploadStep = 0;
 let uploadID = null;
+let UPLOAD_QUEUE = [];
+let IS_UPLOADING_QUEUE = false;
 
-fileInput.addEventListener('change', async (e) => {
-    const file = fileInput.files[0];
+function uploadFilesQueue(files, targetPath) {
+    if (!files || files.length === 0) return;
+    const destPath = targetPath || getCurrentPath();
 
-    if (file.size > MAX_FILE_SIZE) {
-        alert(`File size exceeds ${(MAX_FILE_SIZE / (1024 * 1024 * 1024)).toFixed(2)} GB limit`);
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.size > MAX_FILE_SIZE) {
+            showToast(`⚠️ "${file.name}" exceeds ${(MAX_FILE_SIZE / (1024 * 1024 * 1024)).toFixed(2)} GB limit`);
+            continue;
+        }
+        UPLOAD_QUEUE.push({ file: file, path: destPath });
+    }
+
+    if (!IS_UPLOADING_QUEUE && UPLOAD_QUEUE.length > 0) {
+        processUploadQueue();
+    }
+}
+
+async function processUploadQueue() {
+    if (UPLOAD_QUEUE.length === 0) {
+        IS_UPLOADING_QUEUE = false;
+        const uploaderCard = document.getElementById('file-uploader');
+        if (uploaderCard) {
+            const statusEl = document.getElementById('upload-status');
+            if (statusEl) statusEl.innerText = '✅ All uploads complete!';
+            setTimeout(() => {
+                uploaderCard.classList.remove('active');
+                broadcastDriveChange('UPLOAD');
+                getCurrentDirectory();
+            }, 1200);
+        }
         return;
     }
 
-    // Showing Google Drive floating uploader widget
+    IS_UPLOADING_QUEUE = true;
+    const currentItem = UPLOAD_QUEUE.shift();
+    const file = currentItem.file;
+    const path = currentItem.path;
+    const remaining = UPLOAD_QUEUE.length;
+
     const uploaderCard = document.getElementById('file-uploader');
     if (uploaderCard) uploaderCard.classList.add('active');
 
-    document.getElementById('upload-filename').innerText = file.name;
-    document.getElementById('upload-filesize').innerText = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-    document.getElementById('upload-status').innerText = 'Uploading to Drive...';
+    const filenameEl = document.getElementById('upload-filename');
+    const sizeEl = document.getElementById('upload-filesize');
+    const statusEl = document.getElementById('upload-status');
+
+    if (filenameEl) filenameEl.innerText = file.name;
+    if (sizeEl) sizeEl.innerText = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+    if (statusEl) statusEl.innerText = remaining > 0 ? `Uploading (${remaining + 1} items)...` : 'Uploading to Drive...';
+    if (progressBar) progressBar.style.width = '0%';
+    if (uploadPercent) uploadPercent.innerText = '0%';
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('path', getCurrentPath());
+    formData.append('path', path);
     formData.append('password', getPassword());
     const id = getRandomId();
     formData.append('id', id);
     formData.append('total_size', file.size);
 
     uploadStep = 1;
+    uploadID = id;
     uploadRequest = new XMLHttpRequest();
     uploadRequest.open('POST', '/api/upload', true);
 
     uploadRequest.upload.addEventListener('progress', (e) => {
         if (e.lengthComputable) {
             const percentComplete = (e.loaded / e.total) * 100;
-            progressBar.style.width = percentComplete + '%';
-            uploadPercent.innerText = percentComplete.toFixed(0) + '%';
+            if (progressBar) progressBar.style.width = percentComplete + '%';
+            if (uploadPercent) uploadPercent.innerText = percentComplete.toFixed(0) + '%';
         }
     });
 
     uploadRequest.upload.addEventListener('load', async () => {
-        await updateSaveProgress(id);
+        await updateSaveProgress(id, () => {
+            processUploadQueue();
+        });
     });
 
     uploadRequest.upload.addEventListener('error', () => {
-        alert('Upload failed');
-        window.location.reload();
+        showToast(`❌ Upload failed for "${file.name}"`);
+        processUploadQueue();
     });
 
     uploadRequest.send(formData);
-});
-
-cancelButton.addEventListener('click', () => {
-    if (uploadStep === 1) {
-        uploadRequest.abort();
-    } else if (uploadStep === 2) {
-        const data = { 'id': uploadID };
-        postJson('/api/cancelUpload', data);
-    }
-    const uploaderCard = document.getElementById('file-uploader');
-    if (uploaderCard) uploaderCard.classList.remove('active');
-    window.location.reload();
-});
-
-async function updateSaveProgress(id) {
-    console.log('save progress')
-    progressBar.style.width = '0%';
-    uploadPercent.innerText = 'Progress : 0%'
-    document.getElementById('upload-status').innerText = 'Status: Processing File On Backend Server';
-
-    const interval = setInterval(async () => {
-        const response = await postJson('/api/getSaveProgress', { 'id': id })
-        const data = response['data']
-
-        if (data[0] === 'running') {
-            const current = data[1];
-            const total = data[2];
-            document.getElementById('upload-filesize').innerText = 'Filesize: ' + (total / (1024 * 1024)).toFixed(2) + ' MB';
-
-            const percentComplete = (current / total) * 100;
-            progressBar.style.width = percentComplete + '%';
-            uploadPercent.innerText = 'Progress : ' + percentComplete.toFixed(2) + '%';
-        }
-        else if (data[0] === 'completed') {
-            clearInterval(interval);
-            uploadPercent.innerText = 'Progress : 100%'
-            progressBar.style.width = '100%';
-
-            await handleUpload2(id)
-        }
-    }, 3000)
-
 }
 
-async function handleUpload2(id) {
-    console.log(id)
-    document.getElementById('upload-status').innerText = 'Status: Uploading To Telegram Server';
-    progressBar.style.width = '0%';
-    uploadPercent.innerText = 'Progress : 0%';
+if (fileInput) {
+    fileInput.addEventListener('change', (e) => {
+        if (fileInput.files && fileInput.files.length > 0) {
+            uploadFilesQueue(fileInput.files, getCurrentPath());
+            fileInput.value = '';
+        }
+    });
+}
+
+if (cancelButton) {
+    cancelButton.addEventListener('click', () => {
+        UPLOAD_QUEUE = [];
+        if (uploadStep === 1 && uploadRequest) {
+            uploadRequest.abort();
+        } else if (uploadStep === 2 && uploadID) {
+            postJson('/api/cancelUpload', { 'id': uploadID });
+        }
+        IS_UPLOADING_QUEUE = false;
+        const uploaderCard = document.getElementById('file-uploader');
+        if (uploaderCard) uploaderCard.classList.remove('active');
+        showToast('Upload cancelled');
+        getCurrentDirectory();
+    });
+}
+
+async function updateSaveProgress(id, onComplete) {
+    if (progressBar) progressBar.style.width = '0%';
+    if (uploadPercent) uploadPercent.innerText = 'Progress: 0%';
+    const statusEl = document.getElementById('upload-status');
+    if (statusEl) statusEl.innerText = 'Status: Processing on server...';
 
     const interval = setInterval(async () => {
-        const response = await postJson('/api/getUploadProgress', { 'id': id })
-        const data = response['data']
+        const response = await postJson('/api/getSaveProgress', { 'id': id });
+        const data = response['data'];
 
-        if (data[0] === 'running') {
+        if (data && data[0] === 'running') {
             const current = data[1];
             const total = data[2];
-            document.getElementById('upload-filesize').innerText = 'Filesize: ' + (total / (1024 * 1024)).toFixed(2) + ' MB';
+            const sizeEl = document.getElementById('upload-filesize');
+            if (sizeEl) sizeEl.innerText = 'Filesize: ' + (total / (1024 * 1024)).toFixed(2) + ' MB';
 
-            let percentComplete
-            if (total === 0) {
-                percentComplete = 0
-            }
-            else {
-                percentComplete = (current / total) * 100;
-            }
-            progressBar.style.width = percentComplete + '%';
-            uploadPercent.innerText = 'Progress : ' + percentComplete.toFixed(2) + '%';
+            const percentComplete = total > 0 ? (current / total) * 100 : 0;
+            if (progressBar) progressBar.style.width = percentComplete + '%';
+            if (uploadPercent) uploadPercent.innerText = 'Progress: ' + percentComplete.toFixed(0) + '%';
         }
-        else if (data[0] === 'completed') {
+        else if (data && data[0] === 'completed') {
             clearInterval(interval);
-            alert('Upload Completed')
-            window.location.reload();
+            if (uploadPercent) uploadPercent.innerText = 'Progress: 100%';
+            if (progressBar) progressBar.style.width = '100%';
+            await handleUpload2(id, onComplete);
         }
-    }, 3000)
+    }, 2000);
+}
+
+async function handleUpload2(id, onComplete) {
+    const statusEl = document.getElementById('upload-status');
+    if (statusEl) statusEl.innerText = 'Status: Storing to Telegram Cloud...';
+    if (progressBar) progressBar.style.width = '0%';
+    if (uploadPercent) uploadPercent.innerText = 'Progress: 0%';
+
+    const interval = setInterval(async () => {
+        const response = await postJson('/api/getUploadProgress', { 'id': id });
+        const data = response['data'];
+
+        if (data && data[0] === 'running') {
+            const current = data[1];
+            const total = data[2];
+            const sizeEl = document.getElementById('upload-filesize');
+            if (sizeEl) sizeEl.innerText = 'Filesize: ' + (total / (1024 * 1024)).toFixed(2) + ' MB';
+
+            let percentComplete = total > 0 ? (current / total) * 100 : 0;
+            if (progressBar) progressBar.style.width = percentComplete + '%';
+            if (uploadPercent) uploadPercent.innerText = 'Progress: ' + percentComplete.toFixed(0) + '%';
+        }
+        else if (data && data[0] === 'completed') {
+            clearInterval(interval);
+            if (typeof onComplete === 'function') {
+                onComplete();
+            } else {
+                showToast('✅ Upload completed!');
+                getCurrentDirectory();
+            }
+        }
+    }, 2000);
 }
 
 // File Uploader End

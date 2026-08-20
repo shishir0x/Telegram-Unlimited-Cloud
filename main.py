@@ -123,16 +123,18 @@ async def stream_page():
 @app.get("/static/{file_path:path}")
 async def static_files(file_path):
     if "apiHandler.js" in file_path:
-        with open(Path("website/static/js/apiHandler.js")) as f:
+        with open(Path("website/static/js/apiHandler.js"), "r", encoding="utf-8") as f:
             content = f.read()
             content = content.replace("MAX_FILE_SIZE__SDGJDG", str(MAX_FILE_SIZE))
         return Response(content=content, media_type="application/javascript")
     return FileResponse(f"website/static/{file_path}")
 
 
+
 @app.get("/file")
 async def dl_file(request: Request):
-    from utils.directoryHandler import DRIVE_DATA
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
 
     path = request.query_params.get("path")
     if not path:
@@ -151,14 +153,14 @@ async def dl_file(request: Request):
                 if len(path.strip("/").split("/")) > 1
                 else "/"
             )
-            folder_res = DRIVE_DATA.get_directory(folder_path, is_admin=False, auth=auth)
+            folder_res = drive.get_directory(folder_path, is_admin=False, auth=auth)
             if not folder_res:
                 raise HTTPException(status_code=401, detail="Unauthorized access to file")
         except Exception:
             raise HTTPException(status_code=401, detail="Unauthorized access to file")
 
     try:
-        file = DRIVE_DATA.get_file(path)
+        file = drive.get_file(path)
         return await media_streamer(STORAGE_CHANNEL, file.file_id, file.name, request)
     except Exception as e:
         logger.error(f"Error streaming file '{path}': {e}")
@@ -210,7 +212,8 @@ async def api_logout():
 
 @app.post("/api/createNewFolder")
 async def api_new_folder(request: Request):
-    from utils.directoryHandler import DRIVE_DATA
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
 
     data = await request.json()
 
@@ -218,24 +221,26 @@ async def api_new_folder(request: Request):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"createNewFolder {data}")
-    folder_data = DRIVE_DATA.get_directory(data["path"]).contents
-    for id in folder_data:
-        f = folder_data[id]
-        if f.type == "folder":
-            if f.name == data["name"]:
-                return JSONResponse(
-                    {
-                        "status": "Folder with the name already exist in current directory"
-                    }
-                )
+    target_dir = drive.get_directory(data["path"])
+    if target_dir and hasattr(target_dir, "contents"):
+        for id in target_dir.contents:
+            f = target_dir.contents[id]
+            if f.type == "folder":
+                if f.name == data["name"]:
+                    return JSONResponse(
+                        {
+                            "status": "Folder with the name already exist in current directory"
+                        }
+                    )
 
-    DRIVE_DATA.new_folder(data["path"], data["name"])
+    drive.new_folder(data["path"], data["name"])
     return JSONResponse({"status": "ok"})
 
 
 @app.post("/api/getDirectory")
 async def api_get_directory(request: Request):
-    from utils.directoryHandler import DRIVE_DATA
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
 
     data = await request.json()
     is_admin = is_admin_authenticated(request, data=data)
@@ -244,46 +249,81 @@ async def api_get_directory(request: Request):
 
     logger.info(f"getFolder path={path} is_admin={is_admin}")
 
+    breadcrumbs = drive.get_breadcrumbs(path)
+
     # Protected paths: trash & search & normal drive require admin authentication
     if not is_admin:
         if not path.startswith("/share_"):
             return JSONResponse({"status": "Invalid password"}, status_code=401)
 
         share_path = path.split("_", 1)[1]
-        res = DRIVE_DATA.get_directory(share_path, is_admin=False, auth=auth)
+        res = drive.get_directory(share_path, is_admin=False, auth=auth)
         if not res:
             return JSONResponse({"status": "Unauthorized folder access"}, status_code=403)
-        folder_data, auth_home_path = res
+        if isinstance(res, tuple):
+            folder_data, auth_home_path = res
+        else:
+            folder_data, auth_home_path = res, None
         auth_home_path = auth_home_path.replace("//", "/") if auth_home_path else None
         folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
         return JSONResponse(
-            {"status": "ok", "data": folder_data, "auth_home_path": auth_home_path}
+            {"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": auth_home_path}
         )
 
     # Admin access paths
     if path == "/trash":
-        trash_data = {"contents": DRIVE_DATA.get_trashed_files_folders()}
+        trash_data = {"contents": drive.get_trashed_files_folders()}
         folder_data = convert_class_to_dict(trash_data, isObject=False, showtrash=True)
 
     elif "/search_" in path:
         query = urllib.parse.unquote(path.split("_", 1)[1])
-        search_data = {"contents": DRIVE_DATA.search_file_folder(query)}
+        search_data = {"contents": drive.search_file_folder(query)}
         folder_data = convert_class_to_dict(search_data, isObject=False, showtrash=False)
 
     elif "/share_" in path:
         share_path = path.split("_", 1)[1]
-        folder_data, auth_home_path = DRIVE_DATA.get_directory(share_path, is_admin=True, auth=auth)
+        res = drive.get_directory(share_path, is_admin=True, auth=auth)
+        if not res:
+            return JSONResponse({"status": "Folder not found"}, status_code=404)
+        if isinstance(res, tuple):
+            folder_data, auth_home_path = res
+        else:
+            folder_data, auth_home_path = res, None
         auth_home_path = auth_home_path.replace("//", "/") if auth_home_path else None
         folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
         return JSONResponse(
-            {"status": "ok", "data": folder_data, "auth_home_path": auth_home_path}
+            {"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": auth_home_path}
         )
 
     else:
-        folder_data = DRIVE_DATA.get_directory(path, is_admin=True)
+        folder_data = drive.get_directory(path, is_admin=True)
+        if not folder_data:
+            return JSONResponse({"status": "Folder not found"}, status_code=404)
+        if isinstance(folder_data, tuple):
+            folder_data = folder_data[0]
         folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
 
-    return JSONResponse({"status": "ok", "data": folder_data, "auth_home_path": None})
+    return JSONResponse({"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": None})
+
+
+@app.post("/api/moveFileFolder")
+async def move_file_folder(request: Request):
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+
+    data = await request.json()
+
+    if not is_admin_authenticated(request, data=data):
+        return JSONResponse({"status": "Invalid password"}, status_code=401)
+
+    logger.info(f"moveFileFolder {data}")
+    try:
+        drive.move_file_folder(data["src_path"], data["dest_path"])
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Error moving file/folder: {e}")
+        return JSONResponse({"status": str(e)}, status_code=400)
+
 
 
 SAVE_PROGRESS = {}
@@ -414,7 +454,8 @@ async def cancel_upload(request: Request):
 
 @app.post("/api/renameFileFolder")
 async def rename_file_folder(request: Request):
-    from utils.directoryHandler import DRIVE_DATA
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
 
     data = await request.json()
 
@@ -422,13 +463,14 @@ async def rename_file_folder(request: Request):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"renameFileFolder {data}")
-    DRIVE_DATA.rename_file_folder(data["path"], data["name"])
+    drive.rename_file_folder(data["path"], data["name"])
     return JSONResponse({"status": "ok"})
 
 
 @app.post("/api/trashFileFolder")
 async def trash_file_folder(request: Request):
-    from utils.directoryHandler import DRIVE_DATA
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
 
     data = await request.json()
 
@@ -436,13 +478,14 @@ async def trash_file_folder(request: Request):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"trashFileFolder {data}")
-    DRIVE_DATA.trash_file_folder(data["path"], data["trash"])
+    drive.trash_file_folder(data["path"], data["trash"])
     return JSONResponse({"status": "ok"})
 
 
 @app.post("/api/deleteFileFolder")
 async def delete_file_folder(request: Request):
-    from utils.directoryHandler import DRIVE_DATA
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
 
     data = await request.json()
 
@@ -450,7 +493,7 @@ async def delete_file_folder(request: Request):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"deleteFileFolder {data}")
-    DRIVE_DATA.delete_file_folder(data["path"])
+    drive.delete_file_folder(data["path"])
     return JSONResponse({"status": "ok"})
 
 
@@ -507,7 +550,8 @@ async def getFileDownloadProgress(request: Request):
 
 @app.post("/api/getFolderShareAuth")
 async def getFolderShareAuth(request: Request):
-    from utils.directoryHandler import DRIVE_DATA
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
 
     data = await request.json()
 
@@ -517,7 +561,7 @@ async def getFolderShareAuth(request: Request):
     logger.info(f"getFolderShareAuth {data}")
 
     try:
-        auth = DRIVE_DATA.get_folder_auth(data["path"])
+        auth = drive.get_folder_auth(data["path"])
         return JSONResponse({"status": "ok", "auth": auth})
     except Exception:
         return JSONResponse({"status": "not found"})
