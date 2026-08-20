@@ -1061,7 +1061,7 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
     print(f"  [2] 💾 D: Drive ({'Available: D:\\' if d_drive_path.exists() else 'Not detected'})")
     print(f"  [3] 📱 Mobile Storage ({f'Detected: {detected_phone_name}' if detected_phone_name else 'Connected Phone'})")
     print(f"  [4] 🗂️  SD Card Storage (Phone SD Card or USB Reader)")
-    print(f"  [5] ✍️  Custom Folder Path (e.g. Notion Drive)")
+    print(f"  [5] ✍️  Custom Folder Path (Any local directory)")
     print("=" * 68)
 
     while True:
@@ -1109,11 +1109,7 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
                 return "local", Path(sd_path), None, None
 
         elif choice == "5":
-            notion_drive_default = Path("C:/Users/shishir0x/Documents/Portfolio/Notion Drive")
-            default_hint = f" [Default: {notion_drive_default}]" if notion_drive_default.exists() else ""
-            manual_path = input(f"\nEnter custom folder path{default_hint} (or press Enter): ").strip().strip('"').strip("'")
-            if not manual_path and notion_drive_default.exists():
-                return "local", notion_drive_default, "Notion_Drive", None
+            manual_path = input("\nEnter custom folder path (e.g. C:\\Projects\\MyFolder): ").strip().strip('"').strip("'")
             p = Path(manual_path)
             if not p.exists():
                 print(f"❌ Path does not exist: {manual_path}")
