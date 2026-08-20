@@ -785,6 +785,7 @@ class TGDriveBackupClient:
         # ── Step 1: Scan MTP Phone Folders & Files ────────────────────────────
         print("⏳ Scanning phone folders and files over USB MTP...")
         ps_scan = f'''
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $shell = New-Object -ComObject Shell.Application
 $thisPC = $shell.Namespace(17)
 $phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }}
@@ -948,7 +949,13 @@ while ($line = [Console]::In.ReadLine()) {{
         }}
     }}
 
-    $fileItem = $target.GetFolder.Items() | Where-Object {{ -not $_.IsFolder -and $_.Name -eq $fileName }} | Select-Object -First 1
+    $cleanReq = $fileName -replace '[\?\u200B]', ''
+    $fileItem = $target.GetFolder.Items() | Where-Object {{ 
+        -not $_.IsFolder -and (
+            $_.Name -eq $fileName -or 
+            ($_.Name -replace '[\?\u200B]', '') -eq $cleanReq
+        )
+    }} | Select-Object -First 1
     if ($fileItem) {{
         $destFolder.CopyHere($fileItem, 16)
         $found = $false
