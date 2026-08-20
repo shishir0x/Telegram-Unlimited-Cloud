@@ -109,6 +109,12 @@ async def home_page():
     return FileResponse("website/home.html")
 
 
+@app.get("/health")
+@app.get("/ping")
+async def health_check():
+    return JSONResponse({"status": "ok", "message": "TG Drive is active"})
+
+
 @app.get("/stream")
 async def stream_page():
     return FileResponse("website/VideoPlayer.html")
