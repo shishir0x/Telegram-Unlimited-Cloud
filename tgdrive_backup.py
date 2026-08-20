@@ -926,8 +926,7 @@ Scan-MTP $targetRoot ""
 
         ps_worker_code = f'''
 $shell = New-Object -ComObject Shell.Application
-$destPath = '{folder_dest.resolve()}'
-$destFolder = $shell.Namespace($destPath)
+$destPath = "{str(folder_dest.resolve()).replace('\\', '\\\\')}"
 $thisPC = $shell.Namespace(17)
 $phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }} | Select-Object -First 1
 $storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }} | Select-Object -First 1
@@ -936,11 +935,21 @@ Write-Output "WORKER_READY"
 
 while ($line = [Console]::In.ReadLine()) {{
     if ($line -eq "QUIT") {{ break }}
+    $destFolder = $shell.Namespace($destPath)
+    if (-not $destFolder) {{
+        $destFolder = $shell.NameSpace($destPath)
+    }}
+
     $bytes = [System.Convert]::FromBase64String($line)
     $decoded = [System.Text.Encoding]::UTF8.GetString($bytes)
-    $parts = $decoded.Split('|')
-    $relFolder = $parts[0]
-    $fileName = $parts[1]
+    $splitIdx = $decoded.IndexOf('|')
+    if ($splitIdx -ge 0) {{
+        $relFolder = $decoded.Substring(0, $splitIdx)
+        $fileName = $decoded.Substring($splitIdx + 1)
+    }} else {{
+        $relFolder = ""
+        $fileName = $decoded
+    }}
 
     $target = $storage
     $folderClean = $relFolder.Trim('/').Trim('\\')
@@ -948,7 +957,14 @@ while ($line = [Console]::In.ReadLine()) {{
         $subParts = $folderClean.Replace('\\', '/').Split('/')
         foreach ($p in $subParts) {{
             if ($p) {{
-                $target = $target.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }} | Select-Object -First 1
+                $foundSub = $null
+                foreach ($item in $target.GetFolder.Items()) {{
+                    if ($item.IsFolder -and ($item.Name -eq $p -or $item.Name.Trim() -eq $p.Trim())) {{
+                        $foundSub = $item
+                        break
+                    }}
+                }}
+                $target = $foundSub
                 if (-not $target) {{ break }}
             }}
         }}
@@ -957,17 +973,21 @@ while ($line = [Console]::In.ReadLine()) {{
     $cleanReq = $fileName -replace '[\\?\\u200B]', ''
     $fileItem = $null
     if ($target) {{
-        $fileItem = $target.GetFolder.Items() | Where-Object {{ 
-            -not $_.IsFolder -and (
-                $_.Name -eq $fileName -or 
-                ($_.Name -replace '[\\?\\u200B]', '') -eq $cleanReq
-            )
-        }} | Select-Object -First 1
+        foreach ($item in $target.GetFolder.Items()) {{
+            if (-not $item.IsFolder) {{
+                $n = $item.Name -replace '[\\?\\u200B]', ''
+                if ($item.Name -eq $fileName -or $n -eq $cleanReq -or $item.Name.Trim() -eq $fileName.Trim()) {{
+                    $fileItem = $item
+                    break
+                }}
+            }}
+        }}
     }}
-    if ($fileItem) {{
+
+    if ($fileItem -and $destFolder) {{
         $destFolder.CopyHere($fileItem, 16)
         $found = $false
-        for ($w = 0; $w -lt 40; $w++) {{
+        for ($w = 0; $w -lt 100; $w++) {{
             $copied = Get-ChildItem -LiteralPath $destPath -File | Select-Object -First 1
             if ($copied -and $copied.Length -gt 0) {{
                 Write-Output ("READY|" + $copied.Length)
