@@ -922,6 +922,7 @@ Scan-MTP $targetRoot ""
         folder_dest = staging_dir / "stream_dest"
         if folder_dest.exists():
             shutil.rmtree(folder_dest, ignore_errors=True)
+        folder_dest.mkdir(parents=True, exist_ok=True)
         dest_native_path = str(folder_dest.resolve())
 
         ps_worker_code = f'''
@@ -1046,6 +1047,7 @@ while ($line = [Console]::In.ReadLine()) {{
                 rem_files = total_sync_files - idx
 
                 # Clean destination directory before each file
+                folder_dest.mkdir(parents=True, exist_ok=True)
                 for existing in folder_dest.iterdir():
                     try:
                         if existing.is_file():
