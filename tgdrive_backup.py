@@ -388,12 +388,17 @@ class TGDriveBackupClient:
     def sync_folders_first(self, all_folders: List[str], base_tg_path: str):
         """
         Step 1: Creates all folder hierarchies on TGDrive first (including empty folders!).
+        Skips folders that are already verified.
         """
-        total_folders = len(all_folders)
-        if total_folders == 0:
+        verified_folders = set(self.manifest.data.get("__verified_folders__", []))
+        unverified = [f for f in all_folders if f"{base_tg_path}/{f}".strip("/") not in verified_folders]
+        
+        if not unverified:
+            print(f"\n📁 Step 1: All {len(all_folders):,} folder paths already verified & present in Cloud Drive (Skipped).")
             return
 
-        print(f"\n📁 Step 1: Pre-Syncing & Creating Folder Hierarchy ({total_folders:,} folders)...")
+        total_folders = len(unverified)
+        print(f"\n📁 Step 1: Pre-Syncing & Creating {total_folders:,} New/Pending Folder Hierarchies...")
         self.push_web_sync_status({
             "state": "syncing_folders",
             "folders_total": total_folders,
@@ -401,13 +406,14 @@ class TGDriveBackupClient:
         }, f"Starting folder pre-sync for {total_folders} directories...")
 
         created_count = 0
-        for idx, rel_folder in enumerate(all_folders, start=1):
+        for idx, rel_folder in enumerate(unverified, start=1):
             if rel_folder in [".", ""]:
                 full_tg_folder = base_tg_path
             else:
                 full_tg_folder = f"{base_tg_path}/{rel_folder}".strip("/")
 
             self.resolve_or_create_folder_id_path(full_tg_folder)
+            verified_folders.add(full_tg_folder)
             created_count += 1
 
             pct = (idx / total_folders) * 100.0
@@ -425,6 +431,8 @@ class TGDriveBackupClient:
                     "current_item": short_name
                 })
 
+        self.manifest.data["__verified_folders__"] = list(verified_folders)
+        self.manifest.save()
         sys.stdout.write("\n")
         print(f"  ✅ All {total_folders:,} folders verified & created in Cloud Drive!")
         self.push_web_sync_status({
