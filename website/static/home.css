@@ -249,6 +249,31 @@ body {
     transition: all 0.25s ease;
 }
 
+.gd-sidebar.collapsed {
+    width: 76px;
+    min-width: 76px;
+    padding: 8px 12px 16px;
+}
+
+.gd-sidebar.collapsed .gd-new-button span,
+.gd-sidebar.collapsed .gd-nav-item span,
+.gd-sidebar.collapsed .gd-storage-section {
+    display: none;
+}
+
+.gd-sidebar.collapsed .gd-new-button {
+    padding: 12px;
+    border-radius: 50%;
+    justify-content: center;
+    width: 50px;
+    height: 50px;
+}
+
+.gd-sidebar.collapsed .gd-nav-item {
+    justify-content: center;
+    padding: 12px 0;
+}
+
 .gd-new-btn-wrapper {
     position: relative;
     margin-bottom: 16px;
@@ -1520,7 +1545,15 @@ body {
 
 /* Mobile Floating Action Button (FAB) */
 .gd-mobile-fab {
-    display: none;
+    display: none !important;
+}
+
+.gd-fab-plus-icon {
+    width: 28px;
+    height: 28px;
+    max-width: 28px;
+    max-height: 28px;
+    flex-shrink: 0;
 }
 
 /* Bottom Sheet */
