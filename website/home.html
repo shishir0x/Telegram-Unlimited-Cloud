@@ -192,6 +192,136 @@
                     <div class="gd-grid-files" id="grid-files-data"></div>
                 </div>
 
+                <!-- Live Sync Activity Dedicated View (No Modal, Native in UI) -->
+                <div class="gd-sync-view-container" id="sync-view-container" style="display: none;">
+                    <!-- Top Section: Currently Syncing File & Real-Time Stats -->
+                    <div class="gd-sync-hero-card">
+                        <div class="gd-sync-hero-header">
+                            <div class="gd-sync-header-left">
+                                <div class="gd-sync-pulsing-badge" id="sync-view-status-badge">
+                                    <span class="gd-sync-pulse-dot"></span>
+                                    <span id="sync-view-state-text">IDLE / READY</span>
+                                </div>
+                                <div class="gd-sync-source-tag">
+                                    <span class="gd-sync-tag-label">Source:</span>
+                                    <span id="sync-view-source-text">OnePlus Nord CE4 (Internal shared storage)</span>
+                                </div>
+                            </div>
+                            <div class="gd-sync-header-right">
+                                <div class="gd-sync-speed-badge">
+                                    <svg viewBox="0 0 24 24" class="gd-sync-stat-svg"><path d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.05.5-9 4.77-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.01-4.07l-2.49-1.47C16.29 17.81 14.28 19 12 19z"/></svg>
+                                    <span id="sync-view-speed">0.00 KB/s</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Active File Card -->
+                        <div class="gd-sync-active-file-box">
+                            <div class="gd-sync-active-icon-wrap">
+                                <div class="gd-sync-spinning-icon">
+                                    <svg viewBox="0 0 24 24" class="gd-sync-svg-rot"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                                </div>
+                            </div>
+                            <div class="gd-sync-active-file-details">
+                                <div class="gd-sync-active-title-row">
+                                    <span class="gd-sync-active-label">CURRENTLY SYNCING</span>
+                                    <span class="gd-sync-active-size-tag" id="sync-view-active-size">--</span>
+                                </div>
+                                <div class="gd-sync-active-filename" id="sync-view-active-name">No active transfer</div>
+                                <div class="gd-sync-active-path">
+                                    <svg viewBox="0 0 24 24" class="gd-sync-path-svg"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                                    <span id="sync-view-active-path">/</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Progress Bar & Metrics -->
+                        <div class="gd-sync-progress-section">
+                            <div class="gd-sync-progress-bar-track">
+                                <div class="gd-sync-progress-bar-fill" id="sync-view-progress-fill" style="width: 0%;"></div>
+                            </div>
+                            <div class="gd-sync-progress-meta-row">
+                                <div class="gd-sync-meta-counts" id="sync-view-progress-counts">0 / 0 files (0 remaining)</div>
+                                <div class="gd-sync-meta-percent" id="sync-view-progress-percent">0%</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dual Tables Side-by-Side: Left (To Be Uploaded) & Right (Uploaded) -->
+                    <div class="gd-sync-tables-split">
+                        <!-- Left Table: To Be Uploaded (Pending Queue) -->
+                        <div class="gd-sync-table-panel left-panel">
+                            <div class="gd-sync-panel-header">
+                                <div class="gd-sync-panel-title">
+                                    <span class="gd-sync-panel-dot pending-dot"></span>
+                                    <span>⏳ To Be Uploaded</span>
+                                    <span class="gd-sync-panel-count-pill" id="sync-pending-badge">0</span>
+                                </div>
+                                <span class="gd-sync-panel-hint">Pending Queue</span>
+                            </div>
+                            <div class="gd-sync-table-scroll">
+                                <table class="gd-sync-dual-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 8%;">#</th>
+                                            <th style="width: 42%;">File Name</th>
+                                            <th style="width: 35%;">Source Folder Path</th>
+                                            <th style="width: 15%; text-align: right;">Size</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sync-pending-table-body">
+                                        <tr class="empty-row">
+                                            <td colspan="4">No pending files in queue</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Right Table: Uploaded to Cloud (Completed) -->
+                        <div class="gd-sync-table-panel right-panel">
+                            <div class="gd-sync-panel-header">
+                                <div class="gd-sync-panel-title">
+                                    <span class="gd-sync-panel-dot success-dot"></span>
+                                    <span>✅ Uploaded to Cloud</span>
+                                    <span class="gd-sync-panel-count-pill success-pill" id="sync-completed-badge">0</span>
+                                </div>
+                                <span class="gd-sync-panel-hint">Live Synced History</span>
+                            </div>
+                            <div class="gd-sync-table-scroll">
+                                <table class="gd-sync-dual-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 8%;">#</th>
+                                            <th style="width: 42%;">File Name</th>
+                                            <th style="width: 35%;">Cloud Destination Path</th>
+                                            <th style="width: 15%; text-align: right;">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sync-completed-table-body">
+                                        <tr class="empty-row">
+                                            <td colspan="4">Uploaded files will appear here in real-time</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Terminal Logs Console -->
+                    <div class="gd-sync-terminal-card">
+                        <div class="gd-sync-terminal-header">
+                            <div class="gd-sync-terminal-dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <span class="gd-sync-terminal-title">LIVE TELEMETRY LOGS</span>
+                        </div>
+                        <div class="gd-sync-terminal-body" id="sync-view-terminal-logs">
+                            <div class="gd-sync-terminal-line"><span class="log-time">[00:00:00]</span> Live Sync Activity Monitor initialized. Waiting for backup stream...</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Desktop Context Menus Container (Separated from table DOM) -->
                 <div id="context-menus-container"></div>
             </div>
@@ -421,47 +551,7 @@
         <div class="gd-bottom-sheet-actions" id="bs-actions"></div>
     </div>
 
-    <!-- Sync Activity Modal -->
-    <div class="gd-modal-backdrop" id="sync-modal-backdrop"></div>
-    <div class="gd-modal" id="sync-activity-modal">
-        <div class="gd-modal-header">
-            <div class="gd-sync-modal-title">
-                <svg viewBox="0 0 24 24" class="gd-modal-svg"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
-                <span>Live Sync Activity</span>
-            </div>
-            <button class="gd-icon-btn" id="sync-modal-close">&times;</button>
-        </div>
-        <div class="gd-modal-body">
-            <div class="gd-sync-card">
-                <div class="gd-sync-card-row">
-                    <span class="gd-sync-label">Sync Status</span>
-                    <span class="gd-sync-val-badge" id="sync-ui-state">Idle</span>
-                </div>
-                <div class="gd-sync-card-row">
-                    <span class="gd-sync-label">Target / Source</span>
-                    <span class="gd-sync-val" id="sync-ui-source">Ready for sync</span>
-                </div>
-                <div class="gd-sync-card-row">
-                    <span class="gd-sync-label">Active Item</span>
-                    <span class="gd-sync-val font-mono" id="sync-ui-current">--</span>
-                </div>
-                <div class="gd-sync-progress-wrap">
-                    <div class="gd-sync-progress-bar">
-                        <div class="gd-sync-progress-fill" id="sync-ui-fill" style="width: 0%;"></div>
-                    </div>
-                    <div class="gd-sync-progress-info">
-                        <span id="sync-ui-counts">0 / 0 files</span>
-                        <span id="sync-ui-speed">0.00 B/s</span>
-                    </div>
-                </div>
-            </div>
 
-            <div class="gd-sync-logs-header">Live Telemetry Logs</div>
-            <div class="gd-sync-logs-box" id="sync-ui-logs">
-                <div class="gd-sync-log-entry"><span class="log-time">--:--:--</span> Waiting for backup engine connection...</div>
-            </div>
-        </div>
-    </div>
 
     <!-- Scripts -->
     <script src="static/js/extra.js?v=2.2"></script>

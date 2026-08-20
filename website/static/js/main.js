@@ -914,39 +914,71 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==========================================
-// Live Sync Manager Telemetry & Activity UI
+// Live Sync Manager Telemetry & Native Activity UI
 // ==========================================
 
 function initSyncActivityManager() {
     const syncPill = document.getElementById('gd-sync-status-pill');
     const syncPillText = document.getElementById('sync-pill-text');
     const navSyncActivity = document.getElementById('nav-sync-activity');
-    const modalBackdrop = document.getElementById('sync-modal-backdrop');
-    const syncModal = document.getElementById('sync-activity-modal');
-    const modalClose = document.getElementById('sync-modal-close');
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navComputers = document.getElementById('nav-computers');
+    const navTrash = document.getElementById('nav-trash');
 
-    function openSyncModal() {
-        if (modalBackdrop && syncModal) {
-            modalBackdrop.style.zIndex = '550';
-            modalBackdrop.style.opacity = '1';
-            syncModal.style.zIndex = '551';
-            syncModal.style.opacity = '1';
+    const listViewContainer = document.getElementById('list-view-container');
+    const gridViewContainer = document.getElementById('grid-view-container');
+    const syncViewContainer = document.getElementById('sync-view-container');
+    const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
+
+    // Switch to Native Sync View in UI
+    function showSyncActivityView() {
+        if (listViewContainer) listViewContainer.style.display = 'none';
+        if (gridViewContainer) gridViewContainer.style.display = 'none';
+        if (syncViewContainer) syncViewContainer.style.display = 'flex';
+
+        // Update sidebar selection
+        [navMyDrive, navComputers, navTrash].forEach(el => {
+            if (el) el.classList.replace('selected-item', 'unselected-item');
+        });
+        if (navSyncActivity) navSyncActivity.classList.replace('unselected-item', 'selected-item');
+
+        // Update breadcrumb
+        if (breadcrumbsContainer) {
+            breadcrumbsContainer.innerHTML = `
+                <span class="gd-crumb gd-crumb-target" data-path="/">My Drive</span>
+                <span class="gd-crumb-separator">&gt;</span>
+                <span class="gd-crumb gd-crumb-current">⚡ Live Sync Activity</span>
+            `;
+            const rootCrumb = breadcrumbsContainer.querySelector('.gd-crumb-target');
+            if (rootCrumb) {
+                rootCrumb.addEventListener('click', () => {
+                    hideSyncActivityView();
+                    if (typeof updateDirectoryData === 'function') updateDirectoryData('/');
+                });
+            }
         }
     }
 
-    function closeSyncModal() {
-        if (modalBackdrop && syncModal) {
-            modalBackdrop.style.zIndex = '-1';
-            modalBackdrop.style.opacity = '0';
-            syncModal.style.zIndex = '-1';
-            syncModal.style.opacity = '0';
+    function hideSyncActivityView() {
+        if (syncViewContainer) syncViewContainer.style.display = 'none';
+        if (CURRENT_VIEW_MODE === 'grid') {
+            if (gridViewContainer) gridViewContainer.style.display = 'block';
+            if (listViewContainer) listViewContainer.style.display = 'none';
+        } else {
+            if (listViewContainer) listViewContainer.style.display = 'block';
+            if (gridViewContainer) gridViewContainer.style.display = 'none';
         }
+        if (navSyncActivity) navSyncActivity.classList.replace('selected-item', 'unselected-item');
+        if (navMyDrive) navMyDrive.classList.replace('unselected-item', 'selected-item');
     }
 
-    if (syncPill) syncPill.addEventListener('click', openSyncModal);
-    if (navSyncActivity) navSyncActivity.addEventListener('click', (e) => { e.preventDefault(); openSyncModal(); });
-    if (modalClose) modalClose.addEventListener('click', closeSyncModal);
-    if (modalBackdrop) modalBackdrop.addEventListener('click', closeSyncModal);
+    if (syncPill) syncPill.addEventListener('click', (e) => { e.preventDefault(); showSyncActivityView(); });
+    if (navSyncActivity) navSyncActivity.addEventListener('click', (e) => { e.preventDefault(); showSyncActivityView(); });
+
+    // Handle My Drive / Computers navigation switching away from sync view
+    if (navMyDrive) navMyDrive.addEventListener('click', () => hideSyncActivityView());
+    if (navComputers) navComputers.addEventListener('click', () => hideSyncActivityView());
+    if (navTrash) navTrash.addEventListener('click', () => hideSyncActivityView());
 
     async function pollSyncStatus() {
         try {
@@ -989,39 +1021,130 @@ function initSyncActivityManager() {
             }
         }
 
-        // Update Modal elements
-        const uiState = document.getElementById('sync-ui-state');
-        const uiSource = document.getElementById('sync-ui-source');
-        const uiCurrent = document.getElementById('sync-ui-current');
-        const uiFill = document.getElementById('sync-ui-fill');
-        const uiCounts = document.getElementById('sync-ui-counts');
-        const uiSpeed = document.getElementById('sync-ui-speed');
-        const uiLogs = document.getElementById('sync-ui-logs');
+        // Update Native UI Dashboard Elements
+        const uiStateText = document.getElementById('sync-view-state-text');
+        const uiSource = document.getElementById('sync-view-source-text');
+        const uiSpeed = document.getElementById('sync-view-speed');
 
-        if (uiState) uiState.innerText = state.replace('_', ' ').toUpperCase();
+        const uiActiveName = document.getElementById('sync-view-active-name');
+        const uiActivePath = document.getElementById('sync-view-active-path');
+        const uiActiveSize = document.getElementById('sync-view-active-size');
+
+        const uiFill = document.getElementById('sync-view-progress-fill');
+        const uiCounts = document.getElementById('sync-view-progress-counts');
+        const uiPercent = document.getElementById('sync-view-progress-percent');
+
+        const pendingBody = document.getElementById('sync-pending-table-body');
+        const pendingBadge = document.getElementById('sync-pending-badge');
+        const completedBody = document.getElementById('sync-completed-table-body');
+        const completedBadge = document.getElementById('sync-completed-badge');
+        const terminalLogs = document.getElementById('sync-view-terminal-logs');
+
+        // State & Target info
+        if (uiStateText) uiStateText.innerText = state.replace('_', ' ').toUpperCase();
         if (uiSource && data.source) uiSource.innerText = data.source;
-        if (uiCurrent) uiCurrent.innerText = data.current_item || (isBusy ? 'Processing...' : '--');
+        if (uiSpeed) uiSpeed.innerText = data.speed_str || (isBusy ? 'Transferring...' : '0.00 KB/s');
 
+        // Active file card
+        if (uiActiveName) uiActiveName.innerText = data.current_item || (isBusy ? 'Processing cloud stream...' : 'No active transfer');
+        if (uiActivePath) uiActivePath.innerText = data.current_path || '/';
+        if (uiActiveSize) uiActiveSize.innerText = data.current_size || (data.current_item ? 'In-Memory Stream' : '--');
+
+        // Progress Calculation
         let pct = 0;
+        let countText = '0 / 0 files (0 remaining)';
         if (state === 'syncing_folders' && data.folders_total > 0) {
             pct = Math.round((data.folders_created / data.folders_total) * 100);
-            if (uiCounts) uiCounts.innerText = `${data.folders_created} / ${data.folders_total} folders`;
+            countText = `${data.folders_created} / ${data.folders_total} folders verified`;
         } else if (state === 'syncing_files' && data.total_items > 0) {
             pct = Math.round((data.current_index / data.total_items) * 100);
-            if (uiCounts) uiCounts.innerText = `${data.current_index} / ${data.total_items} files (${data.remaining_items || 0} remaining)`;
+            countText = `${data.current_index} / ${data.total_items} files (${data.remaining_items || 0} remaining)`;
         } else if (state === 'completed') {
             pct = 100;
-            if (uiCounts) uiCounts.innerText = `${data.files_uploaded || 0} uploaded, ${data.files_skipped || 0} skipped`;
+            countText = `🎉 All ${data.files_uploaded || 0} files successfully uploaded (${data.files_skipped || 0} up-to-date skipped)`;
         }
-        if (uiFill) uiFill.style.width = `${pct}%`;
-        if (uiSpeed) uiSpeed.innerText = data.speed_str || (isBusy ? 'Transferring...' : '0.00 B/s');
 
-        if (uiLogs && data.logs && data.logs.length > 0) {
-            uiLogs.innerHTML = data.logs.map(l => `<div class="gd-sync-log-entry"><span class="log-time">[${l.time}]</span> ${l.msg}</div>`).join('');
-            uiLogs.scrollTop = uiLogs.scrollHeight;
+        if (uiFill) uiFill.style.width = `${pct}%`;
+        if (uiCounts) uiCounts.innerText = countText;
+        if (uiPercent) uiPercent.innerText = `${pct}%`;
+
+        // Render Left Table: ⏳ To Be Uploaded (Queue)
+        if (pendingBody) {
+            const pendingList = data.pending_queue || [];
+            if (pendingBadge) pendingBadge.innerText = data.remaining_items !== undefined ? data.remaining_items : pendingList.length;
+
+            if (pendingList.length > 0) {
+                pendingBody.innerHTML = pendingList.map((item, idx) => `
+                    <tr>
+                        <td class="gd-sync-table-idx">${idx + 1}</td>
+                        <td class="gd-sync-table-fname" title="${escapeHtml(item.name || '')}">
+                            <span>📄</span>
+                            <span class="file-name-text">${escapeHtml(item.name || '')}</span>
+                        </td>
+                        <td>
+                            <span class="gd-sync-table-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</span>
+                        </td>
+                        <td style="text-align: right;">
+                            <span class="gd-sync-status-tag tag-pending">${escapeHtml(item.size || 'Queued')}</span>
+                        </td>
+                    </tr>
+                `).join('');
+            } else if (isBusy && data.remaining_items > 0) {
+                pendingBody.innerHTML = `
+                    <tr class="empty-row">
+                        <td colspan="4">⚡ Processing remaining ${data.remaining_items} items over persistent MTP stream...</td>
+                    </tr>
+                `;
+            } else {
+                pendingBody.innerHTML = `
+                    <tr class="empty-row">
+                        <td colspan="4">${state === 'completed' ? '✅ All files transferred! Queue is empty.' : 'No pending files in queue'}</td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Render Right Table: ✅ Uploaded to Cloud (History)
+        if (completedBody) {
+            const completedList = data.completed_list || [];
+            if (completedBadge) completedBadge.innerText = data.current_index !== undefined ? data.current_index : completedList.length;
+
+            if (completedList.length > 0) {
+                completedBody.innerHTML = completedList.map((item, idx) => `
+                    <tr>
+                        <td class="gd-sync-table-idx">${idx + 1}</td>
+                        <td class="gd-sync-table-fname" title="${escapeHtml(item.name || '')}">
+                            <span>✅</span>
+                            <span class="file-name-text">${escapeHtml(item.name || '')}</span>
+                        </td>
+                        <td>
+                            <span class="gd-sync-table-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</span>
+                        </td>
+                        <td style="text-align: right;">
+                            <span class="gd-sync-status-tag tag-synced">${escapeHtml(item.time || 'Synced')}</span>
+                        </td>
+                    </tr>
+                `).join('');
+            } else {
+                completedBody.innerHTML = `
+                    <tr class="empty-row">
+                        <td colspan="4">Uploaded files will appear here in real-time</td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Render Live Logs
+        if (terminalLogs && data.logs && data.logs.length > 0) {
+            terminalLogs.innerHTML = data.logs.map(l => `
+                <div class="gd-sync-terminal-line">
+                    <span class="log-time">[${l.time}]</span> ${escapeHtml(l.msg)}
+                </div>
+            `).join('');
+            terminalLogs.scrollTop = terminalLogs.scrollHeight;
         }
     }
 
-    setInterval(pollSyncStatus, 2500);
+    setInterval(pollSyncStatus, 2000);
 }
 

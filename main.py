@@ -598,6 +598,8 @@ SYNC_ENGINE_STATUS = {
     "files_uploaded": 0,
     "files_skipped": 0,
     "updated_at": time.time(),
+    "pending_queue": [],
+    "completed_list": [],
     "logs": []
 }
 
@@ -620,6 +622,23 @@ async def updateSyncStatus(request: Request):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     status_update = data.get("sync_data", {})
+    
+    # Handle completed item appending
+    completed_item = status_update.pop("completed_item", None)
+    if completed_item:
+        SYNC_ENGINE_STATUS["completed_list"].insert(0, completed_item)
+        if len(SYNC_ENGINE_STATUS["completed_list"]) > 100:
+            SYNC_ENGINE_STATUS["completed_list"] = SYNC_ENGINE_STATUS["completed_list"][:100]
+
+    # Handle pending queue update or item popping
+    if "pending_queue" in status_update:
+        SYNC_ENGINE_STATUS["pending_queue"] = status_update.pop("pending_queue")
+    elif "current_item" in status_update and SYNC_ENGINE_STATUS["pending_queue"]:
+        cur = status_update["current_item"]
+        SYNC_ENGINE_STATUS["pending_queue"] = [
+            item for item in SYNC_ENGINE_STATUS["pending_queue"] if item.get("name") != cur
+        ]
+
     SYNC_ENGINE_STATUS.update(status_update)
     SYNC_ENGINE_STATUS["updated_at"] = time.time()
 

@@ -551,6 +551,8 @@ class TGDriveBackupClient:
         self.push_web_sync_status({
             "state": "syncing_files",
             "current_item": file_name,
+            "current_path": f"/{human_remote_folder}/".replace("//", "/"),
+            "current_size": format_size(file_size),
             "current_index": file_idx,
             "total_items": total_files,
             "remaining_items": remaining_files,
@@ -1002,6 +1004,21 @@ while ($line = [Console]::In.ReadLine()) {{
 
         import base64
         uploaded_count = 0
+
+        # Push initial pending queue to Web UI
+        pending_sample = [
+            {"name": f[0], "path": f[2], "size": "Queued"}
+            for f in files_to_download[:80]
+        ]
+        self.push_web_sync_status({
+            "state": "syncing_files",
+            "source": f"{phone_name} ({storage_name})",
+            "total_items": total_sync_files,
+            "current_index": 0,
+            "remaining_items": total_sync_files,
+            "pending_queue": pending_sample,
+        }, f"Starting cloud transfer of {total_sync_files:,} files...")
+
         try:
             for idx, (fname, rel_folder, human_folder) in enumerate(files_to_download, start=1):
                 rem_files = total_sync_files - idx
@@ -1044,6 +1061,18 @@ while ($line = [Console]::In.ReadLine()) {{
                     )
                     if success:
                         uploaded_count += 1
+                        # Push completed file notification to Web UI
+                        self.push_web_sync_status({
+                            "state": "syncing_files",
+                            "current_index": idx,
+                            "remaining_items": rem_files,
+                            "completed_item": {
+                                "name": fname,
+                                "path": human_folder,
+                                "size": format_size(len(file_bytes)),
+                                "time": time.strftime("%H:%M:%S")
+                            }
+                        })
                 else:
                     print(f"\n[{idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
 
