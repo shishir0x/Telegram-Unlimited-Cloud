@@ -949,11 +949,11 @@ while ($line = [Console]::In.ReadLine()) {{
     $fileItem = $target.GetFolder.Items() | Where-Object {{ -not $_.IsFolder -and $_.Name -eq $fileName }} | Select-Object -First 1
     if ($fileItem) {{
         $destFolder.CopyHere($fileItem, 16)
-        $outPath = Join-Path $destPath $fileName
         $found = $false
         for ($w = 0; $w -lt 40; $w++) {{
-            if ((Test-Path $outPath) -and (Get-Item $outPath).Length -gt 0) {{
-                $len = (Get-Item $outPath).Length
+            $copied = Get-ChildItem -LiteralPath $destPath -File | Select-Object -First 1
+            if ($copied -and $copied.Length -gt 0) {{
+                $len = $copied.Length
                 Write-Output "READY|$fileName|$len"
                 $found = $true
                 break
