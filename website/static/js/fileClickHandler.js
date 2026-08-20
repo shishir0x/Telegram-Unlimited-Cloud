@@ -43,6 +43,16 @@ function openMoreButton(div) {
     }
 
     if (!isTrash) {
+        const previewOpt = moreDiv.querySelector(`#preview-opt-${id}`);
+        if (previewOpt) {
+            previewOpt.onclick = () => {
+                closeMoreMenu(moreDiv);
+                if (typeof openFilePreview === 'function') {
+                    openFilePreview.call({ getAttribute: () => id });
+                }
+            };
+        }
+
         const detailsOpt = moreDiv.querySelector(`#details-opt-${id}`);
         if (detailsOpt) {
             detailsOpt.onclick = () => {

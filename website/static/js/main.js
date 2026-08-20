@@ -420,7 +420,7 @@ function showDirectory(data, breadcrumbs) {
         if (isTrash) {
             tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -545,10 +545,19 @@ function applyViewMode(mode) {
     }
 }
 
-// In-App Media Preview Lightbox
+// Copy text from in-app code/text preview
+function copyPreviewText() {
+    const codeEl = document.getElementById('preview-text-code');
+    if (codeEl && codeEl.innerText) {
+        copyTextToClipboard(codeEl.innerText);
+        showToast('Text content copied to clipboard! 📋');
+    }
+}
+
+// In-App File & Media Preview Lightbox
 function openFilePreview() {
-    const id = this.getAttribute('data-id');
-    const item = DIRECTORY_ITEMS[id];
+    const id = this.getAttribute ? this.getAttribute('data-id') : (typeof this.id === 'string' ? this.id : null);
+    const item = (typeof DIRECTORY_ITEMS !== 'undefined' && id) ? DIRECTORY_ITEMS[id] : null;
     if (!item) return;
 
     const fileName = item.name.toLowerCase();
@@ -561,20 +570,81 @@ function openFilePreview() {
     const dlBtn = document.getElementById('preview-download-btn');
 
     if (title) title.innerText = item.name;
-    if (dlBtn) dlBtn.onclick = () => window.open(directUrl, '_blank');
+    if (dlBtn) dlBtn.onclick = () => {
+        const dl = document.createElement('a');
+        dl.href = directUrl;
+        dl.download = item.name;
+        dl.target = '_blank';
+        document.body.appendChild(dl);
+        dl.click();
+        document.body.removeChild(dl);
+    };
+
+    const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.avif'];
+    const videoExts = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.ts', '.ogv', '.m4v'];
+    const audioExts = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.opus', '.wma'];
+    const codeTextExts = [
+        '.txt', '.md', '.markdown', '.py', '.js', '.ts', '.jsx', '.tsx',
+        '.html', '.htm', '.css', '.scss', '.json', '.xml', '.csv', '.log',
+        '.sh', '.bat', '.cmd', '.yaml', '.yml', '.c', '.cpp', '.h', '.hpp',
+        '.java', '.rs', '.go', '.sql', '.ini', '.env', '.cfg', '.conf', '.toml',
+        '.dockerfile', '.gitattributes', '.gitignore'
+    ];
+
+    const isImage = imageExts.some(ext => fileName.endsWith(ext));
+    const isVideo = videoExts.some(ext => fileName.endsWith(ext));
+    const isAudio = audioExts.some(ext => fileName.endsWith(ext));
+    const isPdf = fileName.endsWith('.pdf');
+    const isText = codeTextExts.some(ext => fileName.endsWith(ext));
 
     if (holder) {
         holder.innerHTML = '';
-        if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi')) {
-            holder.innerHTML = `<video controls autoplay style="max-width: 90vw; max-height: 80vh;"><source src="${directUrl}" type="video/mp4">Your browser does not support video playback.</video>`;
-        } else if (fileName.endsWith('.mp3') || fileName.endsWith('.wav') || fileName.endsWith('.ogg') || fileName.endsWith('.flac') || fileName.endsWith('.m4a')) {
-            holder.innerHTML = `<audio controls autoplay style="width: 400px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>`;
-        } else if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.png') || fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.svg')) {
-            holder.innerHTML = `<img src="${directUrl}" alt="${escapeHtml(item.name)}">`;
-        } else if (fileName.endsWith('.pdf')) {
-            holder.innerHTML = `<iframe src="${directUrl}"></iframe>`;
+        if (isImage) {
+            holder.innerHTML = `<img src="${directUrl}" alt="${escapeHtml(item.name)}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+        } else if (isVideo) {
+            holder.innerHTML = `<video controls autoplay playsinline style="max-width:90vw; max-height:80vh;"><source src="${directUrl}">Your browser does not support video playback.</video>`;
+        } else if (isAudio) {
+            holder.innerHTML = `
+                <div class="gd-preview-audio-wrap">
+                    <div class="gd-preview-audio-icon">🎵</div>
+                    <div class="gd-preview-audio-title">${escapeHtml(item.name)}</div>
+                    <div class="gd-preview-audio-size">${convertBytes(item.size)}</div>
+                    <audio controls autoplay style="width: 100%; max-width: 420px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>
+                </div>`;
+        } else if (isPdf) {
+            holder.innerHTML = `<iframe src="${directUrl}" class="gd-preview-pdf-frame"></iframe>`;
+        } else if (isText) {
+            holder.innerHTML = `
+                <div class="gd-preview-text-wrap">
+                    <div class="gd-preview-text-header">
+                        <span>${escapeHtml(item.name)}</span>
+                        <button class="gd-btn-copy-code" onclick="copyPreviewText()">Copy Content</button>
+                    </div>
+                    <pre class="gd-preview-code"><code id="preview-text-code">Loading content...</code></pre>
+                </div>`;
+            fetch(directUrl, { credentials: 'same-origin' })
+                .then(res => {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.text();
+                })
+                .then(text => {
+                    const codeEl = document.getElementById('preview-text-code');
+                    if (codeEl) codeEl.innerText = text;
+                })
+                .catch(err => {
+                    const codeEl = document.getElementById('preview-text-code');
+                    if (codeEl) codeEl.innerText = 'Unable to load text preview: ' + err.message;
+                });
         } else {
-            window.open(directUrl, '_blank');
+            // Not previewable in browser -> download directly
+            showToast('Downloading ' + item.name + '... ⬇️');
+            const dl = document.createElement('a');
+            dl.href = directUrl;
+            dl.download = item.name;
+            dl.target = '_blank';
+            document.body.appendChild(dl);
+            dl.click();
+            document.body.removeChild(dl);
             return;
         }
     }

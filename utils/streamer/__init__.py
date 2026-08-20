@@ -60,13 +60,33 @@ async def media_streamer(channel: int, message_id: int, file_name: str, request)
     disposition = "attachment"
     mime_type = mimetypes.guess_type(file_name.lower())[0] or "application/octet-stream"
 
+    previewable_exts = (
+        ".pdf", ".txt", ".md", ".py", ".js", ".ts", ".html", ".htm", ".css",
+        ".json", ".xml", ".csv", ".log", ".yaml", ".yml", ".sh", ".bat",
+        ".c", ".cpp", ".h", ".java", ".rs", ".go", ".sql", ".ini", ".env", ".cfg"
+    )
+
     if (
         "video/" in mime_type
         or "audio/" in mime_type
         or "image/" in mime_type
-        or "/html" in mime_type
+        or "text/" in mime_type
+        or "application/pdf" in mime_type
+        or "application/json" in mime_type
+        or "application/javascript" in mime_type
+        or "application/xml" in mime_type
+        or file_name.lower().endswith(previewable_exts)
     ):
         disposition = "inline"
+        if mime_type == "application/octet-stream" and file_name.lower().endswith(previewable_exts):
+            if file_name.lower().endswith((".txt", ".log", ".ini", ".env", ".cfg")):
+                mime_type = "text/plain"
+            elif file_name.lower().endswith((".py", ".sh", ".bat", ".c", ".cpp", ".h", ".java", ".rs", ".go", ".sql", ".yaml", ".yml")):
+                mime_type = "text/plain; charset=utf-8"
+            elif file_name.lower().endswith(".md"):
+                mime_type = "text/markdown; charset=utf-8"
+            elif file_name.lower().endswith(".pdf"):
+                mime_type = "application/pdf"
 
     return StreamingResponse(
         status_code=206 if range_header else 200,
