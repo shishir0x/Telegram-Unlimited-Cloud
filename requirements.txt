@@ -1,5 +1,5 @@
 https://github.com/KurimuzonAkuma/pyrogram/archive/dev.zip
-tgcrypto
+pycryptodome
 uvicorn
 fastapi[all]
 python-dotenv

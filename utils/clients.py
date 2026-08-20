@@ -20,7 +20,7 @@ async def initialize_clients():
     logger.info("Initializing Clients")
 
     session_cache_path = Path(f"./cache")
-    session_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    session_cache_path.mkdir(parents=True, exist_ok=True)
 
     all_tokens = dict((i, t) for i, t in enumerate(config.BOT_TOKENS, start=1))
     all_sessions = dict(

@@ -265,9 +265,16 @@ class TGDriveBackupClient:
                 json={"password": self.password, "path": remote_id_path},
                 timeout=15,
             )
+            if res.status_code != 200:
+                print(f"[!] HTTP {res.status_code} reading directory {remote_id_path}")
+                return {}
             data = res.json()
             if data.get("status") == "ok":
                 return data.get("data", {}).get("contents", {})
+            else:
+                print(f"[!] Server error reading directory {remote_id_path}: {data.get('status')}")
+        except json.JSONDecodeError:
+            print(f"[!] Invalid JSON response for directory {remote_id_path}")
         except Exception as e:
             print(f"[!] Error reading directory {remote_id_path}: {e}")
         return {}
@@ -294,11 +301,12 @@ class TGDriveBackupClient:
             contents = self.get_directory_contents(current_id_path)
             found_id = None
 
-            for item_id, item in contents.items():
-                if item.get("type") == "folder" and not item.get("trash"):
-                    if item.get("name") == part:
-                        found_id = item.get("id") or item_id
-                        break
+            if contents:  # Only search if we got valid contents
+                for item_id, item in contents.items():
+                    if item.get("type") == "folder" and not item.get("trash"):
+                        if item.get("name") == part:
+                            found_id = item.get("id") or item_id
+                            break
 
             if not found_id:
                 try:
@@ -311,15 +319,22 @@ class TGDriveBackupClient:
                         },
                         timeout=15,
                     )
-                    contents = self.get_directory_contents(current_id_path)
-                    for item_id, item in contents.items():
-                        if item.get("type") == "folder" and item.get("name") == part:
-                            found_id = item.get("id") or item_id
-                            break
+                    if res.status_code == 200:
+                        res_data = res.json()
+                        if res_data.get("status") == "ok":
+                            # Re-fetch contents to find the new folder
+                            contents = self.get_directory_contents(current_id_path)
+                            for item_id, item in contents.items():
+                                if item.get("type") == "folder" and item.get("name") == part:
+                                    found_id = item.get("id") or item_id
+                                    break
+                        else:
+                            print(f"    [!] Folder creation failed: {res_data.get('status')}")
                 except Exception as e:
                     print(f"    [!] Error creating folder '{part}': {e}")
 
             if not found_id:
+                print(f"    [!] Warning: Could not resolve folder '{part}', using name as fallback")
                 found_id = part
 
             current_id_path = (current_id_path + found_id + "/").replace("//", "/")
@@ -331,6 +346,9 @@ class TGDriveBackupClient:
         """Returns map of filename -> item details in folder."""
         contents = self.get_directory_contents(folder_id_path)
         existing = {}
+        if not contents:
+            print(f"    [!] No contents found in folder {folder_id_path}")
+            return existing
         for _, item in contents.items():
             if item.get("type") == "file" and not item.get("trash"):
                 existing[item.get("name")] = item
