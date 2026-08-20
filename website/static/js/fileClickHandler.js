@@ -19,8 +19,198 @@ function openFile() {
 }
 
 // File More Button Handler Start
+function closeMobileBottomSheet() {
+    const bs = document.getElementById('gd-bottom-sheet');
+    const backdrop = document.getElementById('bottom-sheet-backdrop');
+    if (bs) bs.classList.remove('active');
+    if (backdrop) backdrop.classList.remove('active');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const bsBackdrop = document.getElementById('bottom-sheet-backdrop');
+    const bsClose = document.getElementById('bs-close-btn');
+    if (bsBackdrop) bsBackdrop.addEventListener('click', closeMobileBottomSheet);
+    if (bsClose) bsClose.addEventListener('click', closeMobileBottomSheet);
+});
+
+function openMobileBottomSheet(id) {
+    const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+    if (!item) return;
+
+    const isFolder = item.type === 'folder';
+    const isTrash = getCurrentPath().includes('/trash');
+    const bs = document.getElementById('gd-bottom-sheet');
+    const backdrop = document.getElementById('bottom-sheet-backdrop');
+    const bsIcon = document.getElementById('bs-icon');
+    const bsTitle = document.getElementById('bs-title');
+    const bsSubtitle = document.getElementById('bs-subtitle');
+    const bsActions = document.getElementById('bs-actions');
+
+    if (!bs || !backdrop) return;
+
+    if (bsIcon) bsIcon.innerText = (typeof getBigIconEmoji === 'function') ? getBigIconEmoji(item) : (isFolder ? '📁' : '📄');
+    if (bsTitle) bsTitle.innerText = item.name;
+    if (bsSubtitle) {
+        bsSubtitle.innerText = isFolder 
+            ? 'Folder' 
+            : `${(typeof convertBytes === 'function') ? convertBytes(item.size) : ''} • ${item.upload_date || ''}`;
+    }
+
+    let actionsHtml = '';
+    if (!isTrash) {
+        if (!isFolder) {
+            actionsHtml += `
+                <div class="gd-bs-item" id="bs-act-preview">
+                    <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                    <span>Preview file</span>
+                </div>
+                <div class="gd-bs-item" id="bs-act-download">
+                    <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                    <span>Download</span>
+                </div>
+            `;
+        } else {
+            actionsHtml += `
+                <div class="gd-bs-item" id="bs-act-open">
+                    <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+                    <span>Open folder</span>
+                </div>
+            `;
+        }
+
+        actionsHtml += `
+            <div class="gd-bs-item" id="bs-act-share">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>
+                <span>Share link</span>
+            </div>
+            <div class="gd-bs-item" id="bs-act-rename">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                <span>Rename</span>
+            </div>
+            <div class="gd-bs-item" id="bs-act-details">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                <span>Details & info</span>
+            </div>
+            <div class="gd-bs-item gd-bs-danger" id="bs-act-trash">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                <span>Move to trash</span>
+            </div>
+        `;
+    } else {
+        actionsHtml += `
+            <div class="gd-bs-item" id="bs-act-restore">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                <span>Restore</span>
+            </div>
+            <div class="gd-bs-item gd-bs-danger" id="bs-act-delete">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                <span>Delete permanently</span>
+            </div>
+        `;
+    }
+
+    bsActions.innerHTML = actionsHtml;
+
+    // Attach Handlers
+    const actPreview = document.getElementById('bs-act-preview');
+    if (actPreview) {
+        actPreview.onclick = () => {
+            closeMobileBottomSheet();
+            if (typeof openFilePreview === 'function') openFilePreview.call({ getAttribute: () => id });
+        };
+    }
+
+    const actOpen = document.getElementById('bs-act-open');
+    if (actOpen) {
+        actOpen.onclick = () => {
+            closeMobileBottomSheet();
+            navigateToPath((item.path + '/' + item.id).replaceAll('//', '/'));
+        };
+    }
+
+    const actDownload = document.getElementById('bs-act-download');
+    if (actDownload) {
+        actDownload.onclick = () => {
+            closeMobileBottomSheet();
+            const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+            const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
+            window.open(directUrl, '_blank');
+        };
+    }
+
+    const actShare = document.getElementById('bs-act-share');
+    if (actShare) {
+        actShare.onclick = () => {
+            closeMobileBottomSheet();
+            if (isFolder) {
+                shareFolder.call({ getAttribute: () => `folder-share-${id}` });
+            } else {
+                const moreDiv = document.getElementById(`more-option-${id}`);
+                shareFile.call({ getAttribute: () => `share-${id}`, parentElement: moreDiv || document.body });
+            }
+        };
+    }
+
+    const actRename = document.getElementById('bs-act-rename');
+    if (actRename) {
+        actRename.onclick = () => {
+            closeMobileBottomSheet();
+            const renameBtn = document.getElementById(`rename-${id}`);
+            if (renameBtn) renameFileFolder.call(renameBtn);
+        };
+    }
+
+    const actDetails = document.getElementById('bs-act-details');
+    if (actDetails) {
+        actDetails.onclick = () => {
+            closeMobileBottomSheet();
+            if (typeof selectItem === 'function') selectItem(id);
+            const inspector = document.getElementById('gd-inspector');
+            if (inspector) {
+                inspector.classList.add('mobile-open');
+                inspector.classList.remove('hidden');
+            }
+        };
+    }
+
+    const actTrash = document.getElementById('bs-act-trash');
+    if (actTrash) {
+        actTrash.onclick = () => {
+            closeMobileBottomSheet();
+            const trashBtn = document.getElementById(`trash-${id}`);
+            if (trashBtn) trashFileFolder.call(trashBtn);
+        };
+    }
+
+    const actRestore = document.getElementById('bs-act-restore');
+    if (actRestore) {
+        actRestore.onclick = () => {
+            closeMobileBottomSheet();
+            const restoreBtn = document.getElementById(`restore-${id}`);
+            if (restoreBtn) restoreFileFolder.call(restoreBtn);
+        };
+    }
+
+    const actDelete = document.getElementById('bs-act-delete');
+    if (actDelete) {
+        actDelete.onclick = () => {
+            closeMobileBottomSheet();
+            const delBtn = document.getElementById(`delete-${id}`);
+            if (delBtn) deleteFileFolder.call(delBtn);
+        };
+    }
+
+    backdrop.classList.add('active');
+    bs.classList.add('active');
+}
+
 function openMoreButton(div) {
     const id = div.getAttribute('data-id');
+    if (window.innerWidth <= 768) {
+        openMobileBottomSheet(id);
+        return;
+    }
+
     const moreDiv = document.getElementById(`more-option-${id}`);
     if (!moreDiv) return;
 

@@ -433,7 +433,11 @@ function showDirectory(data, breadcrumbs) {
             el.ondblclick = openFolder;
             el.onclick = function (e) {
                 if (e.target.closest('.more-btn')) return;
-                selectItem(this.getAttribute('data-id'));
+                if (window.innerWidth <= 768) {
+                    openFolder.call(this);
+                } else {
+                    selectItem(this.getAttribute('data-id'));
+                }
             };
 
             // Draggable item
@@ -451,7 +455,11 @@ function showDirectory(data, breadcrumbs) {
             el.ondblclick = openFilePreview;
             el.onclick = function (e) {
                 if (e.target.closest('.more-btn')) return;
-                selectItem(this.getAttribute('data-id'));
+                if (window.innerWidth <= 768) {
+                    openFilePreview.call(this);
+                } else {
+                    selectItem(this.getAttribute('data-id'));
+                }
             };
 
             // Draggable item
@@ -820,6 +828,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (closeInspBtn && inspector) {
         closeInspBtn.addEventListener('click', () => {
             inspector.classList.add('hidden');
+            inspector.classList.remove('mobile-open');
         });
     }
 

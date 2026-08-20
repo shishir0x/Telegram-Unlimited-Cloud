@@ -358,6 +358,58 @@
         <div class="gd-preview-content" id="preview-content-holder"></div>
     </div>
 
+    <!-- Mobile Sidebar Backdrop -->
+    <div class="gd-sidebar-backdrop" id="sidebar-backdrop"></div>
+
+    <!-- Mobile Floating Action Button (FAB) -->
+    <button class="gd-mobile-fab" id="mobile-fab" title="New">
+        <svg class="gd-fab-plus-icon" viewBox="0 0 36 36">
+            <path fill="#4285F4" d="M16 16v14h4V16h14v-4H20V-2h-4v14H2v4h14z"/>
+            <path fill="#FBBC05" d="M30 16H20l-4-4h14v4z"/>
+            <path fill="#EA4335" d="M16 2v14h4V2z"/>
+            <path fill="#34A853" d="M16 16H2v4h14z"/>
+        </svg>
+    </button>
+
+    <!-- Mobile FAB "+ New" Bottom Sheet -->
+    <div class="gd-bottom-sheet-backdrop" id="fab-sheet-backdrop"></div>
+    <div class="gd-bottom-sheet" id="fab-bottom-sheet">
+        <div class="gd-bottom-sheet-drag-handle"></div>
+        <div class="gd-bottom-sheet-header">
+            <span class="gd-fab-sheet-title">Create or Upload</span>
+            <button class="gd-icon-btn gd-bs-close" id="fab-sheet-close">&times;</button>
+        </div>
+        <div class="gd-bottom-sheet-actions">
+            <div class="gd-bs-item" id="mob-new-folder">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+                <span>New folder</span>
+            </div>
+            <div class="gd-bs-item" id="mob-file-upload">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+                <span>Upload file</span>
+            </div>
+            <div class="gd-bs-item" id="mob-url-upload">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                <span>URL / Remote upload</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Action Bottom Sheet -->
+    <div class="gd-bottom-sheet-backdrop" id="bottom-sheet-backdrop"></div>
+    <div class="gd-bottom-sheet" id="gd-bottom-sheet">
+        <div class="gd-bottom-sheet-drag-handle"></div>
+        <div class="gd-bottom-sheet-header">
+            <div class="gd-bs-icon" id="bs-icon">📄</div>
+            <div class="gd-bs-title-wrap">
+                <div class="gd-bs-title" id="bs-title">File Details</div>
+                <div class="gd-bs-subtitle" id="bs-subtitle">--</div>
+            </div>
+            <button class="gd-icon-btn gd-bs-close" id="bs-close-btn">&times;</button>
+        </div>
+        <div class="gd-bottom-sheet-actions" id="bs-actions"></div>
+    </div>
+
     <!-- Scripts -->
     <script src="static/js/extra.js"></script>
     <script src="static/js/apiHandler.js"></script>
