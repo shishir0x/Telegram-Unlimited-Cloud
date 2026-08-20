@@ -911,119 +911,126 @@ Scan-MTP $targetRoot ""
             }, "Phone sync complete: All files are up to date.")
             return
 
-        # ── Step 4: Incremental Folder-by-Folder Extract & Upload ────────────
-        from collections import defaultdict
-        folder_to_files = defaultdict(list)
-        for fname, rel_folder, human_folder in files_to_download:
-            folder_to_files[rel_folder].append((fname, human_folder))
-
+        # ── Step 4: Persistent Real-Time Zero-Disk MTP Streaming Worker ───────
         total_sync_files = len(files_to_download)
-        print(f"\n⚡ Step 3: Extracting & Uploading {total_sync_files:,} files from phone...\n")
+        print(f"\n⚡ Step 3: Direct In-Memory Streaming {total_sync_files:,} files from phone to Telegram Cloud...\n")
 
-        global_idx = 0
-        try:
-            for rel_folder, items_in_folder in folder_to_files.items():
-                folder_dest = staging_dir / "active_folder"
-                if folder_dest.exists():
-                    shutil.rmtree(folder_dest, ignore_errors=True)
-                folder_dest.mkdir(parents=True, exist_ok=True)
+        folder_dest = staging_dir / "stream_dest"
+        if folder_dest.exists():
+            shutil.rmtree(folder_dest, ignore_errors=True)
+        folder_dest.mkdir(parents=True, exist_ok=True)
 
-                # Prepare wanted filenames list for PowerShell
-                wanted_names = [it[0] for it in items_in_folder]
-                wanted_ps_arr = ", ".join(f"'{name.replace(chr(39), chr(39)+chr(39))}'" for name in wanted_names)
-
-                ps_extract = f'''
+        ps_worker_code = f'''
 $shell = New-Object -ComObject Shell.Application
 $destPath = '{folder_dest.resolve()}'
 $destFolder = $shell.Namespace($destPath)
 $thisPC = $shell.Namespace(17)
 $phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }} | Select-Object -First 1
-if (-not $phone) {{ exit 1 }}
-
 $storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }} | Select-Object -First 1
-if (-not $storage) {{ exit 1 }}
 
-$targetRoot = $storage
-$folderRel = "{rel_folder}".Trim('\\').Trim('/')
-if ($folderRel) {{
-    $parts = $folderRel -split '[/\\\\]'
-    foreach ($p in $parts) {{
-        if ($p) {{
-            $targetRoot = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }} | Select-Object -First 1
-            if (-not $targetRoot) {{ exit 1 }}
+Write-Output "WORKER_READY"
+
+while ($line = [Console]::In.ReadLine()) {{
+    if ($line -eq "QUIT") {{ break }}
+    $parts = $line.Split('|')
+    $relFolder = $parts[0]
+    $fileName = $parts[1]
+
+    $target = $storage
+    if ($relFolder) {{
+        $subParts = $relFolder -split '[/\\\\]'
+        foreach ($p in $subParts) {{
+            if ($p) {{
+                $target = $target.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }} | Select-Object -First 1
+            }}
         }}
     }}
-}}
 
-$wanted = @({wanted_ps_arr})
-foreach ($item in $targetRoot.GetFolder.Items()) {{
-    if (-not $item.IsFolder -and $item.Name -in $wanted) {{
-        $destFolder.CopyHere($item, 16)
-        $filePath = Join-Path $destPath $item.Name
+    $fileItem = $target.GetFolder.Items() | Where-Object {{ -not $_.IsFolder -and $_.Name -eq $fileName }} | Select-Object -First 1
+    if ($fileItem) {{
+        $destFolder.CopyHere($fileItem, 16)
+        $outPath = Join-Path $destPath $fileName
+        $found = $false
         for ($w = 0; $w -lt 40; $w++) {{
-            if ((Test-Path $filePath) -and (Get-Item $filePath).Length -gt 0) {{
+            if ((Test-Path $outPath) -and (Get-Item $outPath).Length -gt 0) {{
+                $len = (Get-Item $outPath).Length
+                Write-Output "READY|$fileName|$len"
+                $found = $true
                 break
             }}
-            Start-Sleep -Milliseconds 250
+            Start-Sleep -Milliseconds 150
         }}
+        if (-not $found) {{
+            Write-Output "FAILED|$fileName"
+        }}
+    }} else {{
+        Write-Output "NOT_FOUND|$fileName"
     }}
 }}
 '''
-                folder_name_display = rel_folder if rel_folder else "Root Storage"
-                print(f"\n📂 [{folder_name_display}] Extracting {len(items_in_folder)} file(s) from phone...")
+        ps_worker_file = staging_dir / "mtp_worker.ps1"
+        with open(ps_worker_file, "w", encoding="utf-8") as f:
+            f.write(ps_worker_code)
 
-                ps_runner = staging_dir / "extract_folder.ps1"
-                with open(ps_runner, "w", encoding="utf-8") as f:
-                    f.write(ps_extract)
+        proc = subprocess.Popen(
+            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ps_worker_file)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
 
-                subprocess.run(
-                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_runner)],
-                    capture_output=True,
-                    text=True
-                )
-                if ps_runner.exists():
-                    ps_runner.unlink(missing_ok=True)
+        ready_line = proc.stdout.readline().strip() if proc.stdout else ""
+        if ready_line != "WORKER_READY":
+            print(f"⚠️ Worker init warning: {ready_line}")
 
-                # Process each file in this folder
-                for fname, human_folder in items_in_folder:
-                    global_idx += 1
-                    rem_files = total_sync_files - global_idx
-                    staged_file = folder_dest / fname
+        uploaded_count = 0
+        try:
+            for idx, (fname, rel_folder, human_folder) in enumerate(files_to_download, start=1):
+                rem_files = total_sync_files - idx
+                staged_file = folder_dest / fname
 
-                    # Wait up to 10 seconds for CopyHere to finish for this file
-                    for _ in range(40):
-                        if staged_file.exists() and staged_file.stat().st_size > 0:
-                            break
-                        time.sleep(0.25)
+                # Request worker to extract single file
+                proc.stdin.write(f"{rel_folder}|{fname}\n")
+                proc.stdin.flush()
+                resp = proc.stdout.readline().strip()
 
-                    if staged_file.exists() and staged_file.stat().st_size > 0:
-                        with open(staged_file, "rb") as f:
-                            file_bytes = f.read()
+                if resp.startswith("READY|") and staged_file.exists() and staged_file.stat().st_size > 0:
+                    with open(staged_file, "rb") as f:
+                        file_bytes = f.read()
 
-                        # Purge from disk immediately before cloud upload!
-                        staged_file.unlink(missing_ok=True)
+                    # Purge from disk IMMEDIATELY before cloud upload
+                    staged_file.unlink(missing_ok=True)
 
-                        self.upload_in_memory_file(
-                            file_bytes,
-                            fname,
-                            human_folder,
-                            file_idx=global_idx,
-                            total_files=total_sync_files,
-                            remaining_files=rem_files,
-                            remaining_bytes=0
-                        )
-                    else:
-                        print(f"[{global_idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
-
-                shutil.rmtree(folder_dest, ignore_errors=True)
+                    success = self.upload_in_memory_file(
+                        file_bytes,
+                        fname,
+                        human_folder,
+                        file_idx=idx,
+                        total_files=total_sync_files,
+                        remaining_files=rem_files,
+                        remaining_bytes=0
+                    )
+                    if success:
+                        uploaded_count += 1
+                else:
+                    print(f"\n[{idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
+                    staged_file.unlink(missing_ok=True)
 
         finally:
+            try:
+                proc.stdin.write("QUIT\n")
+                proc.stdin.flush()
+                proc.terminate()
+            except Exception:
+                pass
             print("\n🧹 Cleaning up temporary cache...")
             shutil.rmtree(staging_dir, ignore_errors=True)
 
         print("\n" + "=" * 68)
         print("🎉 Phone Sync Complete Summary:")
-        print(f"   ✅ Synced:      {total_sync_files} files")
+        print(f"   ✅ Synced:      {uploaded_count} files")
         print(f"   ⚪ Skipped:     {unchanged_count} up-to-date files")
         print(f"   🌐 View Drive:  {self.base_url}/?path=/")
         print("=" * 68)
