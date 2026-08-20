@@ -1,18 +1,27 @@
-// Api Fuctions
+// Api Functions
 async function postJson(url, data) {
     data['password'] = getPassword()
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-    })
-    return await response.json()
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(data)
+        })
+        return await response.json()
+    } catch (e) {
+        return { status: 'Network error or service unavailable' }
+    }
 }
 
 document.getElementById('pass-login').addEventListener('click', async () => {
     const password = document.getElementById('auth-pass').value
+    if (!password) {
+        alert('Please enter your password')
+        return
+    }
     const data = { 'pass': password }
     const json = await postJson('/api/checkPassword', data)
     if (json.status === 'ok') {
@@ -21,10 +30,27 @@ document.getElementById('pass-login').addEventListener('click', async () => {
         window.location.reload()
     }
     else {
-        alert('Wrong Password')
+        alert(json.status || 'Wrong Password')
     }
-
 })
+
+// Profile avatar logout / lock button
+document.addEventListener('DOMContentLoaded', () => {
+    const avatar = document.getElementById('profile-avatar');
+    if (avatar) {
+        avatar.style.cursor = 'pointer';
+        avatar.title = 'Click to Logout / Lock Drive';
+        avatar.addEventListener('click', async () => {
+            if (confirm('Do you want to log out of your Admin session?')) {
+                localStorage.removeItem('password');
+                try {
+                    await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+                } catch (e) {}
+                window.location.reload();
+            }
+        });
+    }
+});
 
 // Background Active Upload Monitor
 let WAS_UPLOADING = false;
@@ -79,35 +105,35 @@ async function getCurrentDirectory() {
     }
     try {
         const auth = getFolderAuthFromPath()
-        console.log(path)
-
         const data = { 'path': path, 'auth': auth }
         const json = await postJson('/api/getDirectory', data)
 
         if (json.status === 'ok') {
             if (getCurrentPath().startsWith('/share')) {
                 const sections = document.querySelector('.sidebar-menu').getElementsByTagName('a')
-                console.log(path)
 
                 if (removeSlash(json['auth_home_path']) === removeSlash(path.split('_')[1])) {
                     sections[0].setAttribute('class', 'selected-item')
-
                 } else {
                     sections[0].setAttribute('class', 'unselected-item')
                 }
                 sections[0].href = `/?path=/share_${removeSlash(json['auth_home_path'])}&auth=${auth}`
-                console.log(`/?path=/share_${removeSlash(json['auth_home_path'])}&auth=${auth}`)
             }
 
-            console.log(json)
             showDirectory(json['data'])
+        } else if (json.status === 'Invalid password' || json.status === 'Unauthorized folder access') {
+            localStorage.removeItem('password');
+            const bg = document.getElementById('bg-blur');
+            const login = document.getElementById('get-password');
+            if (bg) { bg.style.zIndex = '100'; bg.style.opacity = '1'; }
+            if (login) { login.style.zIndex = '101'; login.style.opacity = '1'; }
         } else {
-            alert('404 Current Directory Not Found')
+            alert('Directory not accessible: ' + (json.status || 'Not Found'))
         }
     }
     catch (err) {
-        console.log(err)
-        alert('404 Current Directory Not Found')
+        console.error(err)
+        alert('Could not access current directory')
     }
 }
 

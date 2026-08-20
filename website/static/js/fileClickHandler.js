@@ -10,10 +10,16 @@ function openFolder() {
 
 function openFile() {
     const fileName = (this.getAttribute('data-name') || '').toLowerCase();
-    let path = '/file?path=' + this.getAttribute('data-path') + '/' + this.getAttribute('data-id');
+    let filePath = this.getAttribute('data-path') + '/' + this.getAttribute('data-id');
+    let path = '/file?path=' + filePath;
+
+    const auth = getFolderAuthFromPath();
+    if (auth) {
+        path += '&auth=' + encodeURIComponent(auth);
+    }
 
     if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv')) {
-        path = '/stream?url=' + getRootUrl() + path;
+        path = '/stream?url=' + encodeURIComponent(getRootUrl() + path);
     }
 
     window.open(path, '_blank');
@@ -207,12 +213,18 @@ async function shareFile() {
     const id = this.getAttribute('id').split('-')[1];
     const path = document.getElementById(`more-option-${id}`).getAttribute('data-path') + '/' + id;
     const root_url = getRootUrl();
+    const auth = getFolderAuthFromPath();
+
+    let fileUrl = `${root_url}/file?path=${encodeURIComponent(path)}`;
+    if (auth) {
+        fileUrl += `&auth=${encodeURIComponent(auth)}`;
+    }
 
     let link;
     if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv')) {
-        link = `${root_url}/stream?url=${root_url}/file?path=${path}`;
+        link = `${root_url}/stream?url=${encodeURIComponent(fileUrl)}`;
     } else {
-        link = `${root_url}/file?path=${path}`;
+        link = fileUrl;
     }
 
     copyTextToClipboard(link);
