@@ -108,23 +108,28 @@ function navigateToPath(targetPath, pushState = true) {
 }
 
 function updateSidebarNavSelection(path) {
-    const isTrash = path.startsWith('/trash');
-    const isSearch = path.startsWith('/search');
+    const isTrash = path && path.startsWith('/trash');
+    const isSync = (window.CURRENT_PAGE_VIEW === 'sync');
     const navMyDrive = document.getElementById('nav-my-drive');
-    const navComputers = document.getElementById('nav-computers');
+    const navSyncActivity = document.getElementById('nav-sync-activity');
     const navTrash = document.getElementById('nav-trash');
     const newBtn = document.getElementById('new-button');
 
     if (navMyDrive && navTrash) {
-        if (isTrash) {
+        if (isSync) {
             navMyDrive.className = 'gd-nav-item unselected-item';
-            if (navComputers) navComputers.className = 'gd-nav-item unselected-item';
+            navTrash.className = 'gd-nav-item unselected-item';
+            if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';
+            if (newBtn) newBtn.style.display = 'inline-flex';
+        } else if (isTrash) {
+            navMyDrive.className = 'gd-nav-item unselected-item';
             navTrash.className = 'gd-nav-item selected-item';
+            if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
             if (newBtn) newBtn.style.display = 'none';
         } else {
             navMyDrive.className = 'gd-nav-item selected-item';
-            if (navComputers) navComputers.className = 'gd-nav-item unselected-item';
             navTrash.className = 'gd-nav-item unselected-item';
+            if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
             if (newBtn) newBtn.style.display = 'inline-flex';
         }
     }

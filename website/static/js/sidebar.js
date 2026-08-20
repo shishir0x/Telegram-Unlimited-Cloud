@@ -32,13 +32,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (navComputers) {
-        navComputers.addEventListener('click', (e) => {
-            e.preventDefault();
-            navigateToPath('/');
-        });
-    }
-
     if (navTrash) {
         navTrash.addEventListener('click', (e) => {
             e.preventDefault();

@@ -273,7 +273,9 @@ function showDirectory(data, breadcrumbs) {
     DIRECTORY_ITEMS = contents;
     const isTrash = getCurrentPath().startsWith('/trash');
 
-    updateBreadcrumbs(breadcrumbs);
+    if (window.CURRENT_PAGE_VIEW !== 'sync') {
+        updateBreadcrumbs(breadcrumbs);
+    }
 
     const tableBody = document.getElementById('directory-data');
     const gridFolders = document.getElementById('grid-folders-data');
@@ -542,6 +544,19 @@ function applyViewMode(mode) {
     const gridContainer = document.getElementById('grid-view-container');
     const listBtn = document.getElementById('toggle-list-view');
     const gridBtn = document.getElementById('toggle-grid-view');
+
+    if (window.CURRENT_PAGE_VIEW === 'sync') {
+        if (listBtn && gridBtn) {
+            if (mode === 'grid') {
+                listBtn.removeAttribute('active');
+                gridBtn.setAttribute('active', '');
+            } else {
+                gridBtn.removeAttribute('active');
+                listBtn.setAttribute('active', '');
+            }
+        }
+        return;
+    }
 
     if (mode === 'grid') {
         if (listContainer) listContainer.style.display = 'none';
@@ -930,55 +945,79 @@ function initSyncActivityManager() {
     const syncViewContainer = document.getElementById('sync-view-container');
     const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
 
-    // Switch to Native Sync View in UI
-    function showSyncActivityView() {
+// Switch to Native Sync View in UI
+window.showSyncActivityView = function() {
+    window.CURRENT_PAGE_VIEW = 'sync';
+    const listViewContainer = document.getElementById('list-view-container');
+    const gridViewContainer = document.getElementById('grid-view-container');
+    const syncViewContainer = document.getElementById('sync-view-container');
+    const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navSyncActivity = document.getElementById('nav-sync-activity');
+    const navTrash = document.getElementById('nav-trash');
+
+    if (listViewContainer) listViewContainer.style.display = 'none';
+    if (gridViewContainer) gridViewContainer.style.display = 'none';
+    if (syncViewContainer) syncViewContainer.style.display = 'flex';
+
+    // Update sidebar selection
+    if (navMyDrive) navMyDrive.className = 'gd-nav-item unselected-item';
+    if (navTrash) navTrash.className = 'gd-nav-item unselected-item';
+    if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';
+
+    // Update breadcrumb
+    if (breadcrumbsContainer) {
+        breadcrumbsContainer.innerHTML = `
+            <span class="gd-crumb gd-crumb-target" id="crumb-root-back">My Drive</span>
+            <span class="gd-crumb-separator">&gt;</span>
+            <span class="gd-crumb gd-crumb-current">⚡ Live Sync Activity</span>
+        `;
+        const rootCrumb = document.getElementById('crumb-root-back');
+        if (rootCrumb) {
+            rootCrumb.addEventListener('click', (e) => {
+                e.preventDefault();
+                window.hideSyncActivityView();
+                if (typeof updateDirectoryData === 'function') updateDirectoryData('/');
+            });
+        }
+    }
+
+    if (typeof pollSyncStatus === 'function') pollSyncStatus();
+};
+
+window.hideSyncActivityView = function() {
+    window.CURRENT_PAGE_VIEW = 'drive';
+    const listViewContainer = document.getElementById('list-view-container');
+    const gridViewContainer = document.getElementById('grid-view-container');
+    const syncViewContainer = document.getElementById('sync-view-container');
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navSyncActivity = document.getElementById('nav-sync-activity');
+
+    if (syncViewContainer) syncViewContainer.style.display = 'none';
+    if (CURRENT_VIEW_MODE === 'grid') {
+        if (gridViewContainer) gridViewContainer.style.display = 'block';
         if (listViewContainer) listViewContainer.style.display = 'none';
+    } else {
+        if (listViewContainer) listViewContainer.style.display = 'block';
         if (gridViewContainer) gridViewContainer.style.display = 'none';
-        if (syncViewContainer) syncViewContainer.style.display = 'flex';
-
-        // Update sidebar selection
-        [navMyDrive, navComputers, navTrash].forEach(el => {
-            if (el) el.classList.replace('selected-item', 'unselected-item');
-        });
-        if (navSyncActivity) navSyncActivity.classList.replace('unselected-item', 'selected-item');
-
-        // Update breadcrumb
-        if (breadcrumbsContainer) {
-            breadcrumbsContainer.innerHTML = `
-                <span class="gd-crumb gd-crumb-target" data-path="/">My Drive</span>
-                <span class="gd-crumb-separator">&gt;</span>
-                <span class="gd-crumb gd-crumb-current">⚡ Live Sync Activity</span>
-            `;
-            const rootCrumb = breadcrumbsContainer.querySelector('.gd-crumb-target');
-            if (rootCrumb) {
-                rootCrumb.addEventListener('click', () => {
-                    hideSyncActivityView();
-                    if (typeof updateDirectoryData === 'function') updateDirectoryData('/');
-                });
-            }
-        }
     }
+    if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
+    if (navMyDrive) navMyDrive.className = 'gd-nav-item selected-item';
+};
 
-    function hideSyncActivityView() {
-        if (syncViewContainer) syncViewContainer.style.display = 'none';
-        if (CURRENT_VIEW_MODE === 'grid') {
-            if (gridViewContainer) gridViewContainer.style.display = 'block';
-            if (listViewContainer) listViewContainer.style.display = 'none';
-        } else {
-            if (listViewContainer) listViewContainer.style.display = 'block';
-            if (gridViewContainer) gridViewContainer.style.display = 'none';
-        }
-        if (navSyncActivity) navSyncActivity.classList.replace('selected-item', 'unselected-item');
-        if (navMyDrive) navMyDrive.classList.replace('unselected-item', 'selected-item');
-    }
+function initSyncActivityManager() {
+    const syncPill = document.getElementById('gd-sync-status-pill');
+    const syncPillText = document.getElementById('sync-pill-text');
+    const navSyncActivity = document.getElementById('nav-sync-activity');
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navTrash = document.getElementById('nav-trash');
 
-    if (syncPill) syncPill.addEventListener('click', (e) => { e.preventDefault(); showSyncActivityView(); });
-    if (navSyncActivity) navSyncActivity.addEventListener('click', (e) => { e.preventDefault(); showSyncActivityView(); });
+    if (syncPill) syncPill.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); window.showSyncActivityView(); });
+    if (navSyncActivity) navSyncActivity.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); window.showSyncActivityView(); });
 
-    // Handle My Drive / Computers navigation switching away from sync view
-    if (navMyDrive) navMyDrive.addEventListener('click', () => hideSyncActivityView());
-    if (navComputers) navComputers.addEventListener('click', () => hideSyncActivityView());
-    if (navTrash) navTrash.addEventListener('click', () => hideSyncActivityView());
+    // Handle My Drive navigation switching away from sync view
+    if (navMyDrive) navMyDrive.addEventListener('click', () => window.hideSyncActivityView());
+    if (navTrash) navTrash.addEventListener('click', () => window.hideSyncActivityView());
 
     async function pollSyncStatus() {
         try {
