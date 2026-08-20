@@ -104,13 +104,13 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def home_page():
     return FileResponse("website/home.html")
 
 
-@app.get("/health")
-@app.get("/ping")
+@app.api_route("/health", methods=["GET", "HEAD", "POST"])
+@app.api_route("/ping", methods=["GET", "HEAD", "POST"])
 async def health_check():
     return JSONResponse({"status": "ok", "message": "TG Drive is active"})
 
