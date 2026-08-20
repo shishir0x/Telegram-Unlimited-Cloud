@@ -4,6 +4,7 @@ from pyrogram import Client
 from utils.directoryHandler import backup_drive_data, loadDriveData
 from utils.logger import Logger
 import os
+import sys
 import signal
 
 logger = Logger(__name__)
