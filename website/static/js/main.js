@@ -405,9 +405,34 @@ function showDirectory(data, breadcrumbs) {
         fileCard.setAttribute('data-id', item.id);
         fileCard.setAttribute('data-path', item.path);
         fileCard.setAttribute('data-name', item.name);
+
+        const ext = (item.name && item.name.includes('.')) ? item.name.split('.').pop().toLowerCase() : '';
+        const isMedia = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic', 'tiff', 'mp4', 'mkv', 'webm', 'mov', 'avi', '3gp'].includes(ext);
+        const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+        const thumbUrl = `/thumbnail?path=${encodeURIComponent(filePath)}`;
+
+        let previewInnerHtml = '';
+        if (isMedia) {
+            previewInnerHtml = `
+                <img class="gd-file-card-thumb" src="${thumbUrl}" loading="lazy" alt="${escapeHtml(item.name)}" 
+                    onload="this.classList.add('loaded')" 
+                    onerror="this.style.display='none'; if (this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                <div class="gd-thumb-fallback" style="display: none;">
+                    <span style="font-size: 2.2rem;">${getBigIconEmoji(item)}</span>
+                </div>
+            `;
+        } else {
+            previewInnerHtml = `
+                <div class="gd-ext-badge-card badge-${escapeHtml(ext || 'file')}">
+                    <span class="gd-ext-icon">${getBigIconEmoji(item)}</span>
+                    <span class="gd-ext-label">${escapeHtml(ext.toUpperCase() || 'FILE')}</span>
+                </div>
+            `;
+        }
+
         fileCard.innerHTML = `
             <div class="gd-file-card-preview">
-                <span style="font-size: 2.2rem;">${getBigIconEmoji(item)}</span>
+                ${previewInnerHtml}
             </div>
             <div class="gd-file-card-body">
                 <div class="gd-file-card-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>

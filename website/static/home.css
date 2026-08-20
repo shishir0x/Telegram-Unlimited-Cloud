@@ -866,13 +866,76 @@ body {
 }
 
 .gd-file-card-preview {
-    height: 120px;
+    height: 135px;
     background-color: #f8fafd;
     display: flex;
     align-items: center;
     justify-content: center;
     border-bottom: 1px solid var(--gd-border-light);
+    position: relative;
+    overflow: hidden;
 }
+
+.gd-file-card-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.2s ease;
+}
+
+.gd-file-card-thumb.loaded {
+    opacity: 1;
+}
+
+.gd-file-card:hover .gd-file-card-thumb.loaded {
+    transform: scale(1.04);
+}
+
+.gd-thumb-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+.gd-ext-badge-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(240, 244, 249, 0.8), rgba(248, 250, 253, 0.95));
+}
+
+.gd-ext-icon {
+    font-size: 2.2rem;
+    line-height: 1;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.06));
+}
+
+.gd-ext-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background-color: rgba(30, 41, 59, 0.08);
+    color: var(--gd-text-secondary);
+}
+
+.badge-pdf .gd-ext-label { background-color: rgba(239, 68, 68, 0.15); color: #dc2626; }
+.badge-py .gd-ext-label, .badge-js .gd-ext-label, .badge-html .gd-ext-label, .badge-css .gd-ext-label { background-color: rgba(14, 165, 233, 0.15); color: #0284c7; }
+.badge-zip .gd-ext-label, .badge-rar .gd-ext-label, .badge-7z .gd-ext-label, .badge-tar .gd-ext-label { background-color: rgba(245, 158, 11, 0.15); color: #d97706; }
+.badge-mp3 .gd-ext-label, .badge-wav .gd-ext-label, .badge-flac .gd-ext-label, .badge-m4a .gd-ext-label { background-color: rgba(168, 85, 247, 0.15); color: #9333ea; }
+.badge-docx .gd-ext-label, .badge-doc .gd-ext-label, .badge-txt .gd-ext-label { background-color: rgba(59, 130, 246, 0.15); color: #2563eb; }
+.badge-xlsx .gd-ext-label, .badge-xls .gd-ext-label, .badge-csv .gd-ext-label { background-color: rgba(34, 197, 94, 0.15); color: #16a34a; }
+.badge-pptx .gd-ext-label, .badge-ppt .gd-ext-label { background-color: rgba(249, 115, 22, 0.15); color: #ea580c; }
+.badge-apk .gd-ext-label { background-color: rgba(16, 185, 129, 0.15); color: #059669; }
 
 .gd-file-card-body {
     padding: 10px 12px;

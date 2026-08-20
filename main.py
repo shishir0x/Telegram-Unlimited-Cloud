@@ -169,6 +169,104 @@ async def dl_file(request: Request):
         raise HTTPException(status_code=404, detail="File not found")
 
 
+THUMB_CACHE_DIR = Path("./cache/thumbs")
+THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+THUMB_SEMAPHORE = asyncio.Semaphore(3)
+
+
+@app.get("/thumbnail")
+async def get_thumbnail(request: Request):
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+
+    path = request.query_params.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing path parameter")
+
+    clean_path = ("/" + (path or "").replace("/share_", "").replace("share_", "").strip("/")).replace("//", "/")
+    auth = request.query_params.get("auth")
+    is_admin = is_admin_authenticated(request)
+
+    if not is_admin:
+        if not auth:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        try:
+            folder_path = (
+                "/" + "/".join(clean_path.strip("/").split("/")[:-1])
+                if len(clean_path.strip("/").split("/")) > 1
+                else "/"
+            )
+            folder_res = drive.get_directory(folder_path, is_admin=False, auth=auth)
+            if not folder_res:
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        file = drive.get_file(clean_path)
+        if not file or not file.file_id:
+            raise HTTPException(status_code=404, detail="File not found")
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    cache_file = THUMB_CACHE_DIR / f"{file.file_id}.jpg"
+    if cache_file.exists() and cache_file.stat().st_size > 0:
+        return FileResponse(
+            cache_file,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
+
+    ext = (file.name.rsplit(".", 1)[-1] if "." in file.name else "").lower()
+    is_image = ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]
+    is_video = ext in ["mp4", "mkv", "webm", "mov", "avi", "3gp", "ts", "flv"]
+
+    if not (is_image or is_video):
+        raise HTTPException(status_code=404, detail="No thumbnail available for this file type")
+
+    async with THUMB_SEMAPHORE:
+        # Re-check cache in case another request downloaded it while waiting on semaphore
+        if cache_file.exists() and cache_file.stat().st_size > 0:
+            return FileResponse(
+                cache_file,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=31536000, immutable"}
+            )
+
+        try:
+            from utils.clients import get_client
+            client = get_client()
+            msg = await client.get_messages(STORAGE_CHANNEL, file.file_id)
+
+            if not msg:
+                raise HTTPException(status_code=404, detail="Telegram message not found")
+
+            thumb_target = None
+            if msg.photo:
+                thumb_target = msg.photo
+            elif msg.document and msg.document.thumbs:
+                thumb_target = msg.document.thumbs[0]
+            elif msg.video and msg.video.thumbs:
+                thumb_target = msg.video.thumbs[0]
+            elif msg.animation and msg.animation.thumbs:
+                thumb_target = msg.animation.thumbs[0]
+            elif is_image and msg.document and msg.document.file_size and msg.document.file_size < 3 * 1024 * 1024:
+                thumb_target = msg.document
+
+            if thumb_target:
+                temp_thumb = await client.download_media(thumb_target, file_name=str(cache_file))
+                if temp_thumb and os.path.exists(temp_thumb) and os.path.getsize(temp_thumb) > 0:
+                    return FileResponse(
+                        cache_file,
+                        media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"}
+                    )
+        except Exception as e:
+            logger.warning(f"Could not extract thumbnail for '{file.name}' (msg {file.file_id}): {e}")
+
+    raise HTTPException(status_code=404, detail="Thumbnail not available")
+
+
 # Api Routes
 
 
