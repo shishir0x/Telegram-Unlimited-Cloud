@@ -90,6 +90,10 @@ function openMobileBottomSheet(id) {
                 <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                 <span>Rename</span>
             </div>
+            <div class="gd-bs-item" id="bs-act-move">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+                <span>Move to...</span>
+            </div>
             <div class="gd-bs-item" id="bs-act-details">
                 <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
                 <span>Details & info</span>
@@ -160,6 +164,14 @@ function openMobileBottomSheet(id) {
             closeMobileBottomSheet();
             const renameBtn = document.getElementById(`rename-${id}`);
             if (renameBtn) renameFileFolder.call(renameBtn);
+        };
+    }
+
+    const actMove = document.getElementById('bs-act-move');
+    if (actMove) {
+        actMove.onclick = () => {
+            closeMobileBottomSheet();
+            openMoveModal(id);
         };
     }
 
@@ -287,6 +299,9 @@ function openMoreButton(div) {
 
         const renameBtn = moreDiv.querySelector(`#rename-${id}`);
         if (renameBtn) renameBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); renameFileFolder.call(renameBtn); };
+
+        const moveBtn = moreDiv.querySelector(`#move-${id}`);
+        if (moveBtn) moveBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); openMoveModal(id); };
 
         const trashBtn = moreDiv.querySelector(`#trash-${id}`);
         if (trashBtn) trashBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); trashFileFolder.call(trashBtn); };
@@ -495,3 +510,142 @@ async function shareFolder() {
     copyTextToClipboard(link);
     showToast('Folder share link copied to clipboard! 📋');
 }
+
+// =========================================================
+// Move Item Modal Controller
+// =========================================================
+let CURRENT_MOVE_ITEM = null;
+let CURRENT_MOVE_TARGET_PATH = '/';
+
+async function openMoveModal(id) {
+    const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+    if (!item) return;
+
+    CURRENT_MOVE_ITEM = item;
+    CURRENT_MOVE_TARGET_PATH = '/';
+
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('move-item-modal');
+    const targetNameEl = document.getElementById('move-target-item-name');
+
+    if (targetNameEl) targetNameEl.innerText = `"${item.name}"`;
+
+    if (bgBlur) {
+        bgBlur.style.zIndex = '100';
+        bgBlur.style.opacity = '1';
+    }
+    if (modal) {
+        modal.style.zIndex = '101';
+        modal.style.opacity = '1';
+    }
+
+    await renderMovePickerDirectory('/');
+}
+
+function closeMoveModal() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('move-item-modal');
+    if (bgBlur) bgBlur.style.opacity = '0';
+    if (modal) modal.style.opacity = '0';
+    CURRENT_MOVE_ITEM = null;
+}
+
+async function renderMovePickerDirectory(path) {
+    CURRENT_MOVE_TARGET_PATH = path || '/';
+    const listEl = document.getElementById('move-folder-picker-list');
+    const crumbsEl = document.getElementById('move-modal-crumbs');
+    if (!listEl) return;
+
+    listEl.innerHTML = '<div class="gd-move-empty-state">Loading folders...</div>';
+
+    // Render breadcrumbs
+    if (crumbsEl) {
+        const clean = path.replace(/^\/+/, '');
+        const parts = clean ? clean.split('/') : [];
+        let crumbHtml = `<span class="gd-move-crumb ${path === '/' ? 'active' : ''}" onclick="renderMovePickerDirectory('/')">🏠 My Drive</span>`;
+        let acc = '';
+        for (let i = 0; i < parts.length; i++) {
+            acc += '/' + parts[i];
+            const isLast = i === parts.length - 1;
+            const folderPart = parts[i];
+            crumbHtml += `<span class="gd-move-crumb-sep">›</span><span class="gd-move-crumb ${isLast ? 'active' : ''}" onclick="renderMovePickerDirectory('${acc}')">${folderPart}</span>`;
+        }
+        crumbsEl.innerHTML = crumbHtml;
+    }
+
+    try {
+        const json = await postJson('/api/getDirectory', { path: path });
+        if (json && json.status === 'ok' && json.data) {
+            const contents = json.data.contents || {};
+            const folders = Object.entries(contents).filter(([k, v]) => v.type === 'folder');
+
+            // Exclude the item itself if we are moving a folder
+            const validFolders = folders.filter(([k, f]) => {
+                if (CURRENT_MOVE_ITEM && CURRENT_MOVE_ITEM.type === 'folder' && f.id === CURRENT_MOVE_ITEM.id) {
+                    return false;
+                }
+                return true;
+            });
+
+            if (validFolders.length === 0) {
+                listEl.innerHTML = '<div class="gd-move-empty-state">No subfolders here.<br>Click "Move Here" to place item in this folder.</div>';
+                return;
+            }
+
+            let itemsHtml = '';
+            validFolders.forEach(([k, folder]) => {
+                const folderFullPath = (folder.path + '/' + folder.id).replaceAll('//', '/');
+                itemsHtml += `
+                    <div class="gd-move-folder-item" data-path="${folderFullPath}" data-id="${folder.id}">
+                        <div class="gd-move-folder-left">
+                            <span class="gd-move-folder-icon">📁</span>
+                            <span class="gd-move-folder-name" title="${escapeHtml(folder.name)}">${escapeHtml(folder.name)}</span>
+                        </div>
+                        <button class="gd-move-folder-enter-btn" onclick="event.stopPropagation(); renderMovePickerDirectory('${folderFullPath}')">Open ›</button>
+                    </div>
+                `;
+            });
+            listEl.innerHTML = itemsHtml;
+
+            // Click row to select folder
+            listEl.querySelectorAll('.gd-move-folder-item').forEach(el => {
+                el.onclick = function() {
+                    listEl.querySelectorAll('.gd-move-folder-item').forEach(i => i.classList.remove('selected'));
+                    this.classList.add('selected');
+                    CURRENT_MOVE_TARGET_PATH = this.getAttribute('data-path');
+                };
+                el.ondblclick = function() {
+                    const p = this.getAttribute('data-path');
+                    renderMovePickerDirectory(p);
+                };
+            });
+        } else {
+            listEl.innerHTML = '<div class="gd-move-empty-state">Unable to load folder contents</div>';
+        }
+    } catch (err) {
+        listEl.innerHTML = '<div class="gd-move-empty-state">Error loading folders</div>';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const moveCancel = document.getElementById('move-modal-cancel');
+    const moveConfirm = document.getElementById('move-modal-confirm');
+
+    if (moveCancel) moveCancel.onclick = closeMoveModal;
+
+    if (moveConfirm) {
+        moveConfirm.onclick = async () => {
+            if (!CURRENT_MOVE_ITEM) return;
+            const srcFullPath = (CURRENT_MOVE_ITEM.path + '/' + CURRENT_MOVE_ITEM.id).replaceAll('//', '/');
+            const destPath = CURRENT_MOVE_TARGET_PATH || '/';
+
+            if (srcFullPath === destPath) {
+                showToast('⚠️ Item is already in this folder');
+                return;
+            }
+
+            closeMoveModal();
+            await moveFileFolder(srcFullPath, destPath);
+        };
+    }
+});
