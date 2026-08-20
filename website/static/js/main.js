@@ -460,13 +460,16 @@ function showDirectory(data, breadcrumbs) {
         const isMedia = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic', 'tiff', 'mp4', 'mkv', 'webm', 'mov', 'avi', '3gp'].includes(ext);
         const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
         const authParam = new URLSearchParams(window.location.search).get('auth');
-        const thumbUrl = `/thumbnail?path=${encodeURIComponent(filePath)}${authParam ? `&auth=${encodeURIComponent(authParam)}` : ''}`;
+        const pwd = localStorage.getItem('password') || '';
+        const thumbUrl = `/thumbnail?path=${encodeURIComponent(filePath)}${authParam ? `&auth=${encodeURIComponent(authParam)}` : ''}${pwd ? `&password=${encodeURIComponent(pwd)}` : ''}`;
 
         let previewInnerHtml = '';
         if (isMedia) {
             previewInnerHtml = `
                 <div class="gd-thumb-shimmer"></div>
-                <img class="gd-file-card-thumb lazy-thumb" data-src="${thumbUrl}" alt="${escapeHtml(item.name)}" />
+                <img class="gd-file-card-thumb" src="${thumbUrl}" loading="lazy" alt="${escapeHtml(item.name)}" 
+                    onload="this.classList.add('loaded'); if (this.previousElementSibling) this.previousElementSibling.style.display='none';" 
+                    onerror="this.style.display='none'; if (this.previousElementSibling) this.previousElementSibling.style.display='none'; if (this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
                 <div class="gd-thumb-fallback" style="display: none;">
                     <span style="font-size: 2.2rem;">${getBigIconEmoji(item)}</span>
                 </div>
@@ -493,16 +496,6 @@ function showDirectory(data, breadcrumbs) {
             </div>
         `;
         gridFiles.appendChild(fileCard);
-
-        // Register progressive observer
-        const lazyImg = fileCard.querySelector('.lazy-thumb');
-        if (lazyImg) {
-            if (THUMB_OBSERVER) {
-                THUMB_OBSERVER.observe(lazyImg);
-            } else {
-                lazyImg.src = lazyImg.getAttribute('data-src');
-            }
-        }
 
         // Context / More Menus
         if (isTrash) {
