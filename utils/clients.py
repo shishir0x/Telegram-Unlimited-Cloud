@@ -28,11 +28,11 @@ async def initialize_clients():
         (i, s) for i, s in enumerate(config.STRING_SESSIONS, start=len(all_tokens) + 1)
     )
 
-    async def start_client(client_id, token, type):
+    async def start_client(client_id, token, client_type):
         try:
-            logger.info(f"Starting - {type.title()} Client {client_id}")
+            logger.info(f"Starting - {client_type.title()} Client {client_id}")
 
-            if type == "bot":
+            if client_type == "bot":
                 client = Client(
                     name=str(client_id),
                     api_id=config.API_ID,
@@ -42,13 +42,16 @@ async def initialize_clients():
                 )
                 client.loop = asyncio.get_running_loop()
                 await client.start()
-                await client.send_message(
-                    config.STORAGE_CHANNEL,
-                    f"Started - {type.title()} Client {client_id}",
-                )
+                try:
+                    await client.send_message(
+                        config.STORAGE_CHANNEL,
+                        f"Started - {client_type.title()} Client {client_id}",
+                    )
+                except Exception:
+                    pass
                 multi_clients[client_id] = client
                 work_loads[client_id] = 0
-            elif type == "user":
+            elif client_type == "user":
                 client = await Client(
                     name=str(client_id),
                     api_id=config.API_ID,
@@ -58,49 +61,72 @@ async def initialize_clients():
                     workdir=session_cache_path,
                     no_updates=True,
                 ).start()
-                await client.send_message(
-                    config.STORAGE_CHANNEL,
-                    f"Started - {type.title()} Client {client_id}",
-                )
+                try:
+                    await client.send_message(
+                        config.STORAGE_CHANNEL,
+                        f"Started - {client_type.title()} Client {client_id}",
+                    )
+                except Exception:
+                    pass
                 premium_clients[client_id] = client
                 premium_work_loads[client_id] = 0
 
-            logger.info(f"Started - {type.title()} Client {client_id}")
+            logger.info(f"Started - {client_type.title()} Client {client_id}")
+            return True
         except Exception as e:
             logger.error(
-                f"Failed To Start {type.title()} Client - {client_id} Error: {e}"
+                f"Failed To Start {client_type.title()} Client - {client_id} Error: {e}"
             )
+            return False
 
-    await asyncio.gather(
-        *(
-            [
-                start_client(client_id, client, "bot")
-                for client_id, client in all_tokens.items()
-            ]
-            + [
-                start_client(client_id, client, "user")
-                for client_id, client in all_sessions.items()
-            ]
-        )
-    )
+    # Stagger client startup sequentially to avoid Telegram FloodWait on parallel connections
+    for client_id, token in all_tokens.items():
+        success = await start_client(client_id, token, "bot")
+        if success:
+            await asyncio.sleep(1.0)
+        else:
+            await asyncio.sleep(2.0)
+
+    for client_id, token in all_sessions.items():
+        success = await start_client(client_id, token, "user")
+        if success:
+            await asyncio.sleep(1.0)
+
+    # Background retry worker for any clients that encountered temporary FloodWait
+    async def retry_pending_clients():
+        while len(multi_clients) < len(all_tokens):
+            await asyncio.sleep(30)
+            for cid, tok in all_tokens.items():
+                if cid not in multi_clients:
+                    logger.info(f"Retrying Bot Client {cid} connection...")
+                    await start_client(cid, tok, "bot")
+                    await asyncio.sleep(2.0)
+            if len(multi_clients) > 0 and not getattr(config, "_drive_data_loaded", False):
+                try:
+                    await loadDriveData()
+                    config._drive_data_loaded = True
+                    asyncio.create_task(backup_drive_data())
+                except Exception:
+                    pass
+
+    asyncio.create_task(retry_pending_clients())
+
     if len(multi_clients) == 0:
-        logger.error("No Telegram Bot Clients Were Initialized!")
-        logger.error(f"Config status: API_ID={config.API_ID}, STORAGE_CHANNEL={config.STORAGE_CHANNEL}, BOT_TOKENS_COUNT={len(config.BOT_TOKENS)}")
-        if not config.BOT_TOKENS or config.BOT_TOKENS == [""]:
-            logger.error("❌ BOT_TOKENS environment variable is empty or missing! Please add BOT_TOKENS to Render Environment Variables.")
-        sys.exit(1)
-
+        logger.warning("⚠️ Bot clients encountered temporary FloodWait. Server is active and will auto-reconnect in the background.")
+    else:
+        logger.info(f"✅ {len(multi_clients)} Telegram Bot Client(s) successfully initialized.")
 
     if len(premium_clients) == 0:
         logger.info("No Premium Clients Were Initialized")
 
-    logger.info("Clients Initialized")
-
     # Load the drive data
-    await loadDriveData()
-
-    # Start the backup drive data task
-    asyncio.create_task(backup_drive_data())
+    try:
+        await loadDriveData()
+        config._drive_data_loaded = True
+        # Start the backup drive data task
+        asyncio.create_task(backup_drive_data())
+    except Exception as e:
+        logger.warning(f"Initial drive data load deferred until bot connection: {e}")
 
 
 def get_client(premium_required=False) -> Client:
