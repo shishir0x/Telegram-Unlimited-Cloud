@@ -1109,7 +1109,11 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
                 return "local", Path(sd_path), None, None
 
         elif choice == "5":
-            manual_path = input("\nEnter custom folder path (e.g. C:\\Users\\nitro\\Desktop\\Notion Drive): ").strip().strip('"').strip("'")
+            notion_drive_default = Path("C:/Users/shishir0x/Documents/Portfolio/Notion Drive")
+            default_hint = f" [Default: {notion_drive_default}]" if notion_drive_default.exists() else ""
+            manual_path = input(f"\nEnter custom folder path{default_hint} (or press Enter): ").strip().strip('"').strip("'")
+            if not manual_path and notion_drive_default.exists():
+                return "local", notion_drive_default, "Notion_Drive", None
             p = Path(manual_path)
             if not p.exists():
                 print(f"❌ Path does not exist: {manual_path}")
