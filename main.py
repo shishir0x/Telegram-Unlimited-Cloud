@@ -169,9 +169,125 @@ async def dl_file(request: Request):
         raise HTTPException(status_code=404, detail="File not found")
 
 
-THUMB_CACHE_DIR = Path("./cache/thumbs")
-THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-THUMB_SEMAPHORE = asyncio.Semaphore(3)
+# =========================================================
+# Google-Grade Thumbnail & Media Optimization Service
+# =========================================================
+
+import collections
+
+class ThumbnailService:
+    def __init__(self, max_ram_items: int = 300, max_disk_mb: int = 50):
+        self.ram_cache: collections.OrderedDict[int, bytes] = collections.OrderedDict()
+        self.max_ram_items = max_ram_items
+        self.max_disk_bytes = max_disk_mb * 1024 * 1024
+        self.cache_dir = Path("./cache/thumbs")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.semaphore = asyncio.Semaphore(4)
+        self.in_flight: dict[int, asyncio.Future] = {}
+
+    def get_ram(self, file_id: int) -> bytes | None:
+        if file_id in self.ram_cache:
+            self.ram_cache.move_to_end(file_id)
+            return self.ram_cache[file_id]
+        return None
+
+    def put_ram(self, file_id: int, data: bytes):
+        self.ram_cache[file_id] = data
+        self.ram_cache.move_to_end(file_id)
+        if len(self.ram_cache) > self.max_ram_items:
+            self.ram_cache.popitem(last=False)
+
+    def prune_disk_if_needed(self):
+        try:
+            files = list(self.cache_dir.glob("*.jpg"))
+            total_size = sum(f.stat().st_size for f in files if f.exists())
+            if total_size > self.max_disk_bytes:
+                files.sort(key=lambda f: f.stat().st_mtime)
+                for f in files[: len(files) // 2]:
+                    try:
+                        f.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    async def get_or_fetch(self, file_id: int, file_name: str) -> bytes | None:
+        # 1. Check RAM Cache
+        ram_data = self.get_ram(file_id)
+        if ram_data:
+            return ram_data
+
+        # 2. Check Disk Cache
+        disk_file = self.cache_dir / f"{file_id}.jpg"
+        if disk_file.exists() and disk_file.stat().st_size > 0:
+            try:
+                data = disk_file.read_bytes()
+                self.put_ram(file_id, data)
+                return data
+            except Exception:
+                pass
+
+        # 3. Singleflight Request Coalescing (Deduplicate concurrent MTProto calls)
+        loop = asyncio.get_running_loop()
+        if file_id in self.in_flight:
+            return await self.in_flight[file_id]
+
+        future = loop.create_future()
+        self.in_flight[file_id] = future
+
+        try:
+            async with self.semaphore:
+                # Re-check after acquiring semaphore
+                if disk_file.exists() and disk_file.stat().st_size > 0:
+                    data = disk_file.read_bytes()
+                    self.put_ram(file_id, data)
+                    future.set_result(data)
+                    return data
+
+                from utils.clients import get_client
+                client = get_client()
+                msg = await client.get_messages(STORAGE_CHANNEL, file_id)
+
+                if not msg:
+                    future.set_result(None)
+                    return None
+
+                thumb_target = None
+                ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
+                is_image = ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]
+
+                if msg.photo:
+                    thumb_target = msg.photo
+                elif msg.document and msg.document.thumbs:
+                    thumb_target = msg.document.thumbs[0]
+                elif msg.video and msg.video.thumbs:
+                    thumb_target = msg.video.thumbs[0]
+                elif msg.animation and msg.animation.thumbs:
+                    thumb_target = msg.animation.thumbs[0]
+                elif is_image and msg.document and msg.document.file_size and msg.document.file_size < 3 * 1024 * 1024:
+                    thumb_target = msg.document
+
+                if thumb_target:
+                    temp_path = await client.download_media(thumb_target, file_name=str(disk_file))
+                    if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        data = disk_file.read_bytes()
+                        self.put_ram(file_id, data)
+                        self.prune_disk_if_needed()
+                        future.set_result(data)
+                        return data
+
+                future.set_result(None)
+                return None
+        except Exception as e:
+            logger.warning(f"Error extracting thumbnail for msg {file_id}: {e}")
+            if not future.done():
+                future.set_result(None)
+            return None
+        finally:
+            self.in_flight.pop(file_id, None)
+
+
+THUMB_SERVICE = ThumbnailService(max_ram_items=300, max_disk_mb=50)
 
 
 @app.get("/thumbnail")
@@ -209,60 +325,20 @@ async def get_thumbnail(request: Request):
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
 
-    cache_file = THUMB_CACHE_DIR / f"{file.file_id}.jpg"
-    if cache_file.exists() and cache_file.stat().st_size > 0:
-        return FileResponse(
-            cache_file,
+    etag = f'"thumb-{file.file_id}"'
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=31536000, immutable"})
+
+    thumb_data = await THUMB_SERVICE.get_or_fetch(file.file_id, file.name)
+    if thumb_data:
+        return Response(
+            content=thumb_data,
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+            headers={
+                "ETag": etag,
+                "Cache-Control": "public, max-age=31536000, immutable"
+            }
         )
-
-    ext = (file.name.rsplit(".", 1)[-1] if "." in file.name else "").lower()
-    is_image = ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]
-    is_video = ext in ["mp4", "mkv", "webm", "mov", "avi", "3gp", "ts", "flv"]
-
-    if not (is_image or is_video):
-        raise HTTPException(status_code=404, detail="No thumbnail available for this file type")
-
-    async with THUMB_SEMAPHORE:
-        # Re-check cache in case another request downloaded it while waiting on semaphore
-        if cache_file.exists() and cache_file.stat().st_size > 0:
-            return FileResponse(
-                cache_file,
-                media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=31536000, immutable"}
-            )
-
-        try:
-            from utils.clients import get_client
-            client = get_client()
-            msg = await client.get_messages(STORAGE_CHANNEL, file.file_id)
-
-            if not msg:
-                raise HTTPException(status_code=404, detail="Telegram message not found")
-
-            thumb_target = None
-            if msg.photo:
-                thumb_target = msg.photo
-            elif msg.document and msg.document.thumbs:
-                thumb_target = msg.document.thumbs[0]
-            elif msg.video and msg.video.thumbs:
-                thumb_target = msg.video.thumbs[0]
-            elif msg.animation and msg.animation.thumbs:
-                thumb_target = msg.animation.thumbs[0]
-            elif is_image and msg.document and msg.document.file_size and msg.document.file_size < 3 * 1024 * 1024:
-                thumb_target = msg.document
-
-            if thumb_target:
-                temp_thumb = await client.download_media(thumb_target, file_name=str(cache_file))
-                if temp_thumb and os.path.exists(temp_thumb) and os.path.getsize(temp_thumb) > 0:
-                    return FileResponse(
-                        cache_file,
-                        media_type="image/jpeg",
-                        headers={"Cache-Control": "public, max-age=31536000, immutable"}
-                    )
-        except Exception as e:
-            logger.warning(f"Could not extract thumbnail for '{file.name}' (msg {file.file_id}): {e}")
 
     raise HTTPException(status_code=404, detail="Thumbnail not available")
 

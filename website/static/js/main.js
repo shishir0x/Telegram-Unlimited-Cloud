@@ -398,6 +398,52 @@ function showDirectory(data, breadcrumbs) {
             </tr>
         `;
 
+// Google-Grade Lazy Thumbnail Batch Observer (Max 6 concurrent HTTP/MTProto requests)
+const THUMB_QUEUE = [];
+let THUMB_ACTIVE_COUNT = 0;
+const MAX_CONCURRENT_THUMBS = 6;
+
+function processThumbQueue() {
+    while (THUMB_ACTIVE_COUNT < MAX_CONCURRENT_THUMBS && THUMB_QUEUE.length > 0) {
+        const img = THUMB_QUEUE.shift();
+        const dataSrc = img.getAttribute('data-src');
+        if (!dataSrc) continue;
+
+        THUMB_ACTIVE_COUNT++;
+        img.src = dataSrc;
+        img.removeAttribute('data-src');
+
+        img.onload = () => {
+            img.classList.add('loaded');
+            const placeholder = img.parentElement ? img.parentElement.querySelector('.gd-thumb-shimmer') : null;
+            if (placeholder) placeholder.style.display = 'none';
+            THUMB_ACTIVE_COUNT = Math.max(0, THUMB_ACTIVE_COUNT - 1);
+            processThumbQueue();
+        };
+
+        img.onerror = () => {
+            img.style.display = 'none';
+            const fallback = img.parentElement ? img.parentElement.querySelector('.gd-thumb-fallback') : null;
+            const placeholder = img.parentElement ? img.parentElement.querySelector('.gd-thumb-shimmer') : null;
+            if (placeholder) placeholder.style.display = 'none';
+            if (fallback) fallback.style.display = 'flex';
+            THUMB_ACTIVE_COUNT = Math.max(0, THUMB_ACTIVE_COUNT - 1);
+            processThumbQueue();
+        };
+    }
+}
+
+const THUMB_OBSERVER = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver((entries, observer) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const img = entry.target;
+            observer.unobserve(img);
+            THUMB_QUEUE.push(img);
+            processThumbQueue();
+        }
+    });
+}, { rootMargin: '150px 0px' }) : null;
+
         // Grid File Card
         const fileCard = document.createElement('div');
         fileCard.className = 'gd-file-card file-tr';
@@ -414,9 +460,8 @@ function showDirectory(data, breadcrumbs) {
         let previewInnerHtml = '';
         if (isMedia) {
             previewInnerHtml = `
-                <img class="gd-file-card-thumb" src="${thumbUrl}" loading="lazy" alt="${escapeHtml(item.name)}" 
-                    onload="this.classList.add('loaded')" 
-                    onerror="this.style.display='none'; if (this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                <div class="gd-thumb-shimmer"></div>
+                <img class="gd-file-card-thumb lazy-thumb" data-src="${thumbUrl}" alt="${escapeHtml(item.name)}" />
                 <div class="gd-thumb-fallback" style="display: none;">
                     <span style="font-size: 2.2rem;">${getBigIconEmoji(item)}</span>
                 </div>
@@ -443,6 +488,16 @@ function showDirectory(data, breadcrumbs) {
             </div>
         `;
         gridFiles.appendChild(fileCard);
+
+        // Register progressive observer
+        const lazyImg = fileCard.querySelector('.lazy-thumb');
+        if (lazyImg) {
+            if (THUMB_OBSERVER) {
+                THUMB_OBSERVER.observe(lazyImg);
+            } else {
+                lazyImg.src = lazyImg.getAttribute('data-src');
+            }
+        }
 
         // Context / More Menus
         if (isTrash) {
