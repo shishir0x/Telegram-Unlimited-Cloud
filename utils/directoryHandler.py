@@ -191,6 +191,22 @@ class NewDriveData:
                 folder_data = folder_data[0]
             if hasattr(folder_data, "contents") and file_id in folder_data.contents:
                 return folder_data.contents[file_id]
+
+        # Recursive fallback search by file_id
+        def find_file(folder):
+            if hasattr(folder, "contents"):
+                if file_id in folder.contents and getattr(folder.contents[file_id], "type", None) == "file":
+                    return folder.contents[file_id]
+                for child in folder.contents.values():
+                    if getattr(child, "type", None) == "folder":
+                        res = find_file(child)
+                        if res:
+                            return res
+            return None
+
+        found = find_file(self.contents.get("/"))
+        if found:
+            return found
         raise KeyError(f"File not found: {path}")
 
     def rename_file_folder(self, path: str, new_name: str) -> None:

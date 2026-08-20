@@ -6,6 +6,52 @@ let SELECTED_ITEM_ID = null;
 let CURRENT_VIEW_MODE = localStorage.getItem('gd_view_mode') || 'list'; // 'list' or 'grid'
 window.DRAGGED_DRIVE_ITEM = null;
 
+// Google-Grade Lazy Thumbnail Batch Observer (Max 6 concurrent HTTP/MTProto requests)
+const THUMB_QUEUE = [];
+let THUMB_ACTIVE_COUNT = 0;
+const MAX_CONCURRENT_THUMBS = 6;
+
+function processThumbQueue() {
+    while (THUMB_ACTIVE_COUNT < MAX_CONCURRENT_THUMBS && THUMB_QUEUE.length > 0) {
+        const img = THUMB_QUEUE.shift();
+        const dataSrc = img.getAttribute('data-src');
+        if (!dataSrc) continue;
+
+        THUMB_ACTIVE_COUNT++;
+        img.src = dataSrc;
+        img.removeAttribute('data-src');
+
+        img.onload = () => {
+            img.classList.add('loaded');
+            const placeholder = img.parentElement ? img.parentElement.querySelector('.gd-thumb-shimmer') : null;
+            if (placeholder) placeholder.style.display = 'none';
+            THUMB_ACTIVE_COUNT = Math.max(0, THUMB_ACTIVE_COUNT - 1);
+            processThumbQueue();
+        };
+
+        img.onerror = () => {
+            img.style.display = 'none';
+            const fallback = img.parentElement ? img.parentElement.querySelector('.gd-thumb-fallback') : null;
+            const placeholder = img.parentElement ? img.parentElement.querySelector('.gd-thumb-shimmer') : null;
+            if (placeholder) placeholder.style.display = 'none';
+            if (fallback) fallback.style.display = 'flex';
+            THUMB_ACTIVE_COUNT = Math.max(0, THUMB_ACTIVE_COUNT - 1);
+            processThumbQueue();
+        };
+    }
+}
+
+const THUMB_OBSERVER = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver((entries, observer) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const img = entry.target;
+            observer.unobserve(img);
+            THUMB_QUEUE.push(img);
+            processThumbQueue();
+        }
+    });
+}, { rootMargin: '150px 0px' }) : null;
+
 // Helper: Get File Badges & Icons
 function getFileBadge(item) {
     if (item.type === 'folder') {
@@ -397,52 +443,6 @@ function showDirectory(data, breadcrumbs) {
                 </td>
             </tr>
         `;
-
-// Google-Grade Lazy Thumbnail Batch Observer (Max 6 concurrent HTTP/MTProto requests)
-const THUMB_QUEUE = [];
-let THUMB_ACTIVE_COUNT = 0;
-const MAX_CONCURRENT_THUMBS = 6;
-
-function processThumbQueue() {
-    while (THUMB_ACTIVE_COUNT < MAX_CONCURRENT_THUMBS && THUMB_QUEUE.length > 0) {
-        const img = THUMB_QUEUE.shift();
-        const dataSrc = img.getAttribute('data-src');
-        if (!dataSrc) continue;
-
-        THUMB_ACTIVE_COUNT++;
-        img.src = dataSrc;
-        img.removeAttribute('data-src');
-
-        img.onload = () => {
-            img.classList.add('loaded');
-            const placeholder = img.parentElement ? img.parentElement.querySelector('.gd-thumb-shimmer') : null;
-            if (placeholder) placeholder.style.display = 'none';
-            THUMB_ACTIVE_COUNT = Math.max(0, THUMB_ACTIVE_COUNT - 1);
-            processThumbQueue();
-        };
-
-        img.onerror = () => {
-            img.style.display = 'none';
-            const fallback = img.parentElement ? img.parentElement.querySelector('.gd-thumb-fallback') : null;
-            const placeholder = img.parentElement ? img.parentElement.querySelector('.gd-thumb-shimmer') : null;
-            if (placeholder) placeholder.style.display = 'none';
-            if (fallback) fallback.style.display = 'flex';
-            THUMB_ACTIVE_COUNT = Math.max(0, THUMB_ACTIVE_COUNT - 1);
-            processThumbQueue();
-        };
-    }
-}
-
-const THUMB_OBSERVER = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver((entries, observer) => {
-    entries.forEach(entry => {
-        if (entry.isIntersecting) {
-            const img = entry.target;
-            observer.unobserve(img);
-            THUMB_QUEUE.push(img);
-            processThumbQueue();
-        }
-    });
-}, { rootMargin: '150px 0px' }) : null;
 
         // Grid File Card
         const fileCard = document.createElement('div');
