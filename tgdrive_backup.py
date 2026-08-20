@@ -844,7 +844,8 @@ Scan-MTP $targetRoot ""
             res = subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_scan_file)],
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=True
             )
             data = json.loads(res.stdout)
@@ -949,11 +950,11 @@ while ($line = [Console]::In.ReadLine()) {{
         }}
     }}
 
-    $cleanReq = $fileName -replace '[\?\u200B]', ''
+    $cleanReq = $fileName -replace '[\\?\\u200B]', ''
     $fileItem = $target.GetFolder.Items() | Where-Object {{ 
         -not $_.IsFolder -and (
             $_.Name -eq $fileName -or 
-            ($_.Name -replace '[\?\u200B]', '') -eq $cleanReq
+            ($_.Name -replace '[\\?\\u200B]', '') -eq $cleanReq
         )
     }} | Select-Object -First 1
     if ($fileItem) {{
@@ -985,7 +986,8 @@ while ($line = [Console]::In.ReadLine()) {{
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1
         )
 
