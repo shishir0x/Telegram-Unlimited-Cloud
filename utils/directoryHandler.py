@@ -221,6 +221,23 @@ class NewDriveData:
             folder_data.contents[file_id].trash = trash
             self.save()
             logger.info(f"Item at path '{path}' {action.lower()} successfully.")
+            return
+
+        # Fallback global search if path structure changed
+        def search_and_trash(folder):
+            if hasattr(folder, "contents"):
+                if file_id in folder.contents:
+                    folder.contents[file_id].trash = trash
+                    return True
+                for child in folder.contents.values():
+                    if child.type == "folder":
+                        if search_and_trash(child):
+                            return True
+            return False
+
+        if search_and_trash(self.contents.get("/")):
+            self.save()
+            logger.info(f"Item with ID '{file_id}' {action.lower()} via fallback search.")
 
     def get_trashed_files_folders(self):
         root_dir = self.get_directory("/")
@@ -255,6 +272,23 @@ class NewDriveData:
             del folder_data.contents[file_id]
             self.save()
             logger.info(f"Item at path '{path}' deleted successfully.")
+            return
+
+        # Fallback global search to permanently delete
+        def search_and_delete(folder):
+            if hasattr(folder, "contents"):
+                if file_id in folder.contents:
+                    del folder.contents[file_id]
+                    return True
+                for child in folder.contents.values():
+                    if child.type == "folder":
+                        if search_and_delete(child):
+                            return True
+            return False
+
+        if search_and_delete(self.contents.get("/")):
+            self.save()
+            logger.info(f"Item with ID '{file_id}' deleted via fallback search.")
 
     def _find_folder_by_id(self, folder_id: str):
         def traverse(folder):
@@ -380,6 +414,25 @@ class NewDriveData:
         traverse_directory(root_dir)
         logger.info(f"Search completed. Found {len(search_results)} matching items.")
         return search_results
+
+    def get_drive_stats(self):
+        total_files = 0
+        total_bytes = 0
+
+        def count_items(folder):
+            nonlocal total_files, total_bytes
+            if hasattr(folder, "contents"):
+                for item in folder.contents.values():
+                    if getattr(item, "trash", False):
+                        continue
+                    if item.type == "file":
+                        total_files += 1
+                        total_bytes += getattr(item, "size", 0)
+                    elif item.type == "folder":
+                        count_items(item)
+
+        count_items(self.contents.get("/"))
+        return total_files, total_bytes
 
 
 

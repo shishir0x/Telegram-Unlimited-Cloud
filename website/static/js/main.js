@@ -477,16 +477,29 @@ function showDirectory(data, breadcrumbs) {
             openMoreButton(div);
         });
     });
+}
 
-    // Auto-select first item if available to populate inspector
-    if (files.length > 0) {
-        selectItem(files[0][1].id);
-    } else if (folders.length > 0) {
-        selectItem(folders[0][1].id);
+// Global Storage Stats Updater for Sidebar Widget
+function updateSidebarStorageStats(stats) {
+    if (!stats) return;
+    const countEl = document.getElementById('storage-total-count');
+    const sizeEl = document.getElementById('storage-total-size');
+    const fillEl = document.getElementById('storage-progress-fill');
+    const totalFiles = stats.total_files || 0;
+    const totalBytes = stats.total_bytes || 0;
+
+    if (countEl) {
+        countEl.innerHTML = `<strong>${totalFiles.toLocaleString()} Files Uploaded</strong>`;
+    }
+    if (sizeEl) {
+        sizeEl.innerText = `${convertBytes(totalBytes)} • Unlimited Cloud`;
+    }
+    if (fillEl) {
+        fillEl.style.width = '100%';
     }
 }
 
-// Select Item and Populate Inspector Panel
+// Select Item and Populate Inspector Panel (Only opens when explicitly pressed)
 function selectItem(id) {
     SELECTED_ITEM_ID = id;
     const item = DIRECTORY_ITEMS[id];
@@ -516,15 +529,24 @@ function selectItem(id) {
     const headerTitle = document.getElementById('insp-header-title');
     if (headerTitle) headerTitle.innerText = isFolder ? 'Folder Details' : 'File Details';
 
-    document.getElementById('insp-filename').innerText = item.name;
-    document.getElementById('insp-big-icon').innerText = getBigIconEmoji(item);
-    document.getElementById('insp-prop-type').innerText = item.category || (isFolder ? 'Folder' : 'File');
-    document.getElementById('insp-prop-size').innerText = isFolder ? '--' : `${convertBytes(item.size)} (${(item.size || 0).toLocaleString()} bytes)`;
-    document.getElementById('insp-prop-storage').innerText = isFolder ? '0 bytes (virtual)' : convertBytes(item.size);
-    document.getElementById('insp-prop-location').innerText = readableLocation;
-    document.getElementById('insp-prop-owner').innerText = item.owner || 'Admin (You)';
-    document.getElementById('insp-prop-date').innerText = item.upload_date || '--';
-    document.getElementById('insp-prop-msg-id').innerText = item.file_id ? `#${item.file_id}` : (isFolder ? 'Virtual' : '--');
+    const filenameEl = document.getElementById('insp-filename');
+    if (filenameEl) filenameEl.innerText = item.name;
+    const bigIconEl = document.getElementById('insp-big-icon');
+    if (bigIconEl) bigIconEl.innerText = getBigIconEmoji(item);
+    const propTypeEl = document.getElementById('insp-prop-type');
+    if (propTypeEl) propTypeEl.innerText = item.category || (isFolder ? 'Folder' : 'File');
+    const propSizeEl = document.getElementById('insp-prop-size');
+    if (propSizeEl) propSizeEl.innerText = isFolder ? '--' : `${convertBytes(item.size)} (${(item.size || 0).toLocaleString()} bytes)`;
+    const propStorageEl = document.getElementById('insp-prop-storage');
+    if (propStorageEl) propStorageEl.innerText = isFolder ? '0 bytes (virtual)' : convertBytes(item.size);
+    const propLocationEl = document.getElementById('insp-prop-location');
+    if (propLocationEl) propLocationEl.innerText = readableLocation;
+    const propOwnerEl = document.getElementById('insp-prop-owner');
+    if (propOwnerEl) propOwnerEl.innerText = item.owner || 'Admin (You)';
+    const propDateEl = document.getElementById('insp-prop-date');
+    if (propDateEl) propDateEl.innerText = item.upload_date || '--';
+    const propMsgIdEl = document.getElementById('insp-prop-msg-id');
+    if (propMsgIdEl) propMsgIdEl.innerText = item.file_id ? `#${item.file_id}` : (isFolder ? 'Virtual' : '--');
 
     const linkInput = document.getElementById('insp-link-input');
     if (linkInput) {
@@ -836,7 +858,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (infoBtn && inspector) {
         infoBtn.addEventListener('click', () => {
+            const isOpening = inspector.classList.contains('hidden');
             inspector.classList.toggle('hidden');
+            if (isOpening && !SELECTED_ITEM_ID && typeof DIRECTORY_ITEMS !== 'undefined') {
+                const keys = Object.keys(DIRECTORY_ITEMS);
+                if (keys.length > 0) {
+                    selectItem(keys[0]);
+                }
+            }
         });
     }
 
@@ -1042,6 +1071,10 @@ function initSyncActivityManager() {
                 syncPill.classList.remove('active');
                 syncPillText.innerText = (state === 'completed') ? 'Sync: Complete' : 'Sync: Idle';
             }
+        }
+        // Update Sidebar Storage Widget with live stats
+        if (data.drive_stats && typeof updateSidebarStorageStats === 'function') {
+            updateSidebarStorageStats(data.drive_stats);
         }
 
         // Update Native UI Dashboard Elements

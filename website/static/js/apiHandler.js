@@ -118,6 +118,9 @@ async function getCurrentDirectory() {
                 }
             }
 
+            if (json.stats && typeof updateSidebarStorageStats === 'function') {
+                updateSidebarStorageStats(json.stats);
+            }
             showDirectory(json['data'], json['breadcrumbs'] || []);
         } else if (json.status === 'Invalid password' || json.status === 'Unauthorized folder access') {
             localStorage.removeItem('password');

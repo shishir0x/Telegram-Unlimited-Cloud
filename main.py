@@ -305,7 +305,17 @@ async def api_get_directory(request: Request):
             folder_data = folder_data[0]
         folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
 
-    resp = JSONResponse({"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": None})
+    total_files, total_bytes = drive.get_drive_stats()
+    resp = JSONResponse({
+        "status": "ok",
+        "data": folder_data,
+        "breadcrumbs": breadcrumbs,
+        "auth_home_path": None,
+        "stats": {
+            "total_files": total_files,
+            "total_bytes": total_bytes
+        }
+    })
     if is_admin and ADMIN_PASSWORD:
         resp.set_cookie(
             key="tg_session",
@@ -631,6 +641,16 @@ async def getSyncStatus(request: Request):
                 except Exception:
                     pass
         SYNC_ENGINE_STATUS["completed_list"] = reconstructed[:100]
+
+    try:
+        from utils.directoryHandler import ensure_drive_data
+        total_files, total_bytes = ensure_drive_data().get_drive_stats()
+        SYNC_ENGINE_STATUS["drive_stats"] = {
+            "total_files": total_files,
+            "total_bytes": total_bytes
+        }
+    except Exception:
+        pass
 
     return JSONResponse({"status": "ok", "data": SYNC_ENGINE_STATUS})
 
