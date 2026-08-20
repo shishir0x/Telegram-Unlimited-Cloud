@@ -10,3 +10,4 @@ curl_cffi
 techzdl>=1.2.6
 tqdm
 dill
+Pillow

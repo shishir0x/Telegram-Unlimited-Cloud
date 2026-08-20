@@ -175,12 +175,25 @@ async def dl_file(request: Request):
 
 import collections
 import io
-from PIL import Image
 
-def generate_pillow_thumbnail(input_path: str | Path, output_path: str | Path, max_size=(320, 320)) -> bytes | None:
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+def generate_pillow_thumbnail(input_data: str | Path | io.BytesIO | bytes, output_path: str | Path, max_size=(320, 320)) -> bytes | None:
     """Safely converts any image format to a lightweight ~10KB JPEG thumbnail."""
+    if not PIL_AVAILABLE:
+        return None
     try:
-        with Image.open(str(input_path)) as img:
+        if isinstance(input_data, bytes):
+            stream = io.BytesIO(input_data)
+        elif isinstance(input_data, io.BytesIO):
+            stream = input_data
+        else:
+            stream = str(input_data)
+        with Image.open(stream) as img:
             img = img.convert("RGB")
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             buf = io.BytesIO()
@@ -189,7 +202,7 @@ def generate_pillow_thumbnail(input_path: str | Path, output_path: str | Path, m
             Path(output_path).write_bytes(data)
             return data
     except Exception as e:
-        logger.warning(f"Pillow thumbnail conversion failed for {input_path}: {e}")
+        logger.warning(f"Pillow thumbnail conversion failed: {e}")
         return None
 
 
