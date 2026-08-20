@@ -2,7 +2,7 @@ services:
   # A Docker web service
   - type: web
     name: tgdrive
-    repo: https://github.com/TechShreyash/TGDrive
+    repo: https://github.com/shishir0x/Telegram-Unlimited-Cloud
     runtime: python
     branch: main
     plan: free
