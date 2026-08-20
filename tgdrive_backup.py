@@ -941,22 +941,27 @@ while ($line = [Console]::In.ReadLine()) {{
     $fileName = $parts[1]
 
     $target = $storage
-    if ($relFolder) {{
-        $subParts = $relFolder -split '[/\\\\]'
+    $folderClean = $relFolder.Trim('/').Trim('\\')
+    if ($folderClean) {{
+        $subParts = $folderClean.Replace('\\', '/').Split('/')
         foreach ($p in $subParts) {{
             if ($p) {{
                 $target = $target.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }} | Select-Object -First 1
+                if (-not $target) {{ break }}
             }}
         }}
     }}
 
     $cleanReq = $fileName -replace '[\\?\\u200B]', ''
-    $fileItem = $target.GetFolder.Items() | Where-Object {{ 
-        -not $_.IsFolder -and (
-            $_.Name -eq $fileName -or 
-            ($_.Name -replace '[\\?\\u200B]', '') -eq $cleanReq
-        )
-    }} | Select-Object -First 1
+    $fileItem = $null
+    if ($target) {{
+        $fileItem = $target.GetFolder.Items() | Where-Object {{ 
+            -not $_.IsFolder -and (
+                $_.Name -eq $fileName -or 
+                ($_.Name -replace '[\\?\\u200B]', '') -eq $cleanReq
+            )
+        }} | Select-Object -First 1
+    }}
     if ($fileItem) {{
         $destFolder.CopyHere($fileItem, 16)
         $found = $false
