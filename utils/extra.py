@@ -107,11 +107,23 @@ import shutil
 def reset_cache_dir():
     cache_dir = Path("./cache")
     downloads_dir = Path("./downloads")
-    shutil.rmtree(cache_dir, ignore_errors=True)
+    
+    # Clean downloads directory completely
     shutil.rmtree(downloads_dir, ignore_errors=True)
-    cache_dir.mkdir(parents=True, exist_ok=True)
     downloads_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Cache and downloads directory reset")
+    
+    # In cache directory, only remove temp chunks and files, preserve .session files
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for item in cache_dir.iterdir():
+        if item.is_file() and not item.name.endswith(".session") and not item.name.endswith(".session-journal"):
+            try:
+                item.unlink(missing_ok=True)
+            except Exception:
+                pass
+        elif item.is_dir():
+            shutil.rmtree(item, ignore_errors=True)
+            
+    logger.info("Cache and downloads directory reset (sessions preserved)")
 
 
 def parse_content_disposition(content_disposition):
