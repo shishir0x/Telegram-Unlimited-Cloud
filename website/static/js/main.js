@@ -333,6 +333,10 @@ function showDirectory(data, breadcrumbs) {
     gridFolders.innerHTML = '';
     gridFiles.innerHTML = '';
 
+    // Clear pending thumbnail queue when navigating to a new folder
+    THUMB_QUEUE.length = 0;
+    THUMB_ACTIVE_COUNT = 0;
+
     let entries = Object.entries(contents);
     let folders = entries.filter(([key, value]) => value.type === 'folder');
     let files = entries.filter(([key, value]) => value.type === 'file');

@@ -271,10 +271,11 @@ class ThumbnailService:
                     future.set_result(None)
                     return None
 
-                thumb_target = None
                 ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
                 is_image = ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]
+                is_video = ext in ["mp4", "mkv", "webm", "mov", "avi", "3gp", "ts", "flv"]
 
+                thumb_target = None
                 if msg.photo:
                     thumb_target = msg.photo
                 elif msg.document and msg.document.thumbs:
@@ -285,25 +286,27 @@ class ThumbnailService:
                     thumb_target = msg.animation.thumbs[0]
                 elif is_image and msg.document:
                     thumb_target = msg.document
+                elif is_image:
+                    thumb_target = msg
 
                 if thumb_target:
-                    temp_raw_file = Path(f"./cache/raw_thumb_{file_id}_{ext}")
-                    temp_raw_file.parent.mkdir(parents=True, exist_ok=True)
                     try:
-                        downloaded = await client.download_media(thumb_target, file_name=str(temp_raw_file))
-                        if downloaded and os.path.exists(downloaded) and os.path.getsize(downloaded) > 0:
-                            data = generate_pillow_thumbnail(downloaded, disk_file)
-                            if data:
-                                self.put_ram(file_id, data)
+                        buf = await client.download_media(thumb_target, in_memory=True)
+                        if buf and hasattr(buf, "getbuffer") and buf.getbuffer().nbytes > 0:
+                            buf.seek(0)
+                            with Image.open(buf) as img:
+                                img = img.convert("RGB")
+                                img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                                out_buf = io.BytesIO()
+                                img.save(out_buf, format="JPEG", quality=75, optimize=True)
+                                thumb_bytes = out_buf.getvalue()
+                                disk_file.write_bytes(thumb_bytes)
+                                self.put_ram(file_id, thumb_bytes)
                                 self.prune_disk_if_needed()
-                                future.set_result(data)
-                                return data
-                    finally:
-                        try:
-                            if temp_raw_file.exists():
-                                temp_raw_file.unlink(missing_ok=True)
-                        except Exception:
-                            pass
+                                future.set_result(thumb_bytes)
+                                return thumb_bytes
+                    except Exception as err:
+                        logger.warning(f"Failed in-memory thumbnail conversion for msg {file_id}: {err}")
 
                 future.set_result(None)
                 return None
