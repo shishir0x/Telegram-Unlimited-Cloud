@@ -926,12 +926,13 @@ Scan-MTP $targetRoot ""
 
                 ps_extract = f'''
 $shell = New-Object -ComObject Shell.Application
-$destFolder = $shell.Namespace("{str(folder_dest).replace(chr(92), chr(92)+chr(92))}")
+$destPath = "{str(folder_dest).replace(chr(92), chr(92)+chr(92))}"
+$destFolder = $shell.Namespace($destPath)
 $thisPC = $shell.Namespace(17)
-$phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }}
+$phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }} | Select-Object -First 1
 if (-not $phone) {{ exit 1 }}
 
-$storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }}
+$storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }} | Select-Object -First 1
 if (-not $storage) {{ exit 1 }}
 
 $targetRoot = $storage
@@ -940,7 +941,7 @@ if ($folderRel) {{
     $parts = $folderRel -split '[/\\\\]'
     foreach ($p in $parts) {{
         if ($p) {{
-            $targetRoot = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }}
+            $targetRoot = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }} | Select-Object -First 1
             if (-not $targetRoot) {{ exit 1 }}
         }}
     }}
@@ -950,6 +951,13 @@ $wanted = @({wanted_ps_arr})
 foreach ($item in $targetRoot.GetFolder.Items()) {{
     if (-not $item.IsFolder -and $item.Name -in $wanted) {{
         $destFolder.CopyHere($item, 16)
+        $filePath = Join-Path $destPath $item.Name
+        for ($w = 0; $w -lt 40; $w++) {{
+            if ((Test-Path $filePath) -and (Get-Item $filePath).Length -gt 0) {{
+                break
+            }}
+            Start-Sleep -Milliseconds 250
+        }}
     }}
 }}
 '''
