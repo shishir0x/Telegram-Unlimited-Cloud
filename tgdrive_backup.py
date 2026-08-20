@@ -926,7 +926,7 @@ Scan-MTP $targetRoot ""
 
                 ps_extract = f'''
 $shell = New-Object -ComObject Shell.Application
-$destPath = "{str(folder_dest).replace(chr(92), chr(92)+chr(92))}"
+$destPath = '{folder_dest.resolve()}'
 $destFolder = $shell.Namespace($destPath)
 $thisPC = $shell.Namespace(17)
 $phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }} | Select-Object -First 1
