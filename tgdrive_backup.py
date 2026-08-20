@@ -989,19 +989,31 @@ while ($line = [Console]::In.ReadLine()) {{
         try:
             for idx, (fname, rel_folder, human_folder) in enumerate(files_to_download, start=1):
                 rem_files = total_sync_files - idx
-                staged_file = folder_dest / fname
+
+                # Clean destination directory before each file
+                for existing in folder_dest.iterdir():
+                    try:
+                        if existing.is_file():
+                            existing.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
                 # Request worker to extract single file
                 proc.stdin.write(f"{rel_folder}|{fname}\n")
                 proc.stdin.flush()
                 resp = proc.stdout.readline().strip()
 
-                if resp.startswith("READY|") and staged_file.exists() and staged_file.stat().st_size > 0:
-                    with open(staged_file, "rb") as f:
-                        file_bytes = f.read()
+                # Find the extracted file safely from directory listing
+                extracted_files = [f for f in folder_dest.iterdir() if f.is_file()]
+                if extracted_files and extracted_files[0].stat().st_size > 0:
+                    target_staged = extracted_files[0]
+                    file_bytes = target_staged.read_bytes()
 
                     # Purge from disk IMMEDIATELY before cloud upload
-                    staged_file.unlink(missing_ok=True)
+                    try:
+                        target_staged.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
                     success = self.upload_in_memory_file(
                         file_bytes,
@@ -1016,7 +1028,6 @@ while ($line = [Console]::In.ReadLine()) {{
                         uploaded_count += 1
                 else:
                     print(f"\n[{idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
-                    staged_file.unlink(missing_ok=True)
 
         finally:
             try:
