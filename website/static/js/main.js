@@ -929,19 +929,6 @@ document.addEventListener('DOMContentLoaded', () => {
 // Live Sync Manager Telemetry & Native Activity UI
 // ==========================================
 
-function initSyncActivityManager() {
-    const syncPill = document.getElementById('gd-sync-status-pill');
-    const syncPillText = document.getElementById('sync-pill-text');
-    const navSyncActivity = document.getElementById('nav-sync-activity');
-    const navMyDrive = document.getElementById('nav-my-drive');
-    const navComputers = document.getElementById('nav-computers');
-    const navTrash = document.getElementById('nav-trash');
-
-    const listViewContainer = document.getElementById('list-view-container');
-    const gridViewContainer = document.getElementById('grid-view-container');
-    const syncViewContainer = document.getElementById('sync-view-container');
-    const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
-
 // Switch to Native Sync View in UI
 window.showSyncActivityView = function() {
     window.CURRENT_PAGE_VIEW = 'sync';
