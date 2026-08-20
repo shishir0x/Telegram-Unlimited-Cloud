@@ -922,11 +922,14 @@ Scan-MTP $targetRoot ""
         folder_dest = staging_dir / "stream_dest"
         if folder_dest.exists():
             shutil.rmtree(folder_dest, ignore_errors=True)
-        folder_dest.mkdir(parents=True, exist_ok=True)
+        dest_native_path = str(folder_dest.resolve())
 
         ps_worker_code = f'''
 $shell = New-Object -ComObject Shell.Application
-$destPath = "{str(folder_dest.resolve()).replace('\\', '\\\\')}"
+$destPath = @'
+{dest_native_path}
+'@
+$destFolder = $shell.Namespace($destPath)
 $thisPC = $shell.Namespace(17)
 $phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }} | Select-Object -First 1
 $storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }} | Select-Object -First 1
@@ -935,9 +938,8 @@ Write-Output "WORKER_READY"
 
 while ($line = [Console]::In.ReadLine()) {{
     if ($line -eq "QUIT") {{ break }}
-    $destFolder = $shell.Namespace($destPath)
     if (-not $destFolder) {{
-        $destFolder = $shell.NameSpace($destPath)
+        $destFolder = $shell.Namespace($destPath)
     }}
 
     $bytes = [System.Convert]::FromBase64String($line)
