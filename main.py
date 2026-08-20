@@ -140,6 +140,7 @@ async def dl_file(request: Request):
     if not path:
         raise HTTPException(status_code=400, detail="Missing path parameter")
 
+    clean_path = ("/" + (path or "").replace("/share_", "").replace("share_", "").strip("/")).replace("//", "/")
     auth = request.query_params.get("auth")
     is_admin = is_admin_authenticated(request)
 
@@ -149,18 +150,19 @@ async def dl_file(request: Request):
             raise HTTPException(status_code=401, detail="Unauthorized access to file")
         try:
             folder_path = (
-                "/" + "/".join(path.strip("/").split("/")[:-1])
-                if len(path.strip("/").split("/")) > 1
+                "/" + "/".join(clean_path.strip("/").split("/")[:-1])
+                if len(clean_path.strip("/").split("/")) > 1
                 else "/"
             )
             folder_res = drive.get_directory(folder_path, is_admin=False, auth=auth)
             if not folder_res:
                 raise HTTPException(status_code=401, detail="Unauthorized access to file")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Unauthorized access check failed for '{path}': {e}")
             raise HTTPException(status_code=401, detail="Unauthorized access to file")
 
     try:
-        file = drive.get_file(path)
+        file = drive.get_file(clean_path)
         return await media_streamer(STORAGE_CHANNEL, file.file_id, file.name, request)
     except Exception as e:
         logger.error(f"Error streaming file '{path}': {e}")
@@ -303,7 +305,16 @@ async def api_get_directory(request: Request):
             folder_data = folder_data[0]
         folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
 
-    return JSONResponse({"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": None})
+    resp = JSONResponse({"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": None})
+    if is_admin and ADMIN_PASSWORD:
+        resp.set_cookie(
+            key="tg_session",
+            value=ADMIN_PASSWORD,
+            httponly=True,
+            samesite="lax",
+            max_age=30 * 86400,
+        )
+    return resp
 
 
 @app.post("/api/moveFileFolder")

@@ -495,7 +495,7 @@ function selectItem(id) {
     const isFolder = item.type === 'folder';
     const rootUrl = getRootUrl();
     const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
-    const directUrl = `${rootUrl}/file?path=${encodeURIComponent(filePath)}`;
+    const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${rootUrl}/file?path=${encodeURIComponent(filePath)}`;
 
     // Build human-readable location path
     let readableLocation = 'My Drive';
@@ -553,9 +553,7 @@ function openFilePreview() {
 
     const fileName = item.name.toLowerCase();
     const path = (item.path + '/' + item.id).replaceAll('//', '/');
-    const rootUrl = getRootUrl();
-    const directUrl = `${rootUrl}/file?path=${encodeURIComponent(path)}`;
-    const streamUrl = `${rootUrl}/stream?url=${encodeURIComponent(directUrl)}`;
+    const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(path) : `${getRootUrl()}/file?path=${encodeURIComponent(path)}`;
 
     const lightbox = document.getElementById('media-preview-modal');
     const title = document.getElementById('preview-filename');
@@ -568,7 +566,7 @@ function openFilePreview() {
     if (holder) {
         holder.innerHTML = '';
         if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi')) {
-            holder.innerHTML = `<video controls autoplay style="max-width: 90vw; max-height: 80vh;"><source src="${streamUrl}" type="video/mp4">Your browser does not support video playback.</video>`;
+            holder.innerHTML = `<video controls autoplay style="max-width: 90vw; max-height: 80vh;"><source src="${directUrl}" type="video/mp4">Your browser does not support video playback.</video>`;
         } else if (fileName.endsWith('.mp3') || fileName.endsWith('.wav') || fileName.endsWith('.ogg') || fileName.endsWith('.flac') || fileName.endsWith('.m4a')) {
             holder.innerHTML = `<audio controls autoplay style="width: 400px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>`;
         } else if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.png') || fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.svg')) {
@@ -788,7 +786,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!SELECTED_ITEM_ID) return;
             const item = DIRECTORY_ITEMS[SELECTED_ITEM_ID];
             if (!item) return;
-            const directUrl = `${getRootUrl()}/file?path=${encodeURIComponent((item.path + '/' + item.id).replaceAll('//', '/'))}`;
+            const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+            const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
             window.open(directUrl, '_blank');
         });
     }

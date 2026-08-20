@@ -58,6 +58,25 @@ function getFolderAuthFromPath() {
     }
 }
 
+function buildFileUrl(filePath, isStream = false) {
+    const rootUrl = getRootUrl();
+    let cleanPath = (filePath || '').replaceAll('//', '/');
+    if (cleanPath.startsWith('/share_')) {
+        cleanPath = '/' + cleanPath.replace('/share_', '');
+    }
+    let url = `${rootUrl}/file?path=${encodeURIComponent(cleanPath)}`;
+
+    const auth = getFolderAuthFromPath();
+    if (auth) {
+        url += `&auth=${encodeURIComponent(auth)}`;
+    }
+
+    if (isStream) {
+        return `${rootUrl}/stream?url=${encodeURIComponent(url)}`;
+    }
+    return url;
+}
+
 // Single Page Application (SPA) smooth router
 function navigateToPath(targetPath, pushState = true) {
     if (!targetPath) targetPath = '/';

@@ -125,20 +125,20 @@ class NewDriveData:
     def get_directory(
         self, path: str, is_admin: bool = True, auth: str = None
     ):
+        clean_path = ("/" + (path or "").replace("/share_", "").replace("share_", "").strip("/")).replace("//", "/")
         folder_data: Folder = self.contents["/"]
         auth_success = False
         auth_home_path = None
 
-        if path and path != "/":
-            clean_path = path.strip("/")
-            if "/" in clean_path:
-                paths = [p for p in clean_path.split("/") if p]
-            else:
-                paths = [clean_path]
+        if auth and hasattr(folder_data, "auth_hashes") and auth in folder_data.auth_hashes:
+            auth_success = True
+            auth_home_path = "/"
 
+        if clean_path and clean_path != "/":
+            paths = [p for p in clean_path.strip("/").split("/") if p]
             for p in paths:
                 if not hasattr(folder_data, "contents") or p not in folder_data.contents:
-                    logger.warning(f"Folder '{p}' not found in '{path}'.")
+                    logger.warning(f"Folder '{p}' not found in '{clean_path}'.")
                     return None
                 folder_data = folder_data.contents[p]
 
@@ -146,36 +146,38 @@ class NewDriveData:
                     auth_success = True
                     auth_home_path = (
                         "/" + folder_data.path.strip("/") + "/" + folder_data.id
-                    )
+                    ).replace("//", "/")
 
         if not is_admin and not auth_success:
-            logger.warning(f"Unauthorized access attempt to path '{path}'.")
+            logger.warning(f"Unauthorized access attempt to path '{clean_path}'.")
             return None
 
         if auth_success:
-            logger.info(f"Authorization successful for path '{path}'.")
+            logger.info(f"Authorization successful for path '{clean_path}'.")
             return folder_data, auth_home_path
 
         return folder_data
 
     def get_folder_auth(self, path: str) -> str:
         auth = getRandomID()
+        clean = ("/" + (path or "").replace("/share_", "").replace("share_", "").strip("/")).replace("//", "/")
         folder_data: Folder = self.contents["/"]
 
-        if path and path != "/":
-            clean_path = path.strip("/")
-            paths = [p for p in clean_path.split("/") if p]
+        if clean and clean != "/":
+            paths = [p for p in clean.strip("/").split("/") if p]
             for p in paths:
                 if hasattr(folder_data, "contents") and p in folder_data.contents:
                     folder_data = folder_data.contents[p]
 
+        if not hasattr(folder_data, "auth_hashes"):
+            folder_data.auth_hashes = []
         folder_data.auth_hashes.append(auth)
         self.save()
-        logger.info(f"Authorization hash generated for path '{path}'.")
+        logger.info(f"Authorization hash generated for path '{clean}'.")
         return auth
 
     def get_file(self, path: str) -> File:
-        clean = path.strip("/")
+        clean = (path or "").replace("/share_", "").replace("share_", "").strip("/")
         if "/" in clean:
             folder_path = "/" + "/".join(clean.split("/")[:-1])
             file_id = clean.split("/")[-1]
@@ -183,9 +185,12 @@ class NewDriveData:
             folder_path = "/"
             file_id = clean
 
-        folder_data = self.get_directory(folder_path)
-        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
-            return folder_data.contents[file_id]
+        folder_data = self.get_directory(folder_path, is_admin=True)
+        if folder_data:
+            if isinstance(folder_data, tuple):
+                folder_data = folder_data[0]
+            if hasattr(folder_data, "contents") and file_id in folder_data.contents:
+                return folder_data.contents[file_id]
         raise KeyError(f"File not found: {path}")
 
     def rename_file_folder(self, path: str, new_name: str) -> None:

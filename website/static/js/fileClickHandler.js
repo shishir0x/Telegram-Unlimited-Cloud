@@ -12,19 +12,10 @@ function openFolder() {
 
 function openFile() {
     const fileName = (this.getAttribute('data-name') || '').toLowerCase();
-    let filePath = this.getAttribute('data-path') + '/' + this.getAttribute('data-id');
-    let path = '/file?path=' + filePath;
-
-    const auth = getFolderAuthFromPath();
-    if (auth) {
-        path += '&auth=' + encodeURIComponent(auth);
-    }
-
-    if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv')) {
-        path = '/stream?url=' + encodeURIComponent(getRootUrl() + path);
-    }
-
-    window.open(path, '_blank');
+    let filePath = (this.getAttribute('data-path') + '/' + this.getAttribute('data-id')).replaceAll('//', '/');
+    const isMedia = fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv');
+    const targetUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath, isMedia) : ('/file?path=' + encodeURIComponent(filePath));
+    window.open(targetUrl, '_blank');
 }
 
 // File More Button Handler Start
@@ -240,24 +231,22 @@ async function shareFile() {
     const fileName = (this.parentElement.getAttribute('data-name') || '').toLowerCase();
     const id = this.getAttribute('id').split('-')[1];
     const moreDiv = document.getElementById(`more-option-${id}`);
-    const path = ((moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id).replaceAll('//', '/');
-    const root_url = getRootUrl();
-    const auth = getFolderAuthFromPath();
+    const filePath = ((moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id).replaceAll('//', '/');
+    let auth = getFolderAuthFromPath();
 
-    let fileUrl = `${root_url}/file?path=${encodeURIComponent(path)}`;
-    if (auth) {
-        fileUrl += `&auth=${encodeURIComponent(auth)}`;
+    if (!auth) {
+        const parentFolderPath = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) || '/';
+        auth = await getFolderShareAuth(parentFolderPath);
     }
 
-    let link;
-    if (fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv')) {
-        link = `${root_url}/stream?url=${encodeURIComponent(fileUrl)}`;
-    } else {
-        link = fileUrl;
+    const isMedia = fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv');
+    let link = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath, isMedia) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
+    if (auth && !link.includes('auth=')) {
+        link += (link.includes('?') ? '&' : '?') + `auth=${encodeURIComponent(auth)}`;
     }
 
     copyTextToClipboard(link);
-    showToast('File link copied to clipboard! 📋');
+    showToast('File share link copied to clipboard! 📋');
 }
 
 async function shareFolder() {
