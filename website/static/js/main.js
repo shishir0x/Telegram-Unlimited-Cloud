@@ -1093,7 +1093,17 @@ function initSyncActivityManager() {
 
         // Render Left Table: ⏳ To Be Uploaded (Queue)
         if (pendingBody) {
-            const pendingList = data.pending_queue || [];
+            let pendingList = data.pending_queue || [];
+            if (pendingList.length === 0 && data.current_item) {
+                pendingList = [
+                    {
+                        name: data.current_item,
+                        path: data.current_path || (data.source ? `/${data.source}/` : '/'),
+                        size: data.current_size || '⚡ Transferring'
+                    }
+                ];
+            }
+
             if (pendingBadge) pendingBadge.innerText = data.remaining_items !== undefined ? data.remaining_items : pendingList.length;
 
             if (pendingList.length > 0) {
@@ -1129,7 +1139,30 @@ function initSyncActivityManager() {
 
         // Render Right Table: ✅ Uploaded to Cloud (History)
         if (completedBody) {
-            const completedList = data.completed_list || [];
+            let completedList = data.completed_list || [];
+            
+            // If empty, parse from live logs array
+            if (completedList.length === 0 && data.logs && data.logs.length > 0) {
+                completedList = [];
+                for (let i = data.logs.length - 1; i >= 0; i--) {
+                    const log = data.logs[i];
+                    const msg = log.msg || '';
+                    if (msg.includes(']: ') && msg.includes(' (')) {
+                        try {
+                            const fpart = msg.split(']: ')[1];
+                            const fname = fpart.substring(0, fpart.lastIndexOf(' (')).trim();
+                            const fsize = fpart.substring(fpart.lastIndexOf(' (') + 2, fpart.lastIndexOf(')')).trim();
+                            completedList.push({
+                                name: fname,
+                                path: data.current_path || (data.source ? `/${data.source}/` : '/'),
+                                size: fsize,
+                                time: log.time || 'Synced'
+                            });
+                        } catch (e) {}
+                    }
+                }
+            }
+
             if (completedBadge) completedBadge.innerText = data.current_index !== undefined ? data.current_index : completedList.length;
 
             if (completedList.length > 0) {
@@ -1144,7 +1177,7 @@ function initSyncActivityManager() {
                             <span class="gd-sync-table-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</span>
                         </td>
                         <td style="text-align: right;">
-                            <span class="gd-sync-status-tag tag-synced">${escapeHtml(item.time || 'Synced')}</span>
+                            <span class="gd-sync-status-tag tag-synced">${escapeHtml(item.size ? item.size + ' • ' + (item.time || '') : (item.time || 'Synced'))}</span>
                         </td>
                     </tr>
                 `).join('');

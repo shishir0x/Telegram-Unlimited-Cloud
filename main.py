@@ -611,6 +611,27 @@ async def getSyncStatus(request: Request):
     if not is_admin_authenticated(request, data=data):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
+    # If completed_list is empty, reconstruct from existing logs
+    if not SYNC_ENGINE_STATUS.get("completed_list") and SYNC_ENGINE_STATUS.get("logs"):
+        reconstructed = []
+        for log in reversed(SYNC_ENGINE_STATUS["logs"]):
+            msg = log.get("msg", "")
+            # e.g. "Streaming [370/7059]: Screenshot 2026-08-13 005059.png (47.83 KB)"
+            if "]: " in msg and " (" in msg:
+                try:
+                    fpart = msg.split("]: ", 1)[1]
+                    fname = fpart.rsplit(" (", 1)[0].strip()
+                    fsize = fpart.rsplit(" (", 1)[1].rstrip(")").strip()
+                    reconstructed.append({
+                        "name": fname,
+                        "path": SYNC_ENGINE_STATUS.get("current_path") or "/OnePlus_Nord_CE4/",
+                        "size": fsize,
+                        "time": log.get("time", "")
+                    })
+                except Exception:
+                    pass
+        SYNC_ENGINE_STATUS["completed_list"] = reconstructed[:100]
+
     return JSONResponse({"status": "ok", "data": SYNC_ENGINE_STATUS})
 
 
@@ -644,12 +665,32 @@ async def updateSyncStatus(request: Request):
 
     log_msg = data.get("log")
     if log_msg:
+        log_time = time.strftime("%H:%M:%S")
         SYNC_ENGINE_STATUS["logs"].append({
-            "time": time.strftime("%H:%M:%S"),
+            "time": log_time,
             "msg": log_msg
         })
-        if len(SYNC_ENGINE_STATUS["logs"]) > 60:
-            SYNC_ENGINE_STATUS["logs"] = SYNC_ENGINE_STATUS["logs"][-60:]
+        if len(SYNC_ENGINE_STATUS["logs"]) > 100:
+            SYNC_ENGINE_STATUS["logs"] = SYNC_ENGINE_STATUS["logs"][-100:]
+
+        # Auto-extract completed file name and size from log message if not explicitly sent
+        if "]: " in log_msg and " (" in log_msg:
+            try:
+                fpart = log_msg.split("]: ", 1)[1]
+                fname = fpart.rsplit(" (", 1)[0].strip()
+                fsize = fpart.rsplit(" (", 1)[1].rstrip(")").strip()
+                # Check if already present at head
+                if not SYNC_ENGINE_STATUS["completed_list"] or SYNC_ENGINE_STATUS["completed_list"][0].get("name") != fname:
+                    SYNC_ENGINE_STATUS["completed_list"].insert(0, {
+                        "name": fname,
+                        "path": SYNC_ENGINE_STATUS.get("current_path") or "/OnePlus_Nord_CE4/",
+                        "size": fsize,
+                        "time": log_time
+                    })
+                    if len(SYNC_ENGINE_STATUS["completed_list"]) > 100:
+                        SYNC_ENGINE_STATUS["completed_list"] = SYNC_ENGINE_STATUS["completed_list"][:100]
+            except Exception:
+                pass
 
     return JSONResponse({"status": "ok"})
 
