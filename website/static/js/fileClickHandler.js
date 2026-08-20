@@ -7,6 +7,9 @@ function openFolder() {
     } else {
         targetPath = (getCurrentPath() + '/' + folderId).replaceAll('//', '/');
     }
+    if (typeof window.hideSyncActivityView === 'function') {
+        window.hideSyncActivityView();
+    }
     navigateToPath(targetPath);
 }
 

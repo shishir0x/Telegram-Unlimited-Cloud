@@ -98,6 +98,11 @@ function navigateToPath(targetPath, pushState = true) {
         window.history.pushState({ path: cleanPath }, '', url.toString());
     }
 
+    // Reset sync view when navigating to folder paths
+    if (typeof window.hideSyncActivityView === 'function') {
+        window.hideSyncActivityView();
+    }
+
     // Update sidebar active highlights immediately
     updateSidebarNavSelection(cleanPath);
 

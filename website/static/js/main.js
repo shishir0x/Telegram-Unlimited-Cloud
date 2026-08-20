@@ -438,11 +438,8 @@ function showDirectory(data, breadcrumbs) {
             el.ondblclick = openFolder;
             el.onclick = function (e) {
                 if (e.target.closest('.more-btn')) return;
-                if (window.innerWidth <= 768) {
-                    openFolder.call(this);
-                } else {
-                    selectItem(this.getAttribute('data-id'));
-                }
+                selectItem(this.getAttribute('data-id'));
+                openFolder.call(this);
             };
 
             // Draggable item
