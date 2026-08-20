@@ -961,6 +961,9 @@ foreach ($item in $targetRoot.GetFolder.Items()) {{
     }}
 }}
 '''
+                folder_name_display = rel_folder if rel_folder else "Root Storage"
+                print(f"\n📂 [{folder_name_display}] Extracting {len(items_in_folder)} file(s) from phone...")
+
                 ps_runner = staging_dir / "extract_folder.ps1"
                 with open(ps_runner, "w", encoding="utf-8") as f:
                     f.write(ps_extract)
