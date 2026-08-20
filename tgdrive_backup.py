@@ -932,7 +932,9 @@ Write-Output "WORKER_READY"
 
 while ($line = [Console]::In.ReadLine()) {{
     if ($line -eq "QUIT") {{ break }}
-    $parts = $line.Split('|')
+    $bytes = [System.Convert]::FromBase64String($line)
+    $decoded = [System.Text.Encoding]::UTF8.GetString($bytes)
+    $parts = $decoded.Split('|')
     $relFolder = $parts[0]
     $fileName = $parts[1]
 
@@ -953,18 +955,17 @@ while ($line = [Console]::In.ReadLine()) {{
         for ($w = 0; $w -lt 40; $w++) {{
             $copied = Get-ChildItem -LiteralPath $destPath -File | Select-Object -First 1
             if ($copied -and $copied.Length -gt 0) {{
-                $len = $copied.Length
-                Write-Output "READY|$fileName|$len"
+                Write-Output ("READY|" + $copied.Length)
                 $found = $true
                 break
             }}
-            Start-Sleep -Milliseconds 150
+            Start-Sleep -Milliseconds 100
         }}
         if (-not $found) {{
-            Write-Output "FAILED|$fileName"
+            Write-Output "FAILED"
         }}
     }} else {{
-        Write-Output "NOT_FOUND|$fileName"
+        Write-Output "NOT_FOUND"
     }}
 }}
 '''
@@ -985,6 +986,7 @@ while ($line = [Console]::In.ReadLine()) {{
         if ready_line != "WORKER_READY":
             print(f"⚠️ Worker init warning: {ready_line}")
 
+        import base64
         uploaded_count = 0
         try:
             for idx, (fname, rel_folder, human_folder) in enumerate(files_to_download, start=1):
@@ -998,8 +1000,10 @@ while ($line = [Console]::In.ReadLine()) {{
                     except Exception:
                         pass
 
-                # Request worker to extract single file
-                proc.stdin.write(f"{rel_folder}|{fname}\n")
+                # Request worker to extract single file with Base64 encoding
+                raw_payload = f"{rel_folder}|{fname}"
+                b64_msg = base64.b64encode(raw_payload.encode('utf-8')).decode('ascii')
+                proc.stdin.write(f"{b64_msg}\n")
                 proc.stdin.flush()
                 resp = proc.stdout.readline().strip()
 
