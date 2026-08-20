@@ -314,6 +314,7 @@ function showDirectory(data, breadcrumbs) {
     gridFilesTitle.style.display = files.length ? 'block' : 'none';
 
     let tableHtml = '';
+    let menusHtml = '';
 
     // 1. Render Folders
     for (const [key, item] of folders) {
@@ -324,19 +325,19 @@ function showDirectory(data, breadcrumbs) {
         // Table Row
         tableHtml += `
             <tr draggable="${!isTrash}" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr">
-                <td>
+                <td class="col-name-td">
                     <div class="td-align file-name-cell">
                         ${badge}
                         <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
                     </div>
                 </td>
-                <td><div class="td-align"><span class="type-pill pill-folder">Folder</span></div></td>
-                <td><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
-                <td><div class="td-align date-text">${dateStr}</div></td>
-                <td><div class="td-align size-text">--</div></td>
-                <td>
+                <td class="col-type-td"><div class="td-align"><span class="type-pill pill-folder">Folder</span></div></td>
+                <td class="col-owner-td"><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
+                <td class="col-date-td"><div class="td-align date-text">${dateStr}</div></td>
+                <td class="col-size-td"><div class="td-align size-text">--</div></td>
+                <td class="col-more-td">
                     <div class="td-align td-actions">
-                        <a data-id="${item.id}" class="more-btn"><img src="static/assets/more-icon.svg"></a>
+                        <a data-id="${item.id}" class="more-btn" title="More actions"><img src="static/assets/more-icon.svg"></a>
                     </div>
                 </td>
             </tr>
@@ -354,15 +355,15 @@ function showDirectory(data, breadcrumbs) {
                 <img class="item-icon-img" src="static/assets/folder-solid-icon.svg">
                 <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
             </div>
-            <a data-id="${item.id}" class="more-btn"><img src="static/assets/more-icon.svg"></a>
+            <a data-id="${item.id}" class="more-btn" title="More actions"><img src="static/assets/more-icon.svg"></a>
         `;
         gridFolders.appendChild(folderChip);
 
         // Context / More Menus
         if (isTrash) {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -377,19 +378,19 @@ function showDirectory(data, breadcrumbs) {
         // Table Row
         tableHtml += `
             <tr draggable="${!isTrash}" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr">
-                <td>
+                <td class="col-name-td">
                     <div class="td-align file-name-cell">
                         ${badge}
                         <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
                     </div>
                 </td>
-                <td><div class="td-align"><span class="type-pill">${category}</span></div></td>
-                <td><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
-                <td><div class="td-align date-text">${dateStr}</div></td>
-                <td><div class="td-align size-text">${size}</div></td>
-                <td>
+                <td class="col-type-td"><div class="td-align"><span class="type-pill">${category}</span></div></td>
+                <td class="col-owner-td"><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
+                <td class="col-date-td"><div class="td-align date-text">${dateStr}</div></td>
+                <td class="col-size-td"><div class="td-align size-text">${size}</div></td>
+                <td class="col-more-td">
                     <div class="td-align td-actions">
-                        <a data-id="${item.id}" class="more-btn"><img src="static/assets/more-icon.svg"></a>
+                        <a data-id="${item.id}" class="more-btn" title="More actions"><img src="static/assets/more-icon.svg"></a>
                     </div>
                 </td>
             </tr>
@@ -418,13 +419,15 @@ function showDirectory(data, breadcrumbs) {
 
         // Context / More Menus
         if (isTrash) {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            tableHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> File details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
     tableBody.innerHTML = tableHtml;
+    const ctxContainer = document.getElementById('context-menus-container');
+    if (ctxContainer) ctxContainer.innerHTML = menusHtml;
 
     // Attach Click and Double Click & Drag Events
     if (!isTrash) {

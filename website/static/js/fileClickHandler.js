@@ -204,6 +204,14 @@ function openMobileBottomSheet(id) {
     bs.classList.add('active');
 }
 
+function closeAllMoreMenus() {
+    document.querySelectorAll('.more-options').forEach(el => {
+        el.style.opacity = '0';
+        el.style.pointerEvents = 'none';
+        el.style.zIndex = '-1';
+    });
+}
+
 function openMoreButton(div) {
     const id = div.getAttribute('data-id');
     if (window.innerWidth <= 768) {
@@ -211,31 +219,51 @@ function openMoreButton(div) {
         return;
     }
 
+    closeAllMoreMenus();
+
     const moreDiv = document.getElementById(`more-option-${id}`);
     if (!moreDiv) return;
 
     const rect = div.getBoundingClientRect();
-    const x = Math.min(rect.left + window.scrollX - 120, window.innerWidth - 220);
-    const y = rect.top + window.scrollY + 20;
+    const menuWidth = 200;
+    const x = Math.max(10, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12));
+    let y = rect.bottom + 4;
+    if (y + 240 > window.innerHeight) {
+        y = Math.max(10, rect.top - 240);
+    }
 
-    moreDiv.style.zIndex = 200;
-    moreDiv.style.opacity = 1;
+    moreDiv.style.position = 'fixed';
     moreDiv.style.left = `${x}px`;
     moreDiv.style.top = `${y}px`;
+    moreDiv.style.zIndex = '1000';
+    moreDiv.style.opacity = '1';
+    moreDiv.style.pointerEvents = 'auto';
 
     const isTrash = getCurrentPath().includes('/trash');
 
     const focusInput = moreDiv.querySelector('.more-options-focus');
     if (focusInput) {
         focusInput.focus();
-        focusInput.addEventListener('blur', closeMoreBtnFocus);
-        focusInput.addEventListener('focusout', closeMoreBtnFocus);
+        focusInput.addEventListener('blur', () => {
+            setTimeout(() => closeMoreMenu(moreDiv), 180);
+        }, { once: true });
     }
+
+    const onDocClick = (e) => {
+        if (!moreDiv.contains(e.target) && !div.contains(e.target)) {
+            closeMoreMenu(moreDiv);
+            document.removeEventListener('click', onDocClick);
+        }
+    };
+    setTimeout(() => {
+        document.addEventListener('click', onDocClick);
+    }, 10);
 
     if (!isTrash) {
         const previewOpt = moreDiv.querySelector(`#preview-opt-${id}`);
         if (previewOpt) {
-            previewOpt.onclick = () => {
+            previewOpt.onclick = (e) => {
+                e.stopPropagation();
                 closeMoreMenu(moreDiv);
                 if (typeof openFilePreview === 'function') {
                     openFilePreview.call({ getAttribute: () => id });
@@ -245,7 +273,8 @@ function openMoreButton(div) {
 
         const detailsOpt = moreDiv.querySelector(`#details-opt-${id}`);
         if (detailsOpt) {
-            detailsOpt.onclick = () => {
+            detailsOpt.onclick = (e) => {
+                e.stopPropagation();
                 closeMoreMenu(moreDiv);
                 selectItem(id);
                 const inspector = document.getElementById('gd-inspector');
@@ -254,22 +283,22 @@ function openMoreButton(div) {
         }
 
         const renameBtn = moreDiv.querySelector(`#rename-${id}`);
-        if (renameBtn) renameBtn.onclick = renameFileFolder;
+        if (renameBtn) renameBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); renameFileFolder.call(renameBtn); };
 
         const trashBtn = moreDiv.querySelector(`#trash-${id}`);
-        if (trashBtn) trashBtn.onclick = trashFileFolder;
+        if (trashBtn) trashBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); trashFileFolder.call(trashBtn); };
 
         const shareBtn = moreDiv.querySelector(`#share-${id}`);
-        if (shareBtn) shareBtn.onclick = shareFile;
+        if (shareBtn) shareBtn.onclick = (e) => { e.stopPropagation(); shareFile.call(shareBtn); };
 
         const folderShareBtn = moreDiv.querySelector(`#folder-share-${id}`);
-        if (folderShareBtn) folderShareBtn.onclick = shareFolder;
+        if (folderShareBtn) folderShareBtn.onclick = (e) => { e.stopPropagation(); shareFolder.call(folderShareBtn); };
     } else {
         const restoreBtn = moreDiv.querySelector(`#restore-${id}`);
-        if (restoreBtn) restoreBtn.onclick = restoreFileFolder;
+        if (restoreBtn) restoreBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); restoreFileFolder.call(restoreBtn); };
 
         const delBtn = moreDiv.querySelector(`#delete-${id}`);
-        if (delBtn) delBtn.onclick = deleteFileFolder;
+        if (delBtn) delBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); deleteFileFolder.call(delBtn); };
     }
 }
 

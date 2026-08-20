@@ -558,10 +558,16 @@ body {
 /* Table / List View                                         */
 /* ========================================================= */
 
+.gd-table-container {
+    width: 100%;
+    overflow-x: auto;
+}
+
 .gd-drive-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.88rem;
+    table-layout: fixed;
 }
 
 .gd-drive-table thead tr th {
@@ -572,14 +578,15 @@ body {
     color: var(--gd-text-secondary);
     border-bottom: 1px solid var(--gd-border);
     user-select: none;
+    white-space: nowrap;
 }
 
-.gd-drive-table .col-name { width: 42%; }
+.gd-drive-table .col-name { width: 44%; }
 .gd-drive-table .col-type { width: 14%; }
 .gd-drive-table .col-owner { width: 12%; }
-.gd-drive-table .col-date { width: 16%; }
+.gd-drive-table .col-date { width: 15%; }
 .gd-drive-table .col-size { width: 10%; }
-.gd-drive-table .col-more { width: 6%; text-align: right; }
+.gd-drive-table .col-more { width: 5%; text-align: right; }
 
 .gd-drive-table tbody tr {
     height: 48px;
@@ -601,6 +608,9 @@ body {
     padding: 0 12px;
     vertical-align: middle;
     color: var(--gd-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .td-align {
@@ -1131,17 +1141,19 @@ body {
     margin-top: 8px;
 }
 
-/* More Options Menu */
+/* More Options Menu (Desktop) */
 .more-options {
-    position: absolute;
+    position: fixed;
     background-color: var(--gd-surface);
     border-radius: var(--gd-radius-md);
-    box-shadow: var(--gd-shadow-lg);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.16), 0 1px 4px rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--gd-border);
     padding: 6px 0;
     width: 200px;
     z-index: -1;
     opacity: 0;
-    transition: opacity 0.15s;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
     user-select: none;
 }
 
@@ -1782,6 +1794,17 @@ body {
     .gd-drive-table tbody {
         display: block;
         width: 100%;
+    }
+
+    .gd-drive-table tbody tr:not(.body-tr) {
+        display: block;
+        width: 100%;
+    }
+
+    .gd-drive-table tbody tr:not(.body-tr) td {
+        display: block;
+        width: 100%;
+        padding: 40px 10px !important;
     }
 
     .file-tr, .folder-tr {
