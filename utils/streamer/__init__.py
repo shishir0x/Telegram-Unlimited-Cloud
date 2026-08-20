@@ -44,7 +44,7 @@ async def media_streamer(channel: int, message_id: int, file_name: str, request)
             headers={"Content-Range": f"bytes */{file_size}"},
         )
 
-    chunk_size = 1024 * 1024
+    chunk_size = 512 * 1024
     until_bytes = min(until_bytes, file_size - 1)
 
     offset = from_bytes - (from_bytes % chunk_size)

@@ -154,13 +154,36 @@ class ByteStreamer:
         location = await self.get_location(file_id)
 
         try:
-            r = await media_session.invoke(
-                raw.functions.upload.GetFile(
-                    location=location, offset=offset, limit=chunk_size
-                ),
-            )
-            if isinstance(r, raw.types.upload.File):
-                while True:
+            while current_part <= part_count:
+                try:
+                    r = await asyncio.wait_for(
+                        media_session.invoke(
+                            raw.functions.upload.GetFile(
+                                location=location, offset=offset, limit=chunk_size
+                            )
+                        ),
+                        timeout=20.0,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"GetFile timeout/error on DC {file_id.dc_id}: {e}. Reconnecting media session..."
+                    )
+                    client.media_sessions.pop(file_id.dc_id, None)
+                    try:
+                        await media_session.stop()
+                    except Exception:
+                        pass
+                    media_session = await self.generate_media_session(client, file_id)
+                    r = await asyncio.wait_for(
+                        media_session.invoke(
+                            raw.functions.upload.GetFile(
+                                location=location, offset=offset, limit=chunk_size
+                            )
+                        ),
+                        timeout=25.0,
+                    )
+
+                if isinstance(r, raw.types.upload.File):
                     chunk = r.bytes
                     if not chunk:
                         break
@@ -175,17 +198,13 @@ class ByteStreamer:
 
                     current_part += 1
                     offset += chunk_size
-
-                    if current_part > part_count:
-                        break
-
-                    r = await media_session.invoke(
-                        raw.functions.upload.GetFile(
-                            location=location, offset=offset, limit=chunk_size
-                        ),
-                    )
-        except (TimeoutError, AttributeError):
+                else:
+                    break
+        except (asyncio.CancelledError, GeneratorExit):
             pass
+        except Exception as e:
+            logger.error(f"Error streaming file chunks: {e}")
+            client.media_sessions.pop(file_id.dc_id, None)
         finally:
             logger.debug(f"Finished yielding file with {current_part} parts.")
 
