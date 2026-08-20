@@ -28,8 +28,12 @@ import shutil
 import argparse
 import tempfile
 import requests
+from dotenv import load_dotenv
 from pathlib import Path
 from typing import List, Dict, Set, Tuple, Optional
+
+# Load environment variables from .env
+load_dotenv()
 
 # System directories to ignore
 IGNORED_DIRS = {
@@ -628,17 +632,26 @@ function Extract-MTP($item, $relPath) {{
 
 Extract-MTP $targetRoot $subPath
 '''
+        ps_file = staging_dir / "extract.ps1"
+        with open(ps_file, "w", encoding="utf-8") as f:
+            f.write(ps_script)
+
         print("⏳ Extracting files from connected phone via USB...")
         try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_script],
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_file)],
                 capture_output=True,
                 text=True,
                 check=True
             )
         except Exception as e:
             print(f"❌ Error communicating with phone: {e}")
+            if hasattr(e, 'stderr') and e.stderr:
+                print(f"   Details: {e.stderr}")
             return
+        finally:
+            if ps_file.exists():
+                ps_file.unlink(missing_ok=True)
 
         staged_files = []
         for root, _, files in os.walk(staging_dir):
@@ -757,6 +770,9 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
 
 
 def main():
+    default_pwd = os.getenv("ADMIN_PASSWORD", "admin")
+    default_url = os.getenv("WEBSITE_URL") or "http://127.0.0.1:8000"
+
     parser = argparse.ArgumentParser(
         description="Universal TGDrive Backup Manager (Git-Style Diff Sync)."
     )
@@ -770,15 +786,15 @@ def main():
         "--url",
         "-u",
         type=str,
-        default="http://127.0.0.1:8000",
-        help="TGDrive instance URL (default: http://127.0.0.1:8000 or https://telegram-unlimited-cloud.onrender.com)",
+        default=default_url,
+        help=f"TGDrive instance URL (default: {default_url})",
     )
     parser.add_argument(
         "--password",
         "-p",
         type=str,
-        default="admin",
-        help="TGDrive admin password",
+        default=default_pwd,
+        help="TGDrive admin password (auto-loaded from .env)",
     )
     parser.add_argument(
         "--dest",
