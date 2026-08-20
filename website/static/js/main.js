@@ -895,6 +895,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupDragAndDrop();
     applyViewMode(CURRENT_VIEW_MODE);
+    initSyncActivityManager();
 
     // Initial Auth / Fetch
     const initialPath = getCurrentPath();
@@ -911,3 +912,116 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 });
+
+// ==========================================
+// Live Sync Manager Telemetry & Activity UI
+// ==========================================
+
+function initSyncActivityManager() {
+    const syncPill = document.getElementById('gd-sync-status-pill');
+    const syncPillText = document.getElementById('sync-pill-text');
+    const navSyncActivity = document.getElementById('nav-sync-activity');
+    const modalBackdrop = document.getElementById('sync-modal-backdrop');
+    const syncModal = document.getElementById('sync-activity-modal');
+    const modalClose = document.getElementById('sync-modal-close');
+
+    function openSyncModal() {
+        if (modalBackdrop && syncModal) {
+            modalBackdrop.style.zIndex = '550';
+            modalBackdrop.style.opacity = '1';
+            syncModal.style.zIndex = '551';
+            syncModal.style.opacity = '1';
+        }
+    }
+
+    function closeSyncModal() {
+        if (modalBackdrop && syncModal) {
+            modalBackdrop.style.zIndex = '-1';
+            modalBackdrop.style.opacity = '0';
+            syncModal.style.zIndex = '-1';
+            syncModal.style.opacity = '0';
+        }
+    }
+
+    if (syncPill) syncPill.addEventListener('click', openSyncModal);
+    if (navSyncActivity) navSyncActivity.addEventListener('click', (e) => { e.preventDefault(); openSyncModal(); });
+    if (modalClose) modalClose.addEventListener('click', closeSyncModal);
+    if (modalBackdrop) modalBackdrop.addEventListener('click', closeSyncModal);
+
+    async function pollSyncStatus() {
+        try {
+            const pwd = getPassword();
+            if (!pwd) return;
+            const res = await fetch('/api/getSyncStatus', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pwd })
+            });
+            if (res.ok) {
+                const json = await res.json();
+                if (json.status === 'ok' && json.data) {
+                    renderSyncStatus(json.data);
+                }
+            }
+        } catch (e) {
+            // Ignore background polling errors
+        }
+    }
+
+    function renderSyncStatus(data) {
+        const state = data.state || 'idle';
+        const isBusy = (state === 'scanning' || state === 'syncing_folders' || state === 'syncing_files');
+
+        // Update Pill in header
+        if (syncPill && syncPillText) {
+            if (isBusy) {
+                syncPill.classList.add('active');
+                if (state === 'syncing_folders') {
+                    syncPillText.innerText = `Sync: Folders (${data.folders_created || 0}/${data.folders_total || 0})`;
+                } else if (state === 'syncing_files') {
+                    syncPillText.innerText = `Syncing: ${data.current_index || 0}/${data.total_items || 0}`;
+                } else {
+                    syncPillText.innerText = 'Sync: Scanning...';
+                }
+            } else {
+                syncPill.classList.remove('active');
+                syncPillText.innerText = (state === 'completed') ? 'Sync: Complete' : 'Sync: Idle';
+            }
+        }
+
+        // Update Modal elements
+        const uiState = document.getElementById('sync-ui-state');
+        const uiSource = document.getElementById('sync-ui-source');
+        const uiCurrent = document.getElementById('sync-ui-current');
+        const uiFill = document.getElementById('sync-ui-fill');
+        const uiCounts = document.getElementById('sync-ui-counts');
+        const uiSpeed = document.getElementById('sync-ui-speed');
+        const uiLogs = document.getElementById('sync-ui-logs');
+
+        if (uiState) uiState.innerText = state.replace('_', ' ').toUpperCase();
+        if (uiSource && data.source) uiSource.innerText = data.source;
+        if (uiCurrent) uiCurrent.innerText = data.current_item || (isBusy ? 'Processing...' : '--');
+
+        let pct = 0;
+        if (state === 'syncing_folders' && data.folders_total > 0) {
+            pct = Math.round((data.folders_created / data.folders_total) * 100);
+            if (uiCounts) uiCounts.innerText = `${data.folders_created} / ${data.folders_total} folders`;
+        } else if (state === 'syncing_files' && data.total_items > 0) {
+            pct = Math.round((data.current_index / data.total_items) * 100);
+            if (uiCounts) uiCounts.innerText = `${data.current_index} / ${data.total_items} files (${data.remaining_items || 0} remaining)`;
+        } else if (state === 'completed') {
+            pct = 100;
+            if (uiCounts) uiCounts.innerText = `${data.files_uploaded || 0} uploaded, ${data.files_skipped || 0} skipped`;
+        }
+        if (uiFill) uiFill.style.width = `${pct}%`;
+        if (uiSpeed) uiSpeed.innerText = data.speed_str || (isBusy ? 'Transferring...' : '0.00 B/s');
+
+        if (uiLogs && data.logs && data.logs.length > 0) {
+            uiLogs.innerHTML = data.logs.map(l => `<div class="gd-sync-log-entry"><span class="log-time">[${l.time}]</span> ${l.msg}</div>`).join('');
+            uiLogs.scrollTop = uiLogs.scrollHeight;
+        }
+    }
+
+    setInterval(pollSyncStatus, 2500);
+}
+

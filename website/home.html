@@ -46,6 +46,10 @@
         </div>
 
         <div class="gd-header-right">
+            <button class="gd-sync-pill" id="gd-sync-status-pill" title="View Real-Time Sync Activity">
+                <span class="gd-sync-indicator-dot" id="sync-dot"></span>
+                <span id="sync-pill-text">Sync: Idle</span>
+            </button>
             <div class="gd-status-pill" title="Telegram Cloud Backend Connected">
                 <span class="gd-status-dot"></span>
                 <span>Cloud Online</span>
@@ -104,6 +108,10 @@
                 <a href="/?path=/" id="nav-computers" class="gd-nav-item unselected-item">
                     <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>
                     <span>Computers & Phones</span>
+                </a>
+                <a href="#" id="nav-sync-activity" class="gd-nav-item unselected-item">
+                    <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                    <span>Sync Activity</span>
                 </a>
                 <div class="gd-nav-divider"></div>
                 <a href="/?path=/trash" id="nav-trash" class="gd-nav-item unselected-item">
@@ -413,12 +421,54 @@
         <div class="gd-bottom-sheet-actions" id="bs-actions"></div>
     </div>
 
+    <!-- Sync Activity Modal -->
+    <div class="gd-modal-backdrop" id="sync-modal-backdrop"></div>
+    <div class="gd-modal" id="sync-activity-modal">
+        <div class="gd-modal-header">
+            <div class="gd-sync-modal-title">
+                <svg viewBox="0 0 24 24" class="gd-modal-svg"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                <span>Live Sync Activity</span>
+            </div>
+            <button class="gd-icon-btn" id="sync-modal-close">&times;</button>
+        </div>
+        <div class="gd-modal-body">
+            <div class="gd-sync-card">
+                <div class="gd-sync-card-row">
+                    <span class="gd-sync-label">Sync Status</span>
+                    <span class="gd-sync-val-badge" id="sync-ui-state">Idle</span>
+                </div>
+                <div class="gd-sync-card-row">
+                    <span class="gd-sync-label">Target / Source</span>
+                    <span class="gd-sync-val" id="sync-ui-source">Ready for sync</span>
+                </div>
+                <div class="gd-sync-card-row">
+                    <span class="gd-sync-label">Active Item</span>
+                    <span class="gd-sync-val font-mono" id="sync-ui-current">--</span>
+                </div>
+                <div class="gd-sync-progress-wrap">
+                    <div class="gd-sync-progress-bar">
+                        <div class="gd-sync-progress-fill" id="sync-ui-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="gd-sync-progress-info">
+                        <span id="sync-ui-counts">0 / 0 files</span>
+                        <span id="sync-ui-speed">0.00 B/s</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="gd-sync-logs-header">Live Telemetry Logs</div>
+            <div class="gd-sync-logs-box" id="sync-ui-logs">
+                <div class="gd-sync-log-entry"><span class="log-time">--:--:--</span> Waiting for backup engine connection...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
-    <script src="static/js/extra.js?v=2.1"></script>
-    <script src="static/js/apiHandler.js?v=2.1"></script>
-    <script src="static/js/sidebar.js?v=2.1"></script>
-    <script src="static/js/fileClickHandler.js?v=2.1"></script>
-    <script src="static/js/main.js?v=2.1"></script>
+    <script src="static/js/extra.js?v=2.2"></script>
+    <script src="static/js/apiHandler.js?v=2.2"></script>
+    <script src="static/js/sidebar.js?v=2.2"></script>
+    <script src="static/js/fileClickHandler.js?v=2.2"></script>
+    <script src="static/js/main.js?v=2.2"></script>
 </body>
 
 </html>

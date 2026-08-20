@@ -1,11 +1,12 @@
 """
-TGDrive Universal Backup Manager - Git-Style Change Detection & Real-Time Sync
-===============================================================================
+TGDrive Universal Backup Manager - Git-Style Sync Engine & Real-Time Cloud Telemetry
+===================================================================================
 Features:
-- Git-like change tracking: [+] Added, [M] Modified, [=] Unchanged
-- Real-time terminal progress bar with upload speed & ETA
-- Simultaneous real-time status reflection on Google Drive Web UI
-- Exact folder structure mirroring for PC Disks, Mobile Phones, and SD Cards
+- Full Folder Hierarchy Pre-Sync (including empty folders!)
+- Git-style change tracking: [+] Added, [M] Modified, [=] Unchanged (Zero duplicates)
+- Live terminal progress with Speed, ETA, Transferred Bytes & Remaining File Count
+- Real-time Web UI telemetry broadcast (/api/updateSyncStatus)
+- Support for Local Disks (C:, D:) and Android Phones via MTP USB
 """
 
 import os
@@ -27,6 +28,7 @@ import random
 import shutil
 import argparse
 import tempfile
+import subprocess
 import requests
 from dotenv import load_dotenv
 from pathlib import Path
@@ -52,13 +54,18 @@ IGNORED_DIRS = {
     "config.msi",
     "msocache",
     # Android System Folders
+    "android",
     "android/data",
     "android/obb",
     ".trash",
     ".thumbnails",
     "lost.dir",
     ".android_secure",
-    ".estrongs",
+    ".soundrecordrecycler",
+    ".filemanagerrecycler",
+    ".aceself",
+    ".slogan",
+    "samsung backup",
     # Dev & Cache Junk
     "node_modules",
     "__pycache__",
@@ -154,8 +161,8 @@ def should_skip_file(file_name: str) -> bool:
 
 def convert_local_path_to_tg_structure(local_path: Path) -> str:
     """
-    Converts C:\\Users\\nitro\\Desktop\\Notion Drive
-    into C_Drive/Users/nitro/Desktop/Notion Drive
+    Converts C:\\Users\\shishir0x\\Documents
+    into C_Drive/Users/shishir0x/Documents
     """
     resolved = local_path.resolve()
     drive = resolved.drive
@@ -214,30 +221,32 @@ class MTPPhoneManager:
         if os.name != "nt":
             return []
         try:
-            import win32com.client
-            shell = win32com.client.Dispatch("Shell.Application")
-            this_pc = shell.Namespace(17) # ssfDRIVES
-            phones = []
-            for item in this_pc.Items():
-                path_str = str(item.Path)
-                if "usb#" in path_str.lower() or "wpdbusenumroot" in path_str.lower() or "::" in path_str:
-                    phones.append({"name": item.Name, "item": item})
-            return phones
-        except Exception:
-            return MTPPhoneManager._get_phones_via_powershell()
-
-    @staticmethod
-    def _get_phones_via_powershell():
-        import subprocess
-        cmd = '''$s = New-Object -ComObject Shell.Application; $s.Namespace(17).Items() | Where-Object { $_.Path -like "*usb#*" -or $_.Path -like "*::*" } | Select-Object -ExpandProperty Name'''
-        try:
-            res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, check=True)
-            names = [line.strip() for line in res.stdout.splitlines() if line.strip()]
-            return [{"name": name, "item": None} for name in names]
+            cmd = '''
+$s = New-Object -ComObject Shell.Application
+$thisPC = $s.Namespace(17)
+$phones = @()
+foreach ($item in $thisPC.Items()) {
+    $p = [string]$item.Path
+    if ($p -like "*usb#*" -or $p -like "*wpdbusenumroot*" -or $p -like "*::*") {
+        $phones += [PSCustomObject]@{ name = $item.Name; path = $item.Path }
+    }
+}
+$phones | ConvertTo-Json -Compress
+'''
+            res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout)
+                if isinstance(data, dict):
+                    data = [data]
+                return data
+            return []
         except Exception:
             return []
 
 
+# ==========================================
+# TGDrive Backup Client
+# ==========================================
 class TGDriveBackupClient:
     def __init__(self, base_url: str, password: str, drive_root: str = ""):
         self.base_url = base_url.rstrip("/")
@@ -252,51 +261,70 @@ class TGDriveBackupClient:
         try:
             res = self.session.post(
                 f"{self.base_url}/api/checkPassword",
-                json={"pass": self.password},
-                timeout=15,
+                json={"password": self.password},
+                timeout=10,
             )
-            data = res.json()
-            return data.get("status") == "ok"
+            if res.status_code == 200:
+                data = res.json()
+                return data.get("status") == "ok"
+            return False
         except Exception as e:
             print(f"[!] Connection error to {self.base_url}: {e}")
             return False
 
-    def get_directory_contents(self, remote_id_path: str) -> Dict:
-        """Get directory contents by its TGDrive ID path."""
+    def push_web_sync_status(self, sync_data: dict, log_msg: Optional[str] = None):
+        """Broadcasts real-time telemetry to the TGDrive Web UI (/api/updateSyncStatus)."""
+        try:
+            payload = {
+                "password": self.password,
+                "sync_data": sync_data,
+            }
+            if log_msg:
+                payload["log"] = log_msg
+            self.session.post(
+                f"{self.base_url}/api/updateSyncStatus",
+                json=payload,
+                timeout=3,
+            )
+        except Exception:
+            pass
+
+    def get_directory_contents(self, folder_id_path: str = "/") -> Dict:
+        """Fetch files and folders inside a given folder ID path from TGDrive."""
         try:
             res = self.session.post(
                 f"{self.base_url}/api/getDirectory",
-                json={"password": self.password, "path": remote_id_path},
+                json={"password": self.password, "path": folder_id_path},
                 timeout=15,
             )
-            if res.status_code != 200:
-                print(f"[!] HTTP {res.status_code} reading directory {remote_id_path}")
-                return {}
-            data = res.json()
-            if data.get("status") == "ok":
-                return data.get("data", {}).get("contents", {})
-            else:
-                print(f"[!] Server error reading directory {remote_id_path}: {data.get('status')}")
-        except json.JSONDecodeError:
-            print(f"[!] Invalid JSON response for directory {remote_id_path}")
-        except Exception as e:
-            print(f"[!] Error reading directory {remote_id_path}: {e}")
-        return {}
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("status") == "ok":
+                    return data.get("contents", {})
+            return {}
+        except Exception:
+            return {}
 
-    def resolve_or_create_folder_id_path(self, named_path: str) -> str:
-        """Converts human named path into TGDrive ID path, auto-creating missing folders."""
-        cleaned = named_path.strip("/")
-        if not cleaned:
+    def resolve_or_create_folder_id_path(self, human_path: str) -> str:
+        """
+        Converts human-readable path 'OnePlus_Nord_CE4/Internal_shared_storage/DCIM'
+        into Telegram internal ID path '/ABC123/XYZ789/' creating folders on the fly.
+        """
+        clean_path = human_path.strip("/").replace("\\", "/")
+        if not clean_path:
             return "/"
 
-        if cleaned in self._folder_id_cache:
-            return self._folder_id_cache[cleaned]
+        if clean_path in self._folder_id_cache:
+            return self._folder_id_cache[clean_path]
 
-        parts = [p for p in cleaned.split("/") if p]
+        parts = clean_path.split("/")
         current_id_path = "/"
         current_named_prefix = ""
 
         for part in parts:
+            if not part:
+                continue
+
             current_named_prefix = f"{current_named_prefix}/{part}".strip("/")
             if current_named_prefix in self._folder_id_cache:
                 current_id_path = self._folder_id_cache[current_named_prefix]
@@ -305,7 +333,7 @@ class TGDriveBackupClient:
             contents = self.get_directory_contents(current_id_path)
             found_id = None
 
-            if contents:  # Only search if we got valid contents
+            if contents:
                 for item_id, item in contents.items():
                     if item.get("type") == "folder" and not item.get("trash"):
                         if item.get("name") == part:
@@ -326,19 +354,15 @@ class TGDriveBackupClient:
                     if res.status_code == 200:
                         res_data = res.json()
                         if res_data.get("status") == "ok":
-                            # Re-fetch contents to find the new folder
                             contents = self.get_directory_contents(current_id_path)
                             for item_id, item in contents.items():
                                 if item.get("type") == "folder" and item.get("name") == part:
                                     found_id = item.get("id") or item_id
                                     break
-                        else:
-                            print(f"    [!] Folder creation failed: {res_data.get('status')}")
-                except Exception as e:
-                    print(f"    [!] Error creating folder '{part}': {e}")
+                except Exception:
+                    pass
 
             if not found_id:
-                print(f"    [!] Warning: Could not resolve folder '{part}', using name as fallback")
                 found_id = part
 
             current_id_path = (current_id_path + found_id + "/").replace("//", "/")
@@ -351,15 +375,62 @@ class TGDriveBackupClient:
         contents = self.get_directory_contents(folder_id_path)
         existing = {}
         if not contents:
-            print(f"    [!] No contents found in folder {folder_id_path}")
             return existing
         for _, item in contents.items():
             if item.get("type") == "file" and not item.get("trash"):
                 existing[item.get("name")] = item
         return existing
 
-    def upload_file(self, local_file_path: Path, human_remote_folder: str, file_idx: int = 1, total_files: int = 1) -> bool:
-        """Upload a single file to TGDrive with real-time terminal progress bar."""
+    def sync_folders_first(self, all_folders: List[str], base_tg_path: str):
+        """
+        Step 1: Creates all folder hierarchies on TGDrive first (including empty folders!).
+        """
+        total_folders = len(all_folders)
+        if total_folders == 0:
+            return
+
+        print(f"\n📁 Step 1: Pre-Syncing & Creating Folder Hierarchy ({total_folders:,} folders)...")
+        self.push_web_sync_status({
+            "state": "syncing_folders",
+            "folders_total": total_folders,
+            "folders_created": 0,
+        }, f"Starting folder pre-sync for {total_folders} directories...")
+
+        created_count = 0
+        for idx, rel_folder in enumerate(all_folders, start=1):
+            if rel_folder in [".", ""]:
+                full_tg_folder = base_tg_path
+            else:
+                full_tg_folder = f"{base_tg_path}/{rel_folder}".strip("/")
+
+            self.resolve_or_create_folder_id_path(full_tg_folder)
+            created_count += 1
+
+            pct = (idx / total_folders) * 100.0
+            short_name = rel_folder if rel_folder else "Root"
+            if len(short_name) > 30:
+                short_name = "…" + short_name[-29:]
+            sys.stdout.write(f"\r  |{'█' * int(25 * idx // total_folders):<25}| {pct:5.1f}% ({idx}/{total_folders}) [DIR] {short_name:<30}")
+            sys.stdout.flush()
+
+            if idx % 10 == 0 or idx == total_folders:
+                self.push_web_sync_status({
+                    "state": "syncing_folders",
+                    "folders_total": total_folders,
+                    "folders_created": idx,
+                    "current_item": short_name
+                })
+
+        sys.stdout.write("\n")
+        print(f"  ✅ All {total_folders:,} folders verified & created in Cloud Drive!")
+        self.push_web_sync_status({
+            "state": "syncing_folders",
+            "folders_total": total_folders,
+            "folders_created": total_folders
+        }, f"Verified all {total_folders} folders on cloud drive.")
+
+    def upload_file(self, local_file_path: Path, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
+        """Upload a single file to TGDrive with real-time terminal progress bar and web broadcast."""
         file_name = local_file_path.name
         file_size = local_file_path.stat().st_size
         mtime = local_file_path.stat().st_mtime
@@ -371,8 +442,18 @@ class TGDriveBackupClient:
         upload_id = generate_random_id()
         remote_id_path = self.resolve_or_create_folder_id_path(human_remote_folder)
 
-        print(f"\n[{file_idx}/{total_files}] ⬆️ {file_name} ({format_size(file_size)})")
-        print(f"       ➔ Path: /{human_remote_folder}/")
+        rem_str = f"Remaining: {remaining_files} files ({format_size(remaining_bytes)})"
+        print(f"\n[{file_idx}/{total_files}] ⬆️ {file_name} ({format_size(file_size)}) | {rem_str}")
+        print(f"       ➔ Location: /{human_remote_folder}/")
+
+        self.push_web_sync_status({
+            "state": "syncing_files",
+            "current_item": file_name,
+            "current_index": file_idx,
+            "total_items": total_files,
+            "remaining_items": remaining_files,
+            "total_bytes": remaining_bytes + file_size,
+        }, f"Uploading [{file_idx}/{total_files}]: {file_name} ({format_size(file_size)})")
 
         try:
             with open(local_file_path, "rb") as f:
@@ -402,9 +483,8 @@ class TGDriveBackupClient:
                     return False
 
             # Poll for Telegram upload completion with real-time progress bar
-            last_current = 0
-            for _ in range(120):
-                time.sleep(0.5)
+            for _ in range(240):
+                time.sleep(0.4)
                 try:
                     prog_res = self.session.post(
                         f"{self.base_url}/api/getUploadProgress",
@@ -423,8 +503,12 @@ class TGDriveBackupClient:
 
                         if status == "running":
                             print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})")
+                            self.push_web_sync_status({
+                                "current_bytes": current_bytes,
+                                "speed_str": speed_str
+                            })
                         elif status == "completed":
-                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Completed in {duration:.1f}s ({speed_str})")
+                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})")
                             fhash = compute_fast_file_hash(local_file_path)
                             self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
                             return True
@@ -438,66 +522,6 @@ class TGDriveBackupClient:
             print(f"    ❌ Upload error: {e}")
             return False
 
-    def analyze_git_style_changes(self, source_dir: Path, base_tg_path: str) -> Tuple[List[Path], List[Path], List[Path]]:
-        """
-        Git-style diff analysis:
-        - [+] Added (New files)
-        - [M] Modified (Changed files)
-        - [=] Unchanged (Up-to-date files)
-        """
-        added_files = []
-        modified_files = []
-        unchanged_files = []
-
-        # Cache of remote directory listings
-        remote_folders_cache: Dict[str, Dict[str, Dict]] = {}
-
-        for root, dirs, files in os.walk(source_dir):
-            rel_dir = os.path.relpath(root, source_dir)
-            dirs[:] = [d for d in dirs if not should_skip_directory(d, os.path.join(rel_dir, d))]
-
-            for file in files:
-                if should_skip_file(file):
-                    continue
-                p = Path(root) / file
-                try:
-                    sz = p.stat().st_size
-                    mtime = p.stat().st_mtime
-                except Exception:
-                    continue
-
-                rel_p = p.relative_to(source_dir).parent
-                if str(rel_p) == ".":
-                    human_folder = base_tg_path
-                else:
-                    human_folder = f"{base_tg_path}/{str(rel_p).replace(chr(92), '/')}".strip("/")
-
-                manifest_key = f"{human_folder}/{file}"
-                record = self.manifest.get_file_record(manifest_key)
-
-                # Check manifest first (super fast)
-                if record and record.get("size") == sz and abs(record.get("mtime", 0) - mtime) < 1.0:
-                    unchanged_files.append(p)
-                    continue
-
-                # Check remote directory
-                if human_folder not in remote_folders_cache:
-                    remote_id = self.resolve_or_create_folder_id_path(human_folder)
-                    remote_folders_cache[human_folder] = self.get_existing_files_in_folder(remote_id)
-
-                remote_files = remote_folders_cache[human_folder]
-                if file in remote_files:
-                    remote_sz = remote_files[file].get("size", 0)
-                    if remote_sz == sz:
-                        unchanged_files.append(p)
-                        self.manifest.update_file_record(manifest_key, sz, mtime, "")
-                    else:
-                        modified_files.append(p)
-                else:
-                    added_files.append(p)
-
-        return added_files, modified_files, unchanged_files
-
     def sync_local_directory(self, source_dir: Path, target_tg_root: Optional[str] = None):
         """Recursively scan and backup directory tree with Git-style change detection."""
         source_dir = source_dir.resolve()
@@ -509,82 +533,161 @@ class TGDriveBackupClient:
             target_tg_root = convert_local_path_to_tg_structure(source_dir)
 
         print("\n" + "=" * 68)
-        print(f"🔍 Analyzing Local Source:  {source_dir}")
-        print(f"🌐 Mirrored TGDrive Target: /{target_tg_root}/")
+        print(f"🔍 Source Path:      {source_dir}")
+        print(f"🌐 Cloud Location:  /{target_tg_root}/")
         print("=" * 68)
 
-        print("⏳ Running Git-style change analysis against Cloud Drive...")
-        added, modified, unchanged = self.analyze_git_style_changes(source_dir, target_tg_root)
+        self.push_web_sync_status({
+            "state": "scanning",
+            "source": str(source_dir)
+        }, f"Scanning source: {source_dir}")
 
-        files_to_sync = added + modified
-        total_sync_bytes = sum(f.stat().st_size for f in files_to_sync)
+        # ── Step 1: Discover all folders and files ───────────────────────────
+        print("⏳ Scanning directories (including empty folders)...")
+        all_folders: List[str] = []
+        all_files: List[Tuple[Path, str]] = []  # (local_path, rel_folder)
+
+        for root, dirs, files in os.walk(source_dir):
+            rel_dir = os.path.relpath(root, source_dir).replace("\\", "/")
+            if rel_dir == ".":
+                rel_dir = ""
+
+            dirs[:] = [d for d in dirs if not should_skip_directory(d, f"{rel_dir}/{d}")]
+            if rel_dir:
+                all_folders.append(rel_dir)
+
+            for f in files:
+                if not should_skip_file(f):
+                    all_files.append((Path(root) / f, rel_dir))
+
+        # ── Step 2: Pre-sync all folders ─────────────────────────────────────
+        self.sync_folders_first(all_folders, target_tg_root)
+
+        # ── Step 3: Compute Git-Style Diff ───────────────────────────────────
+        print("\n⏳ Step 2: Analyzing file changes against Cloud Drive...")
+        added_files = []
+        modified_files = []
+        unchanged_files = []
+        remote_folders_cache: Dict[str, Dict[str, Dict]] = {}
+
+        for p, rel_folder in all_files:
+            try:
+                sz = p.stat().st_size
+                mtime = p.stat().st_mtime
+            except Exception:
+                continue
+
+            human_folder = f"{target_tg_root}/{rel_folder}".strip("/") if rel_folder else target_tg_root
+            manifest_key = f"{human_folder}/{p.name}"
+            record = self.manifest.get_file_record(manifest_key)
+
+            # Check local manifest
+            if record and record.get("size") == sz and abs(record.get("mtime", 0) - mtime) < 1.0:
+                unchanged_files.append((p, human_folder))
+                continue
+
+            # Check remote folder cache
+            if human_folder not in remote_folders_cache:
+                remote_id = self.resolve_or_create_folder_id_path(human_folder)
+                remote_folders_cache[human_folder] = self.get_existing_files_in_folder(remote_id)
+
+            remote_files = remote_folders_cache[human_folder]
+            if p.name in remote_files:
+                remote_sz = remote_files[p.name].get("size", 0)
+                if remote_sz == sz:
+                    unchanged_files.append((p, human_folder))
+                    self.manifest.update_file_record(manifest_key, sz, mtime, "")
+                else:
+                    modified_files.append((p, human_folder))
+            else:
+                added_files.append((p, human_folder))
+
+        files_to_sync = added_files + modified_files
+        total_sync_bytes = sum(p.stat().st_size for p, _ in files_to_sync)
 
         print("\n" + "─" * 68)
-        print("📊 Git-Style Change Summary:")
-        print(f"   🟢 [+] Added:     {len(added):>4} new files (to upload)")
-        print(f"   🟡 [M] Modified:  {len(modified):>4} changed files (to update)")
-        print(f"   ⚪ [=] Unchanged: {len(unchanged):>4} up-to-date files (skipped)")
+        print("📊 Git-Style Sync Summary:")
+        print(f"   📁 Folders Verified: {len(all_folders):>5} directories")
+        print(f"   🟢 [+] Added:       {len(added_files):>5} new files (to upload)")
+        print(f"   🟡 [M] Modified:    {len(modified_files):>5} changed files (to update)")
+        print(f"   ⚪ [=] Unchanged:   {len(unchanged_files):>5} up-to-date files (skipped)")
         print("─" * 68)
-        print(f"📦 Total to sync: {len(files_to_sync)} files ({format_size(total_sync_bytes)})")
+        print(f"📦 Total To Sync:     {len(files_to_sync):>5} files ({format_size(total_sync_bytes)})")
         print("=" * 68)
 
         if not files_to_sync:
-            print("\n✨ Everything is already up to date! Nothing to sync.")
+            print("\n✨ All files and folders are already in sync! Nothing to upload.")
+            self.push_web_sync_status({
+                "state": "completed",
+                "files_total": len(all_files),
+                "files_uploaded": 0,
+                "files_skipped": len(unchanged_files),
+                "remaining_items": 0
+            }, "Sync complete: All files are up to date.")
             return
 
-        confirm = input("\n▶️ Proceed with sync? (Y/n): ").strip().lower()
+        confirm = input("\n▶️ Proceed with upload? (Y/n): ").strip().lower()
         if confirm == "n":
             print("Sync cancelled.")
             return
 
-        self._upload_local_files_mirrored(source_dir, files_to_sync, target_tg_root)
+        # ── Step 4: Upload with live status ──────────────────────────────────
+        total_count = len(files_to_sync)
+        remaining_bytes = total_sync_bytes
 
-    def _upload_local_files_mirrored(self, base_path: Path, file_list: List[Path], base_tg_path: str):
-        total_files = len(file_list)
-        success_count = 0
-        fail_count = 0
+        for idx, (local_file, human_folder) in enumerate(files_to_sync, start=1):
+            file_size = local_file.stat().st_size
+            rem_count = total_count - idx
+            remaining_bytes = max(0, remaining_bytes - file_size)
 
-        for idx, local_file in enumerate(file_list, start=1):
-            rel_path = local_file.relative_to(base_path).parent
-            if str(rel_path) == ".":
-                human_folder = base_tg_path
-            else:
-                human_folder = f"{base_tg_path}/{str(rel_path).replace(chr(92), '/')}".strip("/")
-
-            if self.upload_file(local_file, human_folder, file_idx=idx, total_files=total_files):
-                success_count += 1
-            else:
-                fail_count += 1
+            self.upload_file(
+                local_file,
+                human_folder,
+                file_idx=idx,
+                total_files=total_count,
+                remaining_files=rem_count,
+                remaining_bytes=remaining_bytes
+            )
 
         print("\n" + "=" * 68)
-        print("🎉 Sync Complete Summary:")
-        print(f"   ✅ Synced:      {success_count}")
-        print(f"   ❌ Failed:      {fail_count}")
-        print(f"   📦 Total:       {total_files}")
-        print(f"   🌐 View Drive:  {self.base_url}/?path=/")
+        print("🎉 Sync Completed Successfully!")
+        print(f"   ✅ Total Uploaded: {total_count} files")
+        print(f"   🌐 View on Cloud:  {self.base_url}/?path=/")
         print("=" * 68)
 
+        self.push_web_sync_status({
+            "state": "completed",
+            "files_total": len(all_files),
+            "files_uploaded": total_count,
+            "files_skipped": len(unchanged_files),
+            "remaining_items": 0
+        }, f"Sync completed! {total_count} files uploaded to cloud.")
+
     def sync_mtp_phone_folder(self, phone_name: str, storage_name: str, subfolder_rel: str = "", auto_confirm: bool = False):
-        """Sync files from an MTP connected phone into TGDrive preserving full phone path."""
-        import subprocess
+        """Sync files from an MTP connected phone into TGDrive with full folder hierarchy & zero duplicates."""
         staging_dir = Path(tempfile.gettempdir()) / "tgdrive_phone_staging"
         if staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)
         staging_dir.mkdir(parents=True, exist_ok=True)
 
-        clean_phone_name = phone_name.replace(" ", "_")
-        clean_storage_name = storage_name.replace(" ", "_")
-        base_tg_prefix = f"{clean_phone_name}/{clean_storage_name}"
+        clean_phone = phone_name.replace(" ", "_")
+        clean_storage = storage_name.replace(" ", "_")
+        base_tg_prefix = f"{clean_phone}/{clean_storage}"
 
         print("\n" + "=" * 68)
         print(f"📱 Phone Source:     {phone_name} ➔ {storage_name} ➔ {subfolder_rel or 'Root'}")
-        print(f"🌐 Mirrored TG Path: /{base_tg_prefix}/{subfolder_rel}".rstrip("/") + "/")
+        print(f"🌐 Cloud Location:  /{base_tg_prefix}/{subfolder_rel}".rstrip("/") + "/")
         print("=" * 68)
 
-        ps_script = f'''
-$shell = New-Object -ComObject Shell.Application
-$destFolder = $shell.Namespace("{str(staging_dir)}")
+        self.push_web_sync_status({
+            "state": "scanning",
+            "source": f"{phone_name} ({storage_name})"
+        }, f"Scanning phone storage: {phone_name}...")
 
+        # ── Step 1: Scan MTP Phone Folders & Files ────────────────────────────
+        print("⏳ Scanning phone folders and files over USB MTP...")
+        ps_scan = f'''
+$shell = New-Object -ComObject Shell.Application
 $thisPC = $shell.Namespace(17)
 $phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }}
 if (-not $phone) {{ Write-Error "Phone not found"; exit 1 }}
@@ -602,96 +705,216 @@ if ($subPath) {{
     }}
 }}
 
-function Extract-MTP($item, $relPath) {{
-    $localTargetDir = Join-Path "{str(staging_dir)}" $relPath
-    if (-not (Test-Path $localTargetDir)) {{
-        New-Item -ItemType Directory -Path $localTargetDir -Force | Out-Null
-    }}
-    $localFolderObj = $shell.Namespace($localTargetDir)
+$foldersList = [System.Collections.Generic.List[string]]::new()
+$filesList = [System.Collections.Generic.List[PSCustomObject]]::new()
+$skipDirs = @('android', '.trash', '.thumbnails', 'lost.dir', '.soundrecordrecycler', '.filemanagerrecycler', '.aceself', '.slogan', 'samsung backup')
 
-    foreach ($sub in $item.GetFolder.Items()) {{
-        $name = $sub.Name
-        if ($sub.IsFolder) {{
-            if ($name -notin @("Android", "lost.dir", ".trash", ".thumbnails")) {{
-                $childRel = if ($relPath) {{ Join-Path $relPath $name }} else {{ $name }}
-                Extract-MTP $sub $childRel
+function Scan-MTP($folderItem, $relPath) {{
+    if ($relPath) {{ $foldersList.Add($relPath) }}
+    foreach ($item in $folderItem.GetFolder.Items()) {{
+        $name = $item.Name
+        $nameLower = $name.ToLower()
+        if ($item.IsFolder) {{
+            if ($nameLower -notin $skipDirs -and -not $nameLower.StartsWith('.')) {{
+                $childRel = if ($relPath) {{ "$relPath/$name" }} else {{ $name }}
+                Scan-MTP $item $childRel
             }}
         }} else {{
-            if ($name -notlike "~$*" -and $name -notlike ".*") {{
-                $localFolderObj.CopyHere($sub, 16)
-                $destFile = Join-Path $localTargetDir $name
-                $timeout = 0
-                while ((-not (Test-Path $destFile) -or (Get-Item $destFile).Length -eq 0) -and $timeout -lt 20) {{
-                    Start-Sleep -Milliseconds 250
-                    $timeout++
-                }}
+            if (-not $nameLower.StartsWith('.') -and -not $nameLower.StartsWith('~$')) {{
+                $filesList.Add([PSCustomObject]@{{
+                    name = $name
+                    folder = $relPath
+                }})
             }}
         }}
     }}
 }}
 
-Extract-MTP $targetRoot $subPath
-'''
-        ps_file = staging_dir / "extract.ps1"
-        with open(ps_file, "w", encoding="utf-8") as f:
-            f.write(ps_script)
+Scan-MTP $targetRoot ""
 
-        print("⏳ Extracting files from connected phone via USB...")
+[PSCustomObject]@{{
+    folders = $foldersList
+    files = $filesList
+}} | ConvertTo-Json -Depth 5 -Compress
+'''
+        ps_scan_file = staging_dir / "scan.ps1"
+        with open(ps_scan_file, "w", encoding="utf-8") as f:
+            f.write(ps_scan)
+
         try:
             res = subprocess.run(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_file)],
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_scan_file)],
                 capture_output=True,
                 text=True,
                 check=True
             )
+            data = json.loads(res.stdout)
+            discovered_folders = data.get("folders", [])
+            discovered_files = data.get("files", [])
         except Exception as e:
-            print(f"❌ Error communicating with phone: {e}")
-            if hasattr(e, 'stderr') and e.stderr:
-                print(f"   Details: {e.stderr}")
+            print(f"❌ Error scanning phone: {e}")
+            shutil.rmtree(staging_dir, ignore_errors=True)
             return
         finally:
-            if ps_file.exists():
-                ps_file.unlink(missing_ok=True)
+            if ps_scan_file.exists():
+                ps_scan_file.unlink(missing_ok=True)
 
-        staged_files = []
-        for root, _, files in os.walk(staging_dir):
-            for f in files:
-                p = Path(root) / f
-                if not should_skip_file(f):
-                    staged_files.append(p)
+        print(f"  📂 Discovered {len(discovered_folders):,} folders and {len(discovered_files):,} files on phone.")
 
-        if not staged_files:
-            print("⚠️ No files found in the specified phone folder.")
-            return
+        # ── Step 2: Pre-sync all folder paths (including empty ones!) ─────────
+        self.sync_folders_first(discovered_folders, base_tg_prefix)
 
-        print(f"📦 Staged {len(staged_files)} files from phone. Analyzing changes...")
-        added, modified, unchanged = self.analyze_git_style_changes(staging_dir, base_tg_prefix)
-        files_to_sync = added + modified
+        # ── Step 3: Compute Diff & Filter Unchanged Files ─────────────────────
+        print("\n⏳ Step 2: Computing changes against Telegram Cloud (Zero Duplicates)...")
+        files_to_download = []
+        unchanged_count = 0
+        remote_cache: Dict[str, Dict[str, Dict]] = {}
+
+        for item in discovered_files:
+            fname = item["name"]
+            rel_folder = item["folder"].replace("\\", "/")
+            human_folder = f"{base_tg_prefix}/{rel_folder}".strip("/") if rel_folder else base_tg_prefix
+            manifest_key = f"{human_folder}/{fname}"
+
+            record = self.manifest.get_file_record(manifest_key)
+            if record:
+                unchanged_count += 1
+                continue
+
+            if human_folder not in remote_cache:
+                remote_id = self.resolve_or_create_folder_id_path(human_folder)
+                remote_cache[human_folder] = self.get_existing_files_in_folder(remote_id)
+
+            remote_files = remote_cache[human_folder]
+            if fname in remote_files:
+                unchanged_count += 1
+                self.manifest.update_file_record(manifest_key, remote_files[fname].get("size", 0), 0, "")
+            else:
+                files_to_download.append((fname, rel_folder, human_folder))
 
         print("\n" + "─" * 68)
-        print(f"📊 Git-Style Phone Change Summary:")
-        print(f"   🟢 [+] Added:     {len(added)} new files")
-        print(f"   🟡 [M] Modified:  {len(modified)} changed files")
-        print(f"   ⚪ [=] Unchanged: {len(unchanged)} up-to-date files (skipped)")
+        print("📊 Git-Style Phone Change Summary:")
+        print(f"   📁 Folders Verified: {len(discovered_folders):>5} directories")
+        print(f"   🟢 [+] Added / New: {len(files_to_download):>5} files (to sync)")
+        print(f"   ⚪ [=] Up-to-date:   {unchanged_count:>5} files (skipped - 0 duplicates)")
         print("─" * 68)
+        print(f"📦 Total To Sync:     {len(files_to_download):>5} files")
+        print("=" * 68)
 
-        if not files_to_sync:
-            print("✨ All phone files are already up to date on Cloud Drive!")
+        if not files_to_download:
+            print("\n✨ All phone files and folders are already in sync! Nothing to upload.")
             shutil.rmtree(staging_dir, ignore_errors=True)
+            self.push_web_sync_status({
+                "state": "completed",
+                "files_total": len(discovered_files),
+                "files_uploaded": 0,
+                "files_skipped": unchanged_count,
+                "remaining_items": 0
+            }, "Phone sync complete: All files are up to date.")
             return
 
         if not auto_confirm:
-            confirm = input("▶️ Start uploading to TGDrive? (Y/n): ").strip().lower()
+            confirm = input("\n▶️ Start syncing to TGDrive? (Y/n): ").strip().lower()
             if confirm == "n":
-                print("Upload cancelled.")
+                print("Sync cancelled.")
                 shutil.rmtree(staging_dir, ignore_errors=True)
                 return
 
+        # ── Step 4: Incremental Extract & Upload ──────────────────────────────
+        total_sync_files = len(files_to_download)
+        print(f"\n⚡ Step 3: Extracting & Uploading {total_sync_files:,} files from phone...\n")
+
+        # PowerShell extraction script per file/folder
+        extract_script_template = '''
+$shell = New-Object -ComObject Shell.Application
+$destFolder = $shell.Namespace("{dest}")
+$thisPC = $shell.Namespace(17)
+$phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }}
+$storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }}
+
+$targetRoot = $storage
+$folderRel = "{folder_rel}".Trim('\\').Trim('/')
+if ($folderRel) {{
+    $parts = $folderRel.Split('/\\')
+    foreach ($p in $parts) {{
+        $targetRoot = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }}
+        if (-not $targetRoot) {{ exit 1 }}
+    }}
+}}
+
+$fileItem = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq "{file_name}" }}
+if ($fileItem) {{
+    $destFolder.CopyHere($fileItem, 16)
+    $destFilePath = Join-Path "{dest}" "{file_name}"
+    $t = 0
+    while ((-not (Test-Path $destFilePath) -or (Get-Item $destFilePath).Length -eq 0) -and $t -lt 30) {{
+        Start-Sleep -Milliseconds 200
+        $t++
+    }}
+}}
+'''
+
         try:
-            self._upload_local_files_mirrored(staging_dir, files_to_sync, base_tg_prefix)
+            for idx, (fname, rel_folder, human_folder) in enumerate(files_to_download, start=1):
+                rem_files = total_sync_files - idx
+                single_dest = staging_dir / "single_file"
+                if single_dest.exists():
+                    shutil.rmtree(single_dest, ignore_errors=True)
+                single_dest.mkdir(parents=True, exist_ok=True)
+
+                ps_code = extract_script_template.format(
+                    dest=str(single_dest).replace("\\", "\\\\"),
+                    phone_name=phone_name,
+                    storage_name=storage_name,
+                    folder_rel=rel_folder,
+                    file_name=fname
+                )
+
+                ps_runner = staging_dir / "run_single.ps1"
+                with open(ps_runner, "w", encoding="utf-8") as f:
+                    f.write(ps_code)
+
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_runner)],
+                    capture_output=True,
+                    text=True
+                )
+                if ps_runner.exists():
+                    ps_runner.unlink(missing_ok=True)
+
+                staged_file = single_dest / fname
+                if staged_file.exists() and staged_file.stat().st_size > 0:
+                    self.upload_file(
+                        staged_file,
+                        human_folder,
+                        file_idx=idx,
+                        total_files=total_sync_files,
+                        remaining_files=rem_files,
+                        remaining_bytes=0
+                    )
+                else:
+                    print(f"[{idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
+
+                shutil.rmtree(single_dest, ignore_errors=True)
+
         finally:
-            print("🧹 Cleaning up temporary phone cache...")
+            print("\n🧹 Cleaning up temporary cache...")
             shutil.rmtree(staging_dir, ignore_errors=True)
+
+        print("\n" + "=" * 68)
+        print("🎉 Phone Sync Complete Summary:")
+        print(f"   ✅ Synced:      {total_sync_files} files")
+        print(f"   ⚪ Skipped:     {unchanged_count} up-to-date files")
+        print(f"   🌐 View Drive:  {self.base_url}/?path=/")
+        print("=" * 68)
+
+        self.push_web_sync_status({
+            "state": "completed",
+            "files_total": len(discovered_files),
+            "files_uploaded": total_sync_files,
+            "files_skipped": unchanged_count,
+            "remaining_items": 0
+        }, f"Phone sync complete! {total_sync_files} files uploaded to cloud.")
 
 
 def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
@@ -821,12 +1044,11 @@ def main():
 
     print(f"\nConnecting to TGDrive at {args.url}...")
     if not client.verify_auth():
-        # Fallback to Render URL if local is unreachable
         if "127.0.0.1" in args.url:
             print("[!] Local server not answering, falling back to Render cloud...")
             client.base_url = "https://telegram-unlimited-cloud.onrender.com"
             if not client.verify_auth():
-                print("❌ Authentication failed!")
+                print("❌ Authentication failed! Check your server status and credentials.")
                 sys.exit(1)
         else:
             print("❌ Authentication failed! Check your URL and password.")

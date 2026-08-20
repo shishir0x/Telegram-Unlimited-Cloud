@@ -576,3 +576,61 @@ async def getFolderShareAuth(request: Request):
         return JSONResponse({"status": "ok", "auth": auth})
     except Exception:
         return JSONResponse({"status": "not found"})
+
+
+# ==========================================
+# Real-Time Cloud Sync Engine Status API
+# ==========================================
+
+SYNC_ENGINE_STATUS = {
+    "state": "idle",  # "idle", "scanning", "syncing_folders", "syncing_files", "completed"
+    "source": "",
+    "current_item": "",
+    "current_index": 0,
+    "total_items": 0,
+    "remaining_items": 0,
+    "current_bytes": 0,
+    "total_bytes": 0,
+    "speed_str": "",
+    "folders_total": 0,
+    "folders_created": 0,
+    "files_total": 0,
+    "files_uploaded": 0,
+    "files_skipped": 0,
+    "updated_at": time.time(),
+    "logs": []
+}
+
+
+@app.post("/api/getSyncStatus")
+async def getSyncStatus(request: Request):
+    data = await request.json()
+
+    if not is_admin_authenticated(request, data=data):
+        return JSONResponse({"status": "Invalid password"}, status_code=401)
+
+    return JSONResponse({"status": "ok", "data": SYNC_ENGINE_STATUS})
+
+
+@app.post("/api/updateSyncStatus")
+async def updateSyncStatus(request: Request):
+    data = await request.json()
+
+    if not is_admin_authenticated(request, data=data):
+        return JSONResponse({"status": "Invalid password"}, status_code=401)
+
+    status_update = data.get("sync_data", {})
+    SYNC_ENGINE_STATUS.update(status_update)
+    SYNC_ENGINE_STATUS["updated_at"] = time.time()
+
+    log_msg = data.get("log")
+    if log_msg:
+        SYNC_ENGINE_STATUS["logs"].append({
+            "time": time.strftime("%H:%M:%S"),
+            "msg": log_msg
+        })
+        if len(SYNC_ENGINE_STATUS["logs"]) > 60:
+            SYNC_ENGINE_STATUS["logs"] = SYNC_ENGINE_STATUS["logs"][-60:]
+
+    return JSONResponse({"status": "ok"})
+
