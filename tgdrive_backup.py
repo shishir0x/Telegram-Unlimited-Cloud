@@ -1061,11 +1061,16 @@ while ($line = [Console]::In.ReadLine()) {{
                     )
                     if success:
                         uploaded_count += 1
-                        # Push completed file notification to Web UI
+                        # Push completed file and next 30 upcoming queued files to Web UI
+                        upcoming_slice = [
+                            {"name": f[0], "path": f[2], "size": "Queued"}
+                            for f in files_to_download[idx:idx + 30]
+                        ]
                         self.push_web_sync_status({
                             "state": "syncing_files",
                             "current_index": idx,
                             "remaining_items": rem_files,
+                            "pending_queue": upcoming_slice,
                             "completed_item": {
                                 "name": fname,
                                 "path": human_folder,

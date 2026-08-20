@@ -1093,15 +1093,28 @@ function initSyncActivityManager() {
 
         // Render Left Table: ⏳ To Be Uploaded (Queue)
         if (pendingBody) {
-            let pendingList = data.pending_queue || [];
+            let pendingList = (data.pending_queue && data.pending_queue.length > 0) ? [...data.pending_queue] : [];
+            
             if (pendingList.length === 0 && data.current_item) {
-                pendingList = [
-                    {
-                        name: data.current_item,
+                pendingList.push({
+                    name: data.current_item,
+                    path: data.current_path || (data.source ? `/${data.source}/` : '/'),
+                    size: data.current_size || '⚡ Transferring'
+                });
+            }
+
+            // If queue list is short but sync is actively running with remaining items
+            if (pendingList.length < 15 && isBusy && data.remaining_items > pendingList.length) {
+                const startIdx = (data.current_index || 0) + pendingList.length + 1;
+                const fillCount = Math.min(15 - pendingList.length, data.remaining_items - pendingList.length);
+                for (let i = 0; i < fillCount; i++) {
+                    const nextNum = startIdx + i;
+                    pendingList.push({
+                        name: `[Stream Item #${nextNum} of ${data.total_items || '...'}]`,
                         path: data.current_path || (data.source ? `/${data.source}/` : '/'),
-                        size: data.current_size || '⚡ Transferring'
-                    }
-                ];
+                        size: 'Queued'
+                    });
+                }
             }
 
             if (pendingBadge) pendingBadge.innerText = data.remaining_items !== undefined ? data.remaining_items : pendingList.length;
@@ -1111,14 +1124,14 @@ function initSyncActivityManager() {
                     <tr>
                         <td class="gd-sync-table-idx">${idx + 1}</td>
                         <td class="gd-sync-table-fname" title="${escapeHtml(item.name || '')}">
-                            <span>📄</span>
+                            <span>${idx === 0 && isBusy ? '⚡' : '📄'}</span>
                             <span class="file-name-text">${escapeHtml(item.name || '')}</span>
                         </td>
                         <td>
                             <span class="gd-sync-table-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</span>
                         </td>
                         <td style="text-align: right;">
-                            <span class="gd-sync-status-tag tag-pending">${escapeHtml(item.size || 'Queued')}</span>
+                            <span class="gd-sync-status-tag ${idx === 0 && isBusy ? 'tag-uploading' : 'tag-pending'}">${escapeHtml(item.size || 'Queued')}</span>
                         </td>
                     </tr>
                 `).join('');
