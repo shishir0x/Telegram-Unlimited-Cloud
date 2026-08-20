@@ -914,59 +914,59 @@ Scan-MTP $targetRoot ""
                 shutil.rmtree(staging_dir, ignore_errors=True)
                 return
 
-        # ── Step 4: Incremental Extract & Upload ──────────────────────────────
+        # ── Step 4: Incremental Folder-by-Folder Extract & Upload ────────────
+        from collections import defaultdict
+        folder_to_files = defaultdict(list)
+        for fname, rel_folder, human_folder in files_to_download:
+            folder_to_files[rel_folder].append((fname, human_folder))
+
         total_sync_files = len(files_to_download)
         print(f"\n⚡ Step 3: Extracting & Uploading {total_sync_files:,} files from phone...\n")
 
-        # PowerShell extraction script per file/folder
-        extract_script_template = '''
+        global_idx = 0
+        try:
+            for rel_folder, items_in_folder in folder_to_files.items():
+                folder_dest = staging_dir / "active_folder"
+                if folder_dest.exists():
+                    shutil.rmtree(folder_dest, ignore_errors=True)
+                folder_dest.mkdir(parents=True, exist_ok=True)
+
+                # Prepare wanted filenames list for PowerShell
+                wanted_names = [it[0] for it in items_in_folder]
+                wanted_ps_arr = ", ".join(f"'{name.replace(chr(39), chr(39)+chr(39))}'" for name in wanted_names)
+
+                ps_extract = f'''
 $shell = New-Object -ComObject Shell.Application
-$destFolder = $shell.Namespace("{dest}")
+$destFolder = $shell.Namespace("{str(folder_dest).replace(chr(92), chr(92)+chr(92))}")
 $thisPC = $shell.Namespace(17)
 $phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }}
+if (-not $phone) {{ exit 1 }}
+
 $storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }}
+if (-not $storage) {{ exit 1 }}
 
 $targetRoot = $storage
-$folderRel = "{folder_rel}".Trim('\\').Trim('/')
+$folderRel = "{rel_folder}".Trim('\\').Trim('/')
 if ($folderRel) {{
-    $parts = $folderRel.Split('/\\')
+    $parts = $folderRel -split '[/\\\\]'
     foreach ($p in $parts) {{
-        $targetRoot = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }}
-        if (-not $targetRoot) {{ exit 1 }}
+        if ($p) {{
+            $targetRoot = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq $p }}
+            if (-not $targetRoot) {{ exit 1 }}
+        }}
     }}
 }}
 
-$fileItem = $targetRoot.GetFolder.Items() | Where-Object {{ $_.Name -eq "{file_name}" }}
-if ($fileItem) {{
-    $destFolder.CopyHere($fileItem, 16)
-    $destFilePath = Join-Path "{dest}" "{file_name}"
-    $t = 0
-    while ((-not (Test-Path $destFilePath) -or (Get-Item $destFilePath).Length -eq 0) -and $t -lt 30) {{
-        Start-Sleep -Milliseconds 200
-        $t++
+$wanted = @({wanted_ps_arr})
+foreach ($item in $targetRoot.GetFolder.Items()) {{
+    if (-not $item.IsFolder -and $item.Name -in $wanted) {{
+        $destFolder.CopyHere($item, 16)
     }}
 }}
 '''
-
-        try:
-            for idx, (fname, rel_folder, human_folder) in enumerate(files_to_download, start=1):
-                rem_files = total_sync_files - idx
-                single_dest = staging_dir / "single_file"
-                if single_dest.exists():
-                    shutil.rmtree(single_dest, ignore_errors=True)
-                single_dest.mkdir(parents=True, exist_ok=True)
-
-                ps_code = extract_script_template.format(
-                    dest=str(single_dest).replace("\\", "\\\\"),
-                    phone_name=phone_name,
-                    storage_name=storage_name,
-                    folder_rel=rel_folder,
-                    file_name=fname
-                )
-
-                ps_runner = staging_dir / "run_single.ps1"
+                ps_runner = staging_dir / "extract_folder.ps1"
                 with open(ps_runner, "w", encoding="utf-8") as f:
-                    f.write(ps_code)
+                    f.write(ps_extract)
 
                 subprocess.run(
                     ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_runner)],
@@ -976,27 +976,38 @@ if ($fileItem) {{
                 if ps_runner.exists():
                     ps_runner.unlink(missing_ok=True)
 
-                staged_file = single_dest / fname
-                if staged_file.exists() and staged_file.stat().st_size > 0:
-                    with open(staged_file, "rb") as f:
-                        file_bytes = f.read()
+                # Process each file in this folder
+                for fname, human_folder in items_in_folder:
+                    global_idx += 1
+                    rem_files = total_sync_files - global_idx
+                    staged_file = folder_dest / fname
 
-                    # Purge disk file immediately before cloud upload!
-                    staged_file.unlink(missing_ok=True)
-                    shutil.rmtree(single_dest, ignore_errors=True)
+                    # Wait up to 10 seconds for CopyHere to finish for this file
+                    for _ in range(40):
+                        if staged_file.exists() and staged_file.stat().st_size > 0:
+                            break
+                        time.sleep(0.25)
 
-                    self.upload_in_memory_file(
-                        file_bytes,
-                        fname,
-                        human_folder,
-                        file_idx=idx,
-                        total_files=total_sync_files,
-                        remaining_files=rem_files,
-                        remaining_bytes=0
-                    )
-                else:
-                    print(f"[{idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
-                    shutil.rmtree(single_dest, ignore_errors=True)
+                    if staged_file.exists() and staged_file.stat().st_size > 0:
+                        with open(staged_file, "rb") as f:
+                            file_bytes = f.read()
+
+                        # Purge from disk immediately before cloud upload!
+                        staged_file.unlink(missing_ok=True)
+
+                        self.upload_in_memory_file(
+                            file_bytes,
+                            fname,
+                            human_folder,
+                            file_idx=global_idx,
+                            total_files=total_sync_files,
+                            remaining_files=rem_files,
+                            remaining_bytes=0
+                        )
+                    else:
+                        print(f"[{global_idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
+
+                shutil.rmtree(folder_dest, ignore_errors=True)
 
         finally:
             print("\n🧹 Cleaning up temporary cache...")
