@@ -188,7 +188,7 @@ async def check_password(request: Request):
     except Exception:
         return JSONResponse({"status": "Invalid payload"}, status_code=400)
 
-    password = data.get("pass", "")
+    password = data.get("password") or data.get("pass", "")
     if password and secrets.compare_digest(str(password), str(ADMIN_PASSWORD)):
         clear_attempts(client_ip)
         resp = JSONResponse({"status": "ok"})

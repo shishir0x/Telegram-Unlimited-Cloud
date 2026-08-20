@@ -261,12 +261,15 @@ class TGDriveBackupClient:
         try:
             res = self.session.post(
                 f"{self.base_url}/api/checkPassword",
-                json={"password": self.password},
+                json={"pass": self.password, "password": self.password},
                 timeout=10,
             )
             if res.status_code == 200:
                 data = res.json()
                 return data.get("status") == "ok"
+            elif res.status_code == 401:
+                print(f"[!] Invalid admin password for {self.base_url}")
+                return False
             return False
         except Exception as e:
             print(f"[!] Connection error to {self.base_url}: {e}")
@@ -1142,15 +1145,10 @@ def main():
 
     print(f"\nConnecting to TGDrive at {args.url}...")
     if not client.verify_auth():
-        if "127.0.0.1" in args.url:
-            print("[!] Local server not answering, falling back to Render cloud...")
-            client.base_url = "https://telegram-unlimited-cloud.onrender.com"
-            if not client.verify_auth():
-                print("❌ Authentication failed! Check your server status and credentials.")
-                sys.exit(1)
-        else:
-            print("❌ Authentication failed! Check your URL and password.")
-            sys.exit(1)
+        print(f"\n❌ Authentication failed on {args.url}!")
+        print("   1. Make sure your local server is running: 'uvicorn main:app --port 8000'")
+        print("   2. Check ADMIN_PASSWORD in your .env file matches.")
+        sys.exit(1)
 
     print("✅ Connected & Authenticated!")
 
