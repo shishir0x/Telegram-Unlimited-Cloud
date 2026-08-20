@@ -522,6 +522,97 @@ class TGDriveBackupClient:
             print(f"    ❌ Upload error: {e}")
             return False
 
+    def upload_in_memory_file(self, file_bytes: bytes, file_name: str, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
+        """Upload in-memory file bytes directly to TGDrive with zero persistent disk storage."""
+        file_size = len(file_bytes)
+        if file_size == 0:
+            print(f"  ⏭️ Skipping 0-byte empty file: {file_name}")
+            return True
+
+        upload_id = generate_random_id()
+        remote_id_path = self.resolve_or_create_folder_id_path(human_remote_folder)
+
+        rem_str = f"Remaining: {remaining_files} files ({format_size(remaining_bytes)})"
+        print(f"\n[{file_idx}/{total_files}] ⬆️ {file_name} ({format_size(file_size)}) | {rem_str}")
+        print(f"       ➔ Location: /{human_remote_folder}/")
+
+        self.push_web_sync_status({
+            "state": "syncing_files",
+            "current_item": file_name,
+            "current_index": file_idx,
+            "total_items": total_files,
+            "remaining_items": remaining_files,
+            "total_bytes": remaining_bytes + file_size,
+        }, f"Streaming [{file_idx}/{total_files}]: {file_name} ({format_size(file_size)})")
+
+        try:
+            import io
+            file_obj = io.BytesIO(file_bytes)
+            files = {"file": (file_name, file_obj)}
+            form_data = {
+                "path": remote_id_path,
+                "password": self.password,
+                "id": upload_id,
+                "total_size": str(file_size),
+            }
+
+            start_time = time.time()
+            res = self.session.post(
+                f"{self.base_url}/api/upload",
+                files=files,
+                data=form_data,
+                timeout=600,
+            )
+
+            if res.status_code != 200:
+                print(f"    ❌ Server returned HTTP {res.status_code}: {res.text}")
+                return False
+
+            data = res.json()
+            if data.get("status") != "ok":
+                print(f"    ❌ Upload failed: {data.get('status')}")
+                return False
+
+            # Poll for Telegram upload completion with real-time progress bar
+            for _ in range(240):
+                time.sleep(0.4)
+                try:
+                    prog_res = self.session.post(
+                        f"{self.base_url}/api/getUploadProgress",
+                        json={"password": self.password, "id": upload_id},
+                        timeout=10,
+                    )
+                    prog_data = prog_res.json()
+                    if prog_data.get("status") == "ok":
+                        status = prog_data["data"][0]
+                        current_bytes = prog_data["data"][1]
+                        total_bytes = prog_data["data"][2] or file_size
+
+                        duration = max(time.time() - start_time, 0.1)
+                        speed = current_bytes / duration
+                        speed_str = f"{format_size(int(speed))}/s"
+
+                        if status == "running":
+                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})")
+                            self.push_web_sync_status({
+                                "current_bytes": current_bytes,
+                                "speed_str": speed_str
+                            })
+                        elif status == "completed":
+                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})")
+                            h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
+                            self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
+                            return True
+                except Exception:
+                    pass
+
+            print("\r    ✅ Sync dispatched to Telegram cloud.")
+            return True
+
+        except Exception as e:
+            print(f"    ❌ Upload error: {e}")
+            return False
+
     def sync_local_directory(self, source_dir: Path, target_tg_root: Optional[str] = None):
         """Recursively scan and backup directory tree with Git-style change detection."""
         source_dir = source_dir.resolve()
@@ -884,8 +975,16 @@ if ($fileItem) {{
 
                 staged_file = single_dest / fname
                 if staged_file.exists() and staged_file.stat().st_size > 0:
-                    self.upload_file(
-                        staged_file,
+                    with open(staged_file, "rb") as f:
+                        file_bytes = f.read()
+
+                    # Purge disk file immediately before cloud upload!
+                    staged_file.unlink(missing_ok=True)
+                    shutil.rmtree(single_dest, ignore_errors=True)
+
+                    self.upload_in_memory_file(
+                        file_bytes,
+                        fname,
                         human_folder,
                         file_idx=idx,
                         total_files=total_sync_files,
@@ -894,8 +993,7 @@ if ($fileItem) {{
                     )
                 else:
                     print(f"[{idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
-
-                shutil.rmtree(single_dest, ignore_errors=True)
+                    shutil.rmtree(single_dest, ignore_errors=True)
 
         finally:
             print("\n🧹 Cleaning up temporary cache...")
