@@ -297,13 +297,16 @@ class TGDriveBackupClient:
         try:
             res = self.session.post(
                 f"{self.base_url}/api/getDirectory",
-                json={"password": self.password, "path": folder_id_path},
+                json={"pass": self.password, "password": self.password, "path": folder_id_path},
                 timeout=15,
             )
             if res.status_code == 200:
-                data = res.json()
-                if data.get("status") == "ok":
-                    return data.get("contents", {})
+                json_data = res.json()
+                if json_data.get("status") == "ok":
+                    data_field = json_data.get("data", {})
+                    if isinstance(data_field, dict):
+                        return data_field.get("contents", {})
+                    return json_data.get("contents", {})
             return {}
         except Exception:
             return {}
@@ -320,14 +323,11 @@ class TGDriveBackupClient:
         if clean_path in self._folder_id_cache:
             return self._folder_id_cache[clean_path]
 
-        parts = clean_path.split("/")
+        parts = [p for p in clean_path.split("/") if p]
         current_id_path = "/"
         current_named_prefix = ""
 
         for part in parts:
-            if not part:
-                continue
-
             current_named_prefix = f"{current_named_prefix}/{part}".strip("/")
             if current_named_prefix in self._folder_id_cache:
                 current_id_path = self._folder_id_cache[current_named_prefix]
@@ -345,27 +345,28 @@ class TGDriveBackupClient:
 
             if not found_id:
                 try:
-                    res = self.session.post(
+                    self.session.post(
                         f"{self.base_url}/api/createNewFolder",
                         json={
+                            "pass": self.password,
                             "password": self.password,
                             "path": current_id_path,
                             "name": part,
                         },
                         timeout=15,
                     )
-                    if res.status_code == 200:
-                        res_data = res.json()
-                        if res_data.get("status") == "ok":
-                            contents = self.get_directory_contents(current_id_path)
-                            for item_id, item in contents.items():
-                                if item.get("type") == "folder" and item.get("name") == part:
-                                    found_id = item.get("id") or item_id
-                                    break
-                except Exception:
-                    pass
+                    # Re-fetch directory contents after creation attempt
+                    contents = self.get_directory_contents(current_id_path)
+                    for item_id, item in contents.items():
+                        if item.get("type") == "folder" and not item.get("trash"):
+                            if item.get("name") == part:
+                                found_id = item.get("id") or item_id
+                                break
+                except Exception as e:
+                    print(f"    [!] Error creating folder '{part}': {e}")
 
             if not found_id:
+                print(f"    [!] Warning: Unable to resolve internal ID for '{part}' inside '{current_id_path}'")
                 found_id = part
 
             current_id_path = (current_id_path + found_id + "/").replace("//", "/")
