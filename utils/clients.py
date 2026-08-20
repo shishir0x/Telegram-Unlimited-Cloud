@@ -83,14 +83,11 @@ async def initialize_clients():
         )
     )
     if len(multi_clients) == 0:
-        logger.error("No Clients Were Initialized")
-
-        # Forcefully terminates the program immediately
-        try:
-            sig = getattr(signal, "SIGKILL", signal.SIGTERM)
-            os.kill(os.getpid(), sig)
-        except Exception:
-            sys.exit(1)
+        logger.error("No Telegram Bot Clients Were Initialized!")
+        logger.error(f"Config status: API_ID={config.API_ID}, STORAGE_CHANNEL={config.STORAGE_CHANNEL}, BOT_TOKENS_COUNT={len(config.BOT_TOKENS)}")
+        if not config.BOT_TOKENS or config.BOT_TOKENS == [""]:
+            logger.error("❌ BOT_TOKENS environment variable is empty or missing! Please add BOT_TOKENS to Render Environment Variables.")
+        sys.exit(1)
 
 
     if len(premium_clients) == 0:
