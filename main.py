@@ -174,6 +174,24 @@ async def dl_file(request: Request):
 # =========================================================
 
 import collections
+import io
+from PIL import Image
+
+def generate_pillow_thumbnail(input_path: str | Path, output_path: str | Path, max_size=(320, 320)) -> bytes | None:
+    """Safely converts any image format to a lightweight ~10KB JPEG thumbnail."""
+    try:
+        with Image.open(str(input_path)) as img:
+            img = img.convert("RGB")
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=75, optimize=True)
+            data = buf.getvalue()
+            Path(output_path).write_bytes(data)
+            return data
+    except Exception as e:
+        logger.warning(f"Pillow thumbnail conversion failed for {input_path}: {e}")
+        return None
+
 
 class ThumbnailService:
     def __init__(self, max_ram_items: int = 300, max_disk_mb: int = 50):
@@ -212,6 +230,7 @@ class ThumbnailService:
             pass
 
     async def get_or_fetch(self, file_id: int, file_name: str) -> bytes | None:
+        file_id = int(file_id)
         # 1. Check RAM Cache
         ram_data = self.get_ram(file_id)
         if ram_data:
@@ -264,17 +283,27 @@ class ThumbnailService:
                     thumb_target = msg.video.thumbs[0]
                 elif msg.animation and msg.animation.thumbs:
                     thumb_target = msg.animation.thumbs[0]
-                elif is_image and msg.document and msg.document.file_size and msg.document.file_size < 3 * 1024 * 1024:
+                elif is_image and msg.document:
                     thumb_target = msg.document
 
                 if thumb_target:
-                    temp_path = await client.download_media(thumb_target, file_name=str(disk_file))
-                    if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                        data = disk_file.read_bytes()
-                        self.put_ram(file_id, data)
-                        self.prune_disk_if_needed()
-                        future.set_result(data)
-                        return data
+                    temp_raw_file = Path(f"./cache/raw_thumb_{file_id}_{ext}")
+                    temp_raw_file.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        downloaded = await client.download_media(thumb_target, file_name=str(temp_raw_file))
+                        if downloaded and os.path.exists(downloaded) and os.path.getsize(downloaded) > 0:
+                            data = generate_pillow_thumbnail(downloaded, disk_file)
+                            if data:
+                                self.put_ram(file_id, data)
+                                self.prune_disk_if_needed()
+                                future.set_result(data)
+                                return data
+                    finally:
+                        try:
+                            if temp_raw_file.exists():
+                                temp_raw_file.unlink(missing_ok=True)
+                        except Exception:
+                            pass
 
                 future.set_result(None)
                 return None

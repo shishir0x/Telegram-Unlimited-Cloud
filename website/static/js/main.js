@@ -455,7 +455,8 @@ function showDirectory(data, breadcrumbs) {
         const ext = (item.name && item.name.includes('.')) ? item.name.split('.').pop().toLowerCase() : '';
         const isMedia = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic', 'tiff', 'mp4', 'mkv', 'webm', 'mov', 'avi', '3gp'].includes(ext);
         const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
-        const thumbUrl = `/thumbnail?path=${encodeURIComponent(filePath)}`;
+        const authParam = new URLSearchParams(window.location.search).get('auth');
+        const thumbUrl = `/thumbnail?path=${encodeURIComponent(filePath)}${authParam ? `&auth=${encodeURIComponent(authParam)}` : ''}`;
 
         let previewInnerHtml = '';
         if (isMedia) {

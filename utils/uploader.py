@@ -60,6 +60,21 @@ async def start_file_uploader(
     DRIVE_DATA.new_file(directory_path, filename, message.id, size)
     PROGRESS_CACHE[id] = ("completed", size, size, filename)
 
+    # Pre-generate 10KB thumbnail for instant browser rendering
+    try:
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]:
+            from PIL import Image
+            import io
+            thumb_cache_dir = os.path.join(".", "cache", "thumbs")
+            os.makedirs(thumb_cache_dir, exist_ok=True)
+            with Image.open(str(file_path)) as img:
+                img = img.convert("RGB")
+                img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                img.save(os.path.join(thumb_cache_dir, f"{message.id}.jpg"), format="JPEG", quality=75, optimize=True)
+    except Exception as e:
+        logger.warning(f"Failed to pre-generate upload thumbnail for {filename}: {e}")
+
     logger.info(f"Uploaded file {file_path} {id}")
 
     if delete:
