@@ -414,6 +414,68 @@ class NewDriveData:
         self.save()
         logger.info(f"Moved item '{item.name}' ({item.id}) from '{src_path}' to '{dest_folder_path}'.")
 
+    def copy_file_folder(self, src_path: str, dest_folder_path: str = None) -> str:
+        import copy
+        src_path = ("/" + src_path.strip("/")).replace("//", "/")
+        if len(src_path.strip("/").split("/")) > 1:
+            src_parent_path = "/" + "/".join(src_path.strip("/").split("/")[:-1])
+            src_item_id = src_path.strip("/").split("/")[-1]
+        else:
+            src_parent_path = "/"
+            src_item_id = src_path.strip("/")
+
+        if not dest_folder_path:
+            dest_folder_path = src_parent_path
+        else:
+            dest_folder_path = ("/" + dest_folder_path.strip("/")).replace("//", "/")
+
+        src_folder = self.get_directory(src_parent_path)
+        dest_folder = self.get_directory(dest_folder_path)
+
+        if not src_folder or src_item_id not in src_folder.contents:
+            try:
+                item = self.get_file(src_path)
+            except Exception:
+                raise KeyError(f"Source item not found: {src_path}")
+        else:
+            item = src_folder.contents[src_item_id]
+
+        if not dest_folder:
+            raise KeyError(f"Destination folder not found: {dest_folder_path}")
+
+        new_item = copy.deepcopy(item)
+        new_item.id = getRandomID()
+
+        # Rename copy
+        if new_item.type == "file":
+            if "." in new_item.name:
+                name_p, ext_p = new_item.name.rsplit(".", 1)
+                new_item.name = f"Copy of {name_p}.{ext_p}"
+            else:
+                new_item.name = f"Copy of {new_item.name}"
+        else:
+            new_item.name = f"Copy of {new_item.name}"
+
+        new_item.path = dest_folder_path
+
+        if new_item.type == "folder":
+            def regenerate_ids(folder, parent_p):
+                for cid in list(folder.contents.keys()):
+                    child = folder.contents.pop(cid)
+                    child.id = getRandomID()
+                    if child.type == "folder":
+                        child.path = ("/" + parent_p.strip("/") + "/" + folder.id + "/").replace("//", "/")
+                        regenerate_ids(child, child.path)
+                    else:
+                        child.path = ("/" + parent_p.strip("/") + "/" + folder.id).replace("//", "/")
+                    folder.contents[child.id] = child
+            regenerate_ids(new_item, dest_folder_path)
+
+        dest_folder.contents[new_item.id] = new_item
+        self.save()
+        logger.info(f"Copied item '{item.name}' to '{dest_folder_path}' as '{new_item.name}' ({new_item.id}).")
+        return new_item.id
+
     def search_file_folder(self, query: str):
         logger.info(f"Searching for items matching query '{query}'.")
 

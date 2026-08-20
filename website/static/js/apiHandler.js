@@ -193,6 +193,26 @@ async function moveFileFolder(srcPath, destPath) {
     }
 }
 
+async function copyFileFolder(srcPath, destPath = null) {
+    const data = {
+        'src_path': srcPath,
+        'dest_path': destPath
+    };
+    try {
+        const json = await postJson('/api/copyFileFolder', data);
+        if (json.status === 'ok') {
+            showToast('Item copied successfully! 📋');
+            broadcastDriveChange('COPY', { srcPath, destPath });
+            getCurrentDirectory();
+        } else {
+            alert('Failed to copy item: ' + (json.status || json.detail || 'Error'));
+        }
+    } catch (err) {
+        console.error(err);
+        alert('Error copying item');
+    }
+}
+
 async function getFolderShareAuth(path) {
     const data = { 'path': path };
     const json = await postJson('/api/getFolderShareAuth', data);

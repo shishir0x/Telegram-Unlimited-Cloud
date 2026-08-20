@@ -565,6 +565,25 @@ async def move_file_folder(request: Request):
         return JSONResponse({"status": str(e)}, status_code=400)
 
 
+@app.post("/api/copyFileFolder")
+async def copy_file_folder_api(request: Request):
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+
+    data = await request.json()
+
+    if not is_admin_authenticated(request, data=data):
+        return JSONResponse({"status": "Invalid password"}, status_code=401)
+
+    logger.info(f"copyFileFolder {data}")
+    try:
+        new_id = drive.copy_file_folder(data["src_path"], data.get("dest_path"))
+        return JSONResponse({"status": "ok", "new_id": new_id})
+    except Exception as e:
+        logger.error(f"Error copying file/folder: {e}")
+        return JSONResponse({"status": str(e)}, status_code=400)
+
+
 
 SAVE_PROGRESS = {}
 

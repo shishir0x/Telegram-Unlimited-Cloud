@@ -221,13 +221,7 @@ function updateBreadcrumbs(breadcrumbs) {
             e.stopPropagation();
             crumbEl.classList.remove('gd-crumb-drop-hover');
 
-            const draggedItem = getDraggedItem(e);
-            if (draggedItem) {
-                const srcPath = draggedItem.path;
-                if (srcPath === targetPath) return;
-                moveFileFolder(srcPath, targetPath);
-                clearDraggedItem();
-            } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 showToast(`Uploading ${e.dataTransfer.files.length} file(s) into "${crumbEl.innerText.trim()}"...`);
                 uploadFilesQueue(e.dataTransfer.files, targetPath);
             }
@@ -389,7 +383,7 @@ function showDirectory(data, breadcrumbs) {
 
         // Table Row
         tableHtml += `
-            <tr draggable="${!isTrash}" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr">
+            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr">
                 <td class="col-name-td">
                     <div class="td-align file-name-cell">
                         ${badge}
@@ -411,7 +405,7 @@ function showDirectory(data, breadcrumbs) {
         // Grid Folder Chip
         const folderChip = document.createElement('div');
         folderChip.className = 'gd-folder-chip folder-tr';
-        folderChip.setAttribute('draggable', !isTrash);
+        folderChip.setAttribute('draggable', 'false');
         folderChip.setAttribute('data-id', item.id);
         folderChip.setAttribute('data-path', item.path);
         folderChip.setAttribute('data-name', item.name);
@@ -428,7 +422,7 @@ function showDirectory(data, breadcrumbs) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -442,7 +436,7 @@ function showDirectory(data, breadcrumbs) {
 
         // Table Row
         tableHtml += `
-            <tr draggable="${!isTrash}" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr">
+            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr">
                 <td class="col-name-td">
                     <div class="td-align file-name-cell">
                         ${badge}
@@ -464,7 +458,7 @@ function showDirectory(data, breadcrumbs) {
         // Grid File Card
         const fileCard = document.createElement('div');
         fileCard.className = 'gd-file-card file-tr';
-        fileCard.setAttribute('draggable', !isTrash);
+        fileCard.setAttribute('draggable', 'false');
         fileCard.setAttribute('data-id', item.id);
         fileCard.setAttribute('data-path', item.path);
         fileCard.setAttribute('data-name', item.name);
@@ -514,7 +508,7 @@ function showDirectory(data, breadcrumbs) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -522,7 +516,7 @@ function showDirectory(data, breadcrumbs) {
     const ctxContainer = document.getElementById('context-menus-container');
     if (ctxContainer) ctxContainer.innerHTML = menusHtml;
 
-    // Attach Click and Double Click & Drag Events
+    // Attach Click and Double Click Events
     if (!isTrash) {
         // Folders
         document.querySelectorAll('.folder-tr').forEach(el => {
@@ -532,15 +526,6 @@ function showDirectory(data, breadcrumbs) {
                 selectItem(this.getAttribute('data-id'));
                 openFolder.call(this);
             };
-
-            // Draggable item
-            el.addEventListener('dragstart', handleItemDragStart);
-            el.addEventListener('dragend', handleItemDragEnd);
-
-            // Drop target folder
-            el.addEventListener('dragover', handleFolderDragOver);
-            el.addEventListener('dragleave', handleFolderDragLeave);
-            el.addEventListener('drop', handleFolderDrop);
         });
 
         // Files
@@ -554,10 +539,6 @@ function showDirectory(data, breadcrumbs) {
                     selectItem(this.getAttribute('data-id'));
                 }
             };
-
-            // Draggable item
-            el.addEventListener('dragstart', handleItemDragStart);
-            el.addEventListener('dragend', handleItemDragEnd);
         });
     }
 
@@ -833,14 +814,7 @@ function setupDragAndDrop() {
 
         e.preventDefault();
 
-        const draggedItem = getDraggedItem(e);
-        if (draggedItem) {
-            const currentPath = getCurrentPath();
-            if (draggedItem.path !== currentPath) {
-                moveFileFolder(draggedItem.path, currentPath);
-            }
-            clearDraggedItem();
-        } else if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             uploadFilesQueue(e.dataTransfer.files, getCurrentPath());
         }
     });
@@ -866,11 +840,7 @@ function setupDragAndDrop() {
             e.stopPropagation();
             navMyDrive.classList.remove('gd-nav-drop-hover');
 
-            const draggedItem = getDraggedItem(e);
-            if (draggedItem) {
-                moveFileFolder(draggedItem.path, '/');
-                clearDraggedItem();
-            } else if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 uploadFilesQueue(e.dataTransfer.files, '/');
             }
         });

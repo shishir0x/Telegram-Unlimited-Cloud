@@ -94,6 +94,10 @@ function openMobileBottomSheet(id) {
                 <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
                 <span>Move to...</span>
             </div>
+            <div class="gd-bs-item" id="bs-act-copy">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                <span>Make a copy</span>
+            </div>
             <div class="gd-bs-item" id="bs-act-details">
                 <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
                 <span>Details & info</span>
@@ -172,6 +176,16 @@ function openMobileBottomSheet(id) {
         actMove.onclick = () => {
             closeMobileBottomSheet();
             openMoveModal(id);
+        };
+    }
+
+    const actCopy = document.getElementById('bs-act-copy');
+    if (actCopy) {
+        actCopy.onclick = async () => {
+            closeMobileBottomSheet();
+            const srcFullPath = (item.path + '/' + item.id).replaceAll('//', '/');
+            showToast('Creating copy... ⏳');
+            await copyFileFolder(srcFullPath);
         };
     }
 
@@ -302,6 +316,19 @@ function openMoreButton(div) {
 
         const moveBtn = moreDiv.querySelector(`#move-${id}`);
         if (moveBtn) moveBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); openMoveModal(id); };
+
+        const copyBtn = moreDiv.querySelector(`#copy-${id}`);
+        if (copyBtn) {
+            copyBtn.onclick = async (e) => {
+                e.stopPropagation();
+                closeMoreMenu(moreDiv);
+                const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+                if (!item) return;
+                const srcFullPath = (item.path + '/' + item.id).replaceAll('//', '/');
+                showToast('Creating copy... ⏳');
+                await copyFileFolder(srcFullPath);
+            };
+        }
 
         const trashBtn = moreDiv.querySelector(`#trash-${id}`);
         if (trashBtn) trashBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); trashFileFolder.call(trashBtn); };
