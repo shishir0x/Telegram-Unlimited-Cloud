@@ -53,8 +53,7 @@ IGNORED_DIRS = {
     "recovery",
     "config.msi",
     "msocache",
-    # Android System Folders
-    "android",
+    # Android Folders to Skip (Android/media and Samsung Backup are enabled)
     "android/data",
     "android/obb",
     ".trash",
@@ -65,7 +64,6 @@ IGNORED_DIRS = {
     ".filemanagerrecycler",
     ".aceself",
     ".slogan",
-    "samsung backup",
     # Dev & Cache Junk
     "node_modules",
     "__pycache__",
@@ -137,7 +135,15 @@ def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str
 
 def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
     name_lower = dir_name.lower()
-    path_lower = full_rel_path.lower().replace("\\", "/")
+    path_lower = full_rel_path.lower().replace("\\", "/").strip("/")
+
+    # Explicitly allow Android root and Android/media (for WhatsApp, Telegram, etc.)
+    if path_lower == "android" or path_lower.endswith("/android") or "android/media" in path_lower:
+        if "android/data" in path_lower or "android/obb" in path_lower:
+            return True
+        if name_lower.startswith((".", "$")):
+            return True
+        return False
 
     if name_lower in IGNORED_DIRS:
         return True
@@ -808,15 +814,18 @@ if ($subPath) {{
 
 $foldersList = [System.Collections.Generic.List[string]]::new()
 $filesList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$skipDirs = @('android', '.trash', '.thumbnails', 'lost.dir', '.soundrecordrecycler', '.filemanagerrecycler', '.aceself', '.slogan', 'samsung backup')
+$skipDirs = @('.trash', '.thumbnails', 'lost.dir', '.soundrecordrecycler', '.filemanagerrecycler', '.aceself', '.slogan')
 
 function Scan-MTP($folderItem, $relPath) {{
     if ($relPath) {{ $foldersList.Add($relPath) }}
+    $pLower = $relPath.ToLower()
     foreach ($item in $folderItem.GetFolder.Items()) {{
         $name = $item.Name
         $nameLower = $name.ToLower()
         if ($item.IsFolder) {{
-            if ($nameLower -notin $skipDirs -and -not $nameLower.StartsWith('.')) {{
+            # Allow Android/media, but skip Android/data and Android/obb
+            $isAndroidDataOrObb = ($pLower -eq 'android' -or $pLower.EndsWith('/android')) -and ($nameLower -eq 'data' -or $nameLower -eq 'obb')
+            if (-not $isAndroidDataOrObb -and $nameLower -notin $skipDirs -and -not $nameLower.StartsWith('.')) {{
                 $childRel = if ($relPath) {{ "$relPath/$name" }} else {{ $name }}
                 Scan-MTP $item $childRel
             }}
