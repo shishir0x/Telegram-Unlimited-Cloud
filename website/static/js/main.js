@@ -493,6 +493,7 @@ function showDirectory(data, breadcrumbs) {
         fileCard.innerHTML = `
             <div class="gd-file-card-preview">
                 ${previewInnerHtml}
+                <a data-id="${item.id}" class="more-btn gd-file-card-more-btn" title="More actions" onclick="event.stopPropagation();"><img src="static/assets/more-icon.svg"></a>
             </div>
             <div class="gd-file-card-body">
                 <div class="gd-file-card-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>

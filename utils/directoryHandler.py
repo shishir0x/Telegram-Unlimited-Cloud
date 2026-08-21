@@ -387,24 +387,41 @@ class NewDriveData:
         src_folder = self.get_directory(src_parent_path)
         dest_folder = self.get_directory(dest_folder_path)
 
-        if not src_folder or src_item_id not in src_folder.contents:
-            raise KeyError(f"Source item not found: {src_path}")
         if not dest_folder:
             raise KeyError(f"Destination folder not found: {dest_folder_path}")
 
-        item = src_folder.contents.pop(src_item_id)
+        item = None
+        if src_folder and hasattr(src_folder, "contents") and src_item_id in src_folder.contents:
+            item = src_folder.contents.pop(src_item_id)
+        else:
+            # Fallback search across tree to locate item and remove from its real parent
+            def locate_and_pop(folder):
+                if hasattr(folder, "contents"):
+                    if src_item_id in folder.contents:
+                        return folder.contents.pop(src_item_id)
+                    for child in list(folder.contents.values()):
+                        if getattr(child, "type", None) == "folder":
+                            res = locate_and_pop(child)
+                            if res:
+                                return res
+                return None
+
+            item = locate_and_pop(self.contents.get("/"))
+
+        if not item:
+            raise KeyError(f"Source item not found: {src_path}")
 
         # Update item's path
         if item.type == "folder":
             item.path = ("/" + dest_folder_path.strip("/") + "/").replace("//", "/")
 
-            def update_children_paths(folder, parent_path):
+            def update_children_paths(folder, parent_p):
                 for child in folder.contents.values():
                     if child.type == "folder":
-                        child.path = ("/" + parent_path.strip("/") + "/" + folder.id + "/").replace("//", "/")
-                        update_children_paths(child, child.path)
+                        child.path = ("/" + parent_p.strip("/") + "/" + folder.id + "/").replace("//", "/")
+                        update_children_paths(child, ("/" + parent_p.strip("/") + "/" + folder.id).replace("//", "/"))
                     else:
-                        child.path = ("/" + parent_path.strip("/") + "/" + folder.id).replace("//", "/")
+                        child.path = ("/" + parent_p.strip("/") + "/" + folder.id).replace("//", "/")
 
             update_children_paths(item, dest_folder_path)
         else:
@@ -432,19 +449,35 @@ class NewDriveData:
         src_folder = self.get_directory(src_parent_path)
         dest_folder = self.get_directory(dest_folder_path)
 
-        if not src_folder or src_item_id not in src_folder.contents:
-            try:
-                item = self.get_file(src_path)
-            except Exception:
-                raise KeyError(f"Source item not found: {src_path}")
-        else:
-            item = src_folder.contents[src_item_id]
-
         if not dest_folder:
             raise KeyError(f"Destination folder not found: {dest_folder_path}")
 
+        item = None
+        if src_folder and hasattr(src_folder, "contents") and src_item_id in src_folder.contents:
+            item = src_folder.contents[src_item_id]
+        else:
+            try:
+                item = self.get_file(src_path)
+            except Exception:
+                # Fallback search by ID
+                def find_any_item(folder):
+                    if hasattr(folder, "contents"):
+                        if src_item_id in folder.contents:
+                            return folder.contents[src_item_id]
+                        for child in folder.contents.values():
+                            if getattr(child, "type", None) == "folder":
+                                res = find_any_item(child)
+                                if res:
+                                    return res
+                    return None
+                item = find_any_item(self.contents.get("/"))
+
+        if not item:
+            raise KeyError(f"Source item not found: {src_path}")
+
         new_item = copy.deepcopy(item)
         new_item.id = getRandomID()
+        new_item.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Rename copy
         if new_item.type == "file":
@@ -453,22 +486,23 @@ class NewDriveData:
                 new_item.name = f"Copy of {name_p}.{ext_p}"
             else:
                 new_item.name = f"Copy of {new_item.name}"
+            new_item.path = dest_folder_path if dest_folder_path == "/" else dest_folder_path
         else:
             new_item.name = f"Copy of {new_item.name}"
+            new_item.path = ("/" + dest_folder_path.strip("/") + "/").replace("//", "/")
 
-        new_item.path = dest_folder_path
-
-        if new_item.type == "folder":
             def regenerate_ids(folder, parent_p):
                 for cid in list(folder.contents.keys()):
                     child = folder.contents.pop(cid)
                     child.id = getRandomID()
+                    child.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     if child.type == "folder":
                         child.path = ("/" + parent_p.strip("/") + "/" + folder.id + "/").replace("//", "/")
-                        regenerate_ids(child, child.path)
+                        regenerate_ids(child, ("/" + parent_p.strip("/") + "/" + folder.id).replace("//", "/"))
                     else:
                         child.path = ("/" + parent_p.strip("/") + "/" + folder.id).replace("//", "/")
                     folder.contents[child.id] = child
+
             regenerate_ids(new_item, dest_folder_path)
 
         dest_folder.contents[new_item.id] = new_item

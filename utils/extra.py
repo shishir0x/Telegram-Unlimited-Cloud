@@ -86,19 +86,34 @@ def convert_class_to_dict(data, isObject, showtrash=False):
 
 
 async def auto_ping_website():
-    if WEBSITE_URL is not None:
-        async with aiohttp.ClientSession() as session:
+    if WEBSITE_URL is not None and WEBSITE_URL.strip():
+        url = WEBSITE_URL.strip()
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = f"https://{url}"
+        
+        # Ensure we ping the health endpoint
+        if not url.endswith("/health") and not url.endswith("/ping"):
+            target_url = f"{url.rstrip('/')}/health"
+        else:
+            target_url = url
+
+        headers = {"User-Agent": "TG-Drive-KeepAlive/1.0"}
+        
+        # Initial sleep before first ping to allow server startup
+        await asyncio.sleep(10)
+        
+        async with aiohttp.ClientSession(headers=headers) as session:
             while True:
                 try:
-                    async with session.get(WEBSITE_URL) as response:
-                        if response.status == 200:
-                            logger.info(f"Pinged website at {get_current_utc_time()}")
+                    async with session.get(target_url, timeout=aiohttp.ClientTimeout(total=15)) as response:
+                        if response.status in [200, 301, 302]:
+                            logger.info(f"Keep-alive ping success to {target_url} at {get_current_utc_time()}")
                         else:
-                            logger.warning(f"Failed to ping website: {response.status}")
+                            logger.warning(f"Keep-alive ping returned status {response.status}")
                 except Exception as e:
-                    logger.warning(f"Failed to ping website: {e}")
+                    logger.warning(f"Keep-alive ping exception: {e}")
 
-                await asyncio.sleep(60)  # Ping website every minute
+                await asyncio.sleep(240)  # Ping every 4 minutes to keep Render free tier awake
 
 
 import shutil
@@ -120,10 +135,11 @@ def reset_cache_dir():
                 item.unlink(missing_ok=True)
             except Exception:
                 pass
-        elif item.is_dir():
+        elif item.is_dir() and item.name != "thumbs":
             shutil.rmtree(item, ignore_errors=True)
             
-    logger.info("Cache and downloads directory reset (sessions preserved)")
+    (cache_dir / "thumbs").mkdir(parents=True, exist_ok=True)
+    logger.info("Cache and downloads directory reset (sessions and thumbs dir preserved)")
 
 
 def parse_content_disposition(content_disposition):

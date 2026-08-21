@@ -80,8 +80,8 @@ async def lifespan(app: FastAPI):
             "Please update ADMIN_PASSWORD in your environment variables for security."
         )
 
-    # Initialize the clients
-    await initialize_clients()
+    # Initialize Telegram clients in the background so server starts immediately (<100ms)
+    asyncio.create_task(initialize_clients())
 
     # Start the website auto ping task
     asyncio.create_task(auto_ping_website())
@@ -109,10 +109,19 @@ async def home_page():
     return FileResponse("website/home.html")
 
 
-@app.api_route("/health", methods=["GET", "HEAD", "POST"])
-@app.api_route("/ping", methods=["GET", "HEAD", "POST"])
+@app.api_route("/health", methods=["GET", "HEAD", "POST", "OPTIONS"])
+@app.api_route("/ping", methods=["GET", "HEAD", "POST", "OPTIONS"])
+@app.api_route("/healthz", methods=["GET", "HEAD", "POST", "OPTIONS"])
 async def health_check():
-    return JSONResponse({"status": "ok", "message": "TG Drive is active"})
+    from utils.clients import multi_clients, premium_clients
+    return JSONResponse(
+        {
+            "status": "ok",
+            "message": "TG Drive is active and healthy",
+            "telegram_ready": (len(multi_clients) > 0 or len(premium_clients) > 0),
+        },
+        status_code=200,
+    )
 
 
 @app.get("/stream")
@@ -313,6 +322,7 @@ class ThumbnailService:
                                 out_buf = io.BytesIO()
                                 img.save(out_buf, format="JPEG", quality=75, optimize=True)
                                 thumb_bytes = out_buf.getvalue()
+                                self.cache_dir.mkdir(parents=True, exist_ok=True)
                                 disk_file.write_bytes(thumb_bytes)
                                 self.put_ram(file_id, thumb_bytes)
                                 self.prune_disk_if_needed()
