@@ -119,7 +119,7 @@ def compute_fast_file_hash(filepath: Path) -> str:
         return ""
 
 
-def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str = '', length: int = 20, fill: str = '█', is_finished: bool = False):
+def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str = '', length: int = 15, fill: str = '█', is_finished: bool = False):
     if total <= 0:
         percent = 100.0
         filled_length = length
@@ -128,7 +128,7 @@ def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str
         filled_length = int(length * iteration // total)
     bar = fill * filled_length + '░' * (length - filled_length)
     msg = f"\r  {prefix} [{bar}] {percent:5.1f}% {suffix}"
-    sys.stdout.write(f"{msg:<68}")
+    sys.stdout.write(f"{msg:<65}")
     sys.stdout.flush()
     if is_finished:
         sys.stdout.write('\n')
@@ -260,6 +260,9 @@ class TGDriveBackupClient:
         self.password = password
         self.drive_root = drive_root.strip("/")
         self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=30, max_retries=3)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         self.manifest = SyncManifest()
         self._folder_id_cache: Dict[str, str] = {"": "/"}
 
@@ -595,36 +598,37 @@ class TGDriveBackupClient:
                 print(f"    ❌ Upload failed: {data.get('status')}")
                 return False
 
-            # Poll for Telegram upload completion with real-time progress bar
-            for _ in range(240):
-                time.sleep(0.4)
+            # Poll for Telegram upload completion with real-time progress bar (up to 5 mins)
+            for _ in range(600):
+                time.sleep(0.5)
                 try:
                     prog_res = self.session.post(
                         f"{self.base_url}/api/getUploadProgress",
                         json={"password": self.password, "id": upload_id},
-                        timeout=10,
+                        timeout=12,
                     )
-                    prog_data = prog_res.json()
-                    if prog_data.get("status") == "ok":
-                        status = prog_data["data"][0]
-                        current_bytes = prog_data["data"][1]
-                        total_bytes = prog_data["data"][2] or file_size
+                    if prog_res.status_code == 200:
+                        prog_data = prog_res.json()
+                        if prog_data.get("status") == "ok":
+                            status = prog_data["data"][0]
+                            current_bytes = prog_data["data"][1]
+                            total_bytes = prog_data["data"][2] or file_size
 
-                        duration = max(time.time() - start_time, 0.1)
-                        speed = current_bytes / duration
-                        speed_str = f"{format_size(int(speed))}/s"
+                            duration = max(time.time() - start_time, 0.1)
+                            speed = current_bytes / duration
+                            speed_str = f"{format_size(int(speed))}/s"
 
-                        if status == "running":
-                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
-                            self.push_web_sync_status({
-                                "current_bytes": current_bytes,
-                                "speed_str": speed_str
-                            })
-                        elif status == "completed":
-                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
-                            h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
-                            self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
-                            return True
+                            if status == "running":
+                                print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
+                                self.push_web_sync_status({
+                                    "current_bytes": current_bytes,
+                                    "speed_str": speed_str
+                                })
+                            elif status == "completed":
+                                print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
+                                h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
+                                self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
+                                return True
                 except Exception:
                     pass
 
@@ -1029,12 +1033,22 @@ while ($line = [Console]::In.ReadLine()) {{
     if ($fileItem -and $destFolder) {{
         $destFolder.CopyHere($fileItem, 16)
         $found = $false
-        for ($w = 0; $w -lt 100; $w++) {{
+        $prevLen = -1
+        $stableCount = 0
+        for ($w = 0; $w -lt 400; $w++) {{
             $copied = Get-ChildItem -LiteralPath $destPath -File | Select-Object -First 1
             if ($copied -and $copied.Length -gt 0) {{
-                Write-Output ("READY|" + $copied.Length)
-                $found = $true
-                break
+                if ($copied.Length -eq $prevLen) {{
+                    $stableCount++
+                    if ($stableCount -ge 2) {{
+                        Write-Output ("READY|" + $copied.Length)
+                        $found = $true
+                        break
+                    }}
+                }} else {{
+                    $prevLen = $copied.Length
+                    $stableCount = 0
+                }}
             }}
             Start-Sleep -Milliseconds 100
         }}

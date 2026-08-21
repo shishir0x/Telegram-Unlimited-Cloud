@@ -39,6 +39,9 @@ async def initialize_clients():
                     api_hash=config.API_HASH,
                     bot_token=token,
                     workdir=session_cache_path,
+                    max_concurrent_transmissions=8,
+                    workers=16,
+                    no_updates=True,
                 )
                 client.loop = asyncio.get_running_loop()
                 await client.start()
@@ -59,6 +62,8 @@ async def initialize_clients():
                     session_string=token,
                     sleep_threshold=config.SLEEP_THRESHOLD,
                     workdir=session_cache_path,
+                    max_concurrent_transmissions=8,
+                    workers=16,
                     no_updates=True,
                 ).start()
                 try:
