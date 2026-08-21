@@ -119,7 +119,7 @@ def compute_fast_file_hash(filepath: Path) -> str:
         return ""
 
 
-def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str = '', length: int = 25, fill: str = '█'):
+def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str = '', length: int = 20, fill: str = '█', is_finished: bool = False):
     if total <= 0:
         percent = 100.0
         filled_length = length
@@ -127,9 +127,10 @@ def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str
         percent = min(100.0, (iteration / float(total)) * 100.0)
         filled_length = int(length * iteration // total)
     bar = fill * filled_length + '░' * (length - filled_length)
-    sys.stdout.write(f'\r  {prefix} [{bar}] {percent:.1f}% {suffix}')
+    msg = f"\r  {prefix} [{bar}] {percent:5.1f}% {suffix}"
+    sys.stdout.write(f"{msg:<68}")
     sys.stdout.flush()
-    if iteration >= total:
+    if is_finished:
         sys.stdout.write('\n')
 
 
@@ -424,9 +425,10 @@ class TGDriveBackupClient:
 
             pct = (idx / total_folders) * 100.0
             short_name = rel_folder if rel_folder else "Root"
-            if len(short_name) > 30:
-                short_name = "…" + short_name[-29:]
-            sys.stdout.write(f"\r  |{'█' * int(25 * idx // total_folders):<25}| {pct:5.1f}% ({idx}/{total_folders}) [DIR] {short_name:<30}")
+            if len(short_name) > 22:
+                short_name = "…" + short_name[-21:]
+            bar_fill = int(18 * idx // total_folders)
+            sys.stdout.write(f"\r  |{'█' * bar_fill:<18}| {pct:5.1f}% ({idx}/{total_folders}) [{short_name:<22}]  ")
             sys.stdout.flush()
 
             if idx % 10 == 0 or idx == total_folders:
@@ -520,13 +522,13 @@ class TGDriveBackupClient:
                         speed_str = f"{format_size(int(speed))}/s"
 
                         if status == "running":
-                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})")
+                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
                             self.push_web_sync_status({
                                 "current_bytes": current_bytes,
                                 "speed_str": speed_str
                             })
                         elif status == "completed":
-                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})")
+                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                             fhash = compute_fast_file_hash(local_file_path)
                             self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
                             return True
@@ -613,13 +615,13 @@ class TGDriveBackupClient:
                         speed_str = f"{format_size(int(speed))}/s"
 
                         if status == "running":
-                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})")
+                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
                             self.push_web_sync_status({
                                 "current_bytes": current_bytes,
                                 "speed_str": speed_str
                             })
                         elif status == "completed":
-                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})")
+                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                             h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
                             self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
                             return True
@@ -791,19 +793,23 @@ class TGDriveBackupClient:
         }, f"Scanning phone storage: {phone_name}...")
 
         # ── Step 1: Scan MTP Phone Folders & Files ────────────────────────────
-        print("⏳ Scanning phone folders and files over USB MTP...")
+        print("⏳ Scanning phone folders and files over USB MTP (Live Stream)...")
+        escaped_phone = phone_name.replace("'", "''")
+        escaped_storage = storage_name.replace("'", "''")
+        escaped_subpath = subfolder_rel.replace('/', '\\').replace("'", "''").strip('\\')
+
         ps_scan = f'''
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $shell = New-Object -ComObject Shell.Application
 $thisPC = $shell.Namespace(17)
-$phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{phone_name}*" }}
+$phone = $thisPC.Items() | Where-Object {{ $_.Name -like "*{escaped_phone}*" }}
 if (-not $phone) {{ Write-Error "Phone not found"; exit 1 }}
 
-$storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{storage_name}*" }}
+$storage = $phone.GetFolder.Items() | Where-Object {{ $_.Name -like "*{escaped_storage}*" }}
 if (-not $storage) {{ Write-Error "Storage not found"; exit 1 }}
 
 $targetRoot = $storage
-$subPath = "{subfolder_rel.replace('/', chr(92))}".Trim('\\')
+$subPath = "{escaped_subpath}"
 if ($subPath) {{
     $parts = $subPath.Split('\\')
     foreach ($p in $parts) {{
@@ -812,65 +818,89 @@ if ($subPath) {{
     }}
 }}
 
-$foldersList = [System.Collections.Generic.List[string]]::new()
-$filesList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$skipDirs = @('.trash', '.thumbnails', 'lost.dir', '.soundrecordrecycler', '.filemanagerrecycler', '.aceself', '.slogan')
+$skipDirs = @('.trash', '.thumbnails', 'lost.dir', '.soundrecordrecycler', '.filemanagerrecycler', '.aceself', '.slogan', '.statuses', 'cache', '.cache')
 
-function Scan-MTP($folderItem, $relPath) {{
-    if ($relPath) {{ $foldersList.Add($relPath) }}
+function Scan-Stream($folderItem, $relPath) {{
+    if ($relPath) {{
+        Write-Output ('DIR|' + $relPath)
+    }}
     $pLower = $relPath.ToLower()
     foreach ($item in $folderItem.GetFolder.Items()) {{
         $name = $item.Name
         $nameLower = $name.ToLower()
         if ($item.IsFolder) {{
-            # Allow Android/media, but skip Android/data and Android/obb
             $isAndroidDataOrObb = ($pLower -eq 'android' -or $pLower.EndsWith('/android')) -and ($nameLower -eq 'data' -or $nameLower -eq 'obb')
             if (-not $isAndroidDataOrObb -and $nameLower -notin $skipDirs -and -not $nameLower.StartsWith('.')) {{
-                $childRel = if ($relPath) {{ "$relPath/$name" }} else {{ $name }}
-                Scan-MTP $item $childRel
+                $childRel = if ($relPath) {{ $relPath + '/' + $name }} else {{ $name }}
+                Scan-Stream $item $childRel
             }}
         }} else {{
             if (-not $nameLower.StartsWith('.') -and -not $nameLower.StartsWith('~$')) {{
-                $filesList.Add([PSCustomObject]@{{
-                    name = $name
-                    folder = $relPath
-                }})
+                Write-Output ('FILE|' + $relPath + '|' + $name)
             }}
         }}
     }}
 }}
 
-Scan-MTP $targetRoot ""
-
-[PSCustomObject]@{{
-    folders = $foldersList
-    files = $filesList
-}} | ConvertTo-Json -Depth 5 -Compress
+Scan-Stream $targetRoot ""
+Write-Output "SCAN_STREAM_DONE"
 '''
         ps_scan_file = staging_dir / "scan.ps1"
         with open(ps_scan_file, "w", encoding="utf-8") as f:
             f.write(ps_scan)
 
+        discovered_folders: List[str] = []
+        discovered_files: List[Dict[str, str]] = []
+        scan_start_time = time.time()
+        last_ui_update = 0.0
+
         try:
-            res = subprocess.run(
+            proc = subprocess.Popen(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_scan_file)],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 encoding="utf-8",
                 errors="replace",
-                check=True
+                bufsize=1
             )
-            data = json.loads(res.stdout)
-            discovered_folders = data.get("folders", [])
-            discovered_files = data.get("files", [])
+
+            for line in iter(proc.stdout.readline, ''):
+                line = line.strip()
+                if not line:
+                    continue
+                if line == "SCAN_STREAM_DONE":
+                    break
+                if line.startswith("DIR|"):
+                    dir_path = line[4:]
+                    discovered_folders.append(dir_path)
+                elif line.startswith("FILE|"):
+                    parts = line[5:].split("|", 1)
+                    rel_dir = parts[0] if len(parts) > 1 else ""
+                    fname = parts[1] if len(parts) > 1 else parts[0]
+                    discovered_files.append({"name": fname, "folder": rel_dir})
+
+                    now = time.time()
+                    if now - last_ui_update >= 0.25:
+                        last_ui_update = now
+                        short_f = rel_dir[-18:] if len(rel_dir) > 18 else rel_dir
+                        line_text = f"\r  ⚡ Scanning: {len(discovered_files):,} files | {len(discovered_folders):,} dirs... [{short_f}]"
+                        sys.stdout.write(f"{line_text:<68}")
+                        sys.stdout.flush()
+
+            proc.terminate()
+            # Clear live line before final summary
+            sys.stdout.write("\r" + " " * 68 + "\r")
+            sys.stdout.flush()
         except Exception as e:
-            print(f"❌ Error scanning phone: {e}")
+            print(f"\n❌ Error scanning phone: {e}")
             shutil.rmtree(staging_dir, ignore_errors=True)
             return
         finally:
             if ps_scan_file.exists():
                 ps_scan_file.unlink(missing_ok=True)
 
-        print(f"  📂 Discovered {len(discovered_folders):,} folders and {len(discovered_files):,} files on phone.")
+        elapsed = time.time() - scan_start_time
+        print(f"  📂 Discovered {len(discovered_folders):,} folders and {len(discovered_files):,} files on phone in {elapsed:.1f}s.")
 
         # ── Step 2: Pre-sync all folder paths (including empty ones!) ─────────
         self.sync_folders_first(discovered_folders, base_tg_prefix)
