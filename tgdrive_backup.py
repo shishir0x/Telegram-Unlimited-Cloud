@@ -1232,7 +1232,14 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
                 }
             else:
                 p_str = input("Enter Phone Mount / Folder path: ").strip().strip('"').strip("'")
-                return "local", Path(p_str), None, None
+                if not p_str:
+                    print("❌ No path entered. Please connect your phone in 'File Transfer' mode or provide a valid path.")
+                    continue
+                p = Path(p_str)
+                if not p.exists():
+                    print(f"❌ Path does not exist: {p_str}")
+                    continue
+                return "local", p, None, None
 
         elif choice == "4":
             if detected_phone_name:
@@ -1246,7 +1253,14 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
                 }
             else:
                 sd_path = input("Enter SD Card Drive Letter (e.g. E:\\ or F:\\): ").strip().strip('"').strip("'")
-                return "local", Path(sd_path), None, None
+                if not sd_path:
+                    print("❌ No path entered.")
+                    continue
+                p = Path(sd_path)
+                if not p.exists():
+                    print(f"❌ Path does not exist: {sd_path}")
+                    continue
+                return "local", p, None, None
 
         elif choice == "5":
             manual_path = input("\nEnter custom folder path (e.g. C:\\Projects\\MyFolder): ").strip().strip('"').strip("'")

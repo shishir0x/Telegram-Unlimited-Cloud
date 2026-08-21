@@ -137,10 +137,29 @@ class NewDriveData:
         if clean_path and clean_path != "/":
             paths = [p for p in clean_path.strip("/").split("/") if p]
             for p in paths:
-                if not hasattr(folder_data, "contents") or p not in folder_data.contents:
+                if not hasattr(folder_data, "contents"):
                     logger.warning(f"Folder '{p}' not found in '{clean_path}'.")
                     return None
-                folder_data = folder_data.contents[p]
+
+                # Check 1: Direct ID key match
+                if p in folder_data.contents and getattr(folder_data.contents[p], "type", "") == "folder":
+                    folder_data = folder_data.contents[p]
+                elif p in folder_data.contents:
+                    folder_data = folder_data.contents[p]
+                else:
+                    # Check 2: Match by folder name (case-insensitive)
+                    matched_child = None
+                    p_lower = p.lower()
+                    for item in folder_data.contents.values():
+                        if getattr(item, "type", "") == "folder":
+                            if getattr(item, "name", "").lower() == p_lower:
+                                matched_child = item
+                                break
+                    if matched_child:
+                        folder_data = matched_child
+                    else:
+                        logger.warning(f"Folder '{p}' not found in '{clean_path}'.")
+                        return None
 
                 if auth and hasattr(folder_data, "auth_hashes") and auth in folder_data.auth_hashes:
                     auth_success = True
@@ -166,8 +185,15 @@ class NewDriveData:
         if clean and clean != "/":
             paths = [p for p in clean.strip("/").split("/") if p]
             for p in paths:
-                if hasattr(folder_data, "contents") and p in folder_data.contents:
-                    folder_data = folder_data.contents[p]
+                if hasattr(folder_data, "contents"):
+                    if p in folder_data.contents:
+                        folder_data = folder_data.contents[p]
+                    else:
+                        p_lower = p.lower()
+                        for item in folder_data.contents.values():
+                            if getattr(item, "type", "") == "folder" and getattr(item, "name", "").lower() == p_lower:
+                                folder_data = item
+                                break
 
         if not hasattr(folder_data, "auth_hashes"):
             folder_data.auth_hashes = []
@@ -180,23 +206,30 @@ class NewDriveData:
         clean = (path or "").replace("/share_", "").replace("share_", "").strip("/")
         if "/" in clean:
             folder_path = "/" + "/".join(clean.split("/")[:-1])
-            file_id = clean.split("/")[-1]
+            file_id_or_name = clean.split("/")[-1]
         else:
             folder_path = "/"
-            file_id = clean
+            file_id_or_name = clean
 
         folder_data = self.get_directory(folder_path, is_admin=True)
         if folder_data:
             if isinstance(folder_data, tuple):
                 folder_data = folder_data[0]
-            if hasattr(folder_data, "contents") and file_id in folder_data.contents:
-                return folder_data.contents[file_id]
+            if hasattr(folder_data, "contents"):
+                if file_id_or_name in folder_data.contents:
+                    return folder_data.contents[file_id_or_name]
+                for item in folder_data.contents.values():
+                    if getattr(item, "type", "") == "file" and getattr(item, "name", "") == file_id_or_name:
+                        return item
 
-        # Recursive fallback search by file_id
+        # Recursive fallback search by file_id or name
         def find_file(folder):
             if hasattr(folder, "contents"):
-                if file_id in folder.contents and getattr(folder.contents[file_id], "type", None) == "file":
-                    return folder.contents[file_id]
+                if file_id_or_name in folder.contents and getattr(folder.contents[file_id_or_name], "type", None) == "file":
+                    return folder.contents[file_id_or_name]
+                for item in folder.contents.values():
+                    if getattr(item, "type", None) == "file" and getattr(item, "name", None) == file_id_or_name:
+                        return item
                 for child in folder.contents.values():
                     if getattr(child, "type", None) == "folder":
                         res = find_file(child)
@@ -347,18 +380,34 @@ class NewDriveData:
         is_share = path.startswith("/share_") or path.startswith("share_")
 
         for part in parts:
-            acc_path += f"/{part}"
-            target_path = f"/share_{acc_path.strip('/')}" if is_share else acc_path
-            if curr and hasattr(curr, "contents") and part in curr.contents:
-                child = curr.contents[part]
-                crumbs.append({"name": child.name, "path": target_path, "id": child.id})
-                curr = child
+            matched_child = None
+            if curr and hasattr(curr, "contents"):
+                if part in curr.contents and getattr(curr.contents[part], "type", "") == "folder":
+                    matched_child = curr.contents[part]
+                elif part in curr.contents:
+                    matched_child = curr.contents[part]
+                else:
+                    part_lower = part.lower()
+                    for item in curr.contents.values():
+                        if getattr(item, "type", "") == "folder" and getattr(item, "name", "").lower() == part_lower:
+                            matched_child = item
+                            break
+
+            if matched_child:
+                acc_path += f"/{matched_child.id}"
+                target_path = f"/share_{acc_path.strip('/')}" if is_share else acc_path
+                crumbs.append({"name": matched_child.name, "path": target_path, "id": matched_child.id})
+                curr = matched_child
             else:
                 found = self._find_folder_by_id(part)
                 if found:
+                    acc_path += f"/{found.id}"
+                    target_path = f"/share_{acc_path.strip('/')}" if is_share else acc_path
                     crumbs.append({"name": found.name, "path": target_path, "id": found.id})
                     curr = found
                 else:
+                    acc_path += f"/{part}"
+                    target_path = f"/share_{acc_path.strip('/')}" if is_share else acc_path
                     crumbs.append({"name": part, "path": target_path, "id": part})
                     curr = None
 

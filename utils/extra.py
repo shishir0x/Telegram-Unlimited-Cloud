@@ -127,10 +127,10 @@ def reset_cache_dir():
     shutil.rmtree(downloads_dir, ignore_errors=True)
     downloads_dir.mkdir(parents=True, exist_ok=True)
     
-    # In cache directory, only remove temp chunks and files, preserve .session files
+    # In cache directory, only remove temp chunks and files, preserve .session and drive.data files
     cache_dir.mkdir(parents=True, exist_ok=True)
     for item in cache_dir.iterdir():
-        if item.is_file() and not item.name.endswith(".session") and not item.name.endswith(".session-journal"):
+        if item.is_file() and not item.name.endswith(".session") and not item.name.endswith(".session-journal") and item.name != "drive.data":
             try:
                 item.unlink(missing_ok=True)
             except Exception:
@@ -139,7 +139,7 @@ def reset_cache_dir():
             shutil.rmtree(item, ignore_errors=True)
             
     (cache_dir / "thumbs").mkdir(parents=True, exist_ok=True)
-    logger.info("Cache and downloads directory reset (sessions and thumbs dir preserved)")
+    logger.info("Cache and downloads directory reset (sessions, drive.data and thumbs dir preserved)")
 
 
 def parse_content_disposition(content_disposition):
