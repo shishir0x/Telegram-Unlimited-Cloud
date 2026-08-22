@@ -1,31 +1,37 @@
 """
-Email Service — OTP Delivery Abstraction
-=========================================
-Sends OTP emails via standard SMTP (compatible with Gmail, Resend SMTP,
-Mailgun SMTP, SendGrid, or any self-hosted server).
+Email Service — OTP Delivery Abstraction (Resend API & SMTP)
+============================================================
+Sends OTP emails via:
+  1. Resend HTTP API (Recommended for cloud platforms like Render where SMTP is blocked)
+  2. Standard SMTP / SMTPS (Gmail, self-hosted, etc.)
 
 Configuration via environment variables:
-    SMTP_HOST       — SMTP server hostname (e.g. smtp.gmail.com)
-    SMTP_PORT       — SMTP port (587 for STARTTLS, 465 for SSL, 25 for plain)
-    SMTP_USER       — SMTP authentication username / email
-    SMTP_PASSWORD   — SMTP authentication password / app password
-    FROM_EMAIL      — Sender address shown to recipients
-    SMTP_USE_TLS    — "true" to use SMTPS (port 465), "false" for STARTTLS (default)
+  Resend API:
+    RESEND_API_KEY     — Resend API Key (starts with re_...)
+    RESEND_FROM_EMAIL  — Sender address (default: "TG Drive <onboarding@resend.dev>")
+
+  SMTP (Fallback):
+    SMTP_HOST          — SMTP server hostname (e.g. smtp.gmail.com)
+    SMTP_PORT          — SMTP port (587 or 465)
+    SMTP_USER          — SMTP authentication username / email
+    SMTP_PASSWORD      — SMTP authentication password / app password
+    FROM_EMAIL         — Sender address shown to recipients
 
 Security notes:
     - OTP values are NEVER logged, even on error.
-    - SMTP credentials are read from environment, never from client input.
-    - Connection errors produce safe user-facing messages only.
+    - Credentials are read from environment, never from client input.
 """
 
 import asyncio
+import json
+import logging
+import os
 import smtplib
 import ssl
-import logging
+import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +43,20 @@ class EmailDeliveryError(Exception):
 
 class EmailService:
     """
-    SMTP-backed email service for OTP delivery.
-
-    Instantiated once at application startup. All configuration comes
-    from environment variables — no credentials are accepted at call time.
+    Email delivery service supporting both Resend HTTPS API and SMTP.
     """
+
+    @property
+    def resend_api_key(self) -> str:
+        return os.getenv("RESEND_API_KEY", "").strip().strip('"').strip("'")
+
+    @property
+    def resend_from_email(self) -> str:
+        custom = os.getenv("RESEND_FROM_EMAIL", "").strip().strip('"').strip("'")
+        if custom:
+            return custom
+        # Default to Resend sandbox sender
+        return f"{self.from_name} <onboarding@resend.dev>"
 
     @property
     def host(self) -> str:
@@ -68,33 +83,20 @@ class EmailService:
 
     @property
     def from_email(self) -> str:
-        raw = (os.getenv("FROM_EMAIL") or self.user).strip().strip('"').strip("'")
-        return raw
+        return (os.getenv("FROM_EMAIL") or self.user).strip().strip('"').strip("'")
 
     @property
     def from_name(self) -> str:
         return os.getenv("FROM_NAME", "TG Drive").strip().strip('"').strip("'")
 
     @property
-    def use_ssl(self) -> bool:
-        return os.getenv("SMTP_USE_TLS", "false").strip().lower() == "true" or self.port == 465
-
-    @property
     def is_configured(self) -> bool:
-        """Returns True if all required SMTP env vars are present."""
+        """Returns True if either Resend API or SMTP is configured."""
+        if bool(self.resend_api_key):
+            return True
         return bool(self.host and self.user and self.password and self.from_email)
 
-    def _build_otp_message(self, to_email: str, otp_placeholder: str) -> MIMEMultipart:
-        """
-        Builds the email MIME object.
-        otp_placeholder is the 6-digit code — caller is responsible for
-        passing only the display value, not logging it.
-        """
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "Your TG Drive verification code"
-        msg["From"] = formataddr((self.from_name, self.from_email))
-        msg["To"] = to_email
-
+    def _build_content(self, otp_placeholder: str) -> tuple[str, str]:
         text_body = f"""Your TG Drive verification code is: {otp_placeholder}
 
 This code expires in 5 minutes and can only be used once.
@@ -150,28 +152,64 @@ If you did not request this code, someone may be attempting to access your drive
   </table>
 </body>
 </html>"""
+        return text_body, html_body
 
-        msg.attach(MIMEText(text_body, "plain", "utf-8"))
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
-        return msg
+    def _send_via_resend(self, to_email: str, otp: str) -> None:
+        """
+        Sends OTP email via Resend HTTPS REST API (Port 443 — never blocked).
+        """
+        text_body, html_body = self._build_content(otp)
+        payload = {
+            "from": self.resend_from_email,
+            "to": [to_email],
+            "subject": "Your TG Drive verification code",
+            "html": html_body,
+            "text": text_body
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.resend_api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "TG-Drive-App/1.0"
+            }
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=12) as response:
+                if response.status in (200, 201):
+                    logger.info(f"OTP email sent successfully via Resend API to {to_email[:3]}***@***")
+                    return
+                else:
+                    body = response.read().decode("utf-8")
+                    logger.error(f"Resend API error status {response.status}: {body}")
+                    raise EmailDeliveryError(f"Resend API returned status {response.status}")
+        except urllib.error.HTTPError as he:
+            body = he.read().decode("utf-8") if he.fp else ""
+            logger.error(f"Resend API HTTP error: {he.code} - {body}")
+            raise EmailDeliveryError(f"Resend API error: {he.code}")
+        except Exception as e:
+            logger.error(f"Resend API request failed: {type(e).__name__} ({e})")
+            raise EmailDeliveryError("Failed to connect to Resend API")
 
-    def _send_sync(self, to_email: str, otp: str) -> None:
+    def _send_via_smtp(self, to_email: str, otp: str) -> None:
         """
         Synchronous SMTP delivery with automatic dual-port fallback (587 STARTTLS / 465 SSL).
         """
-        if not self.is_configured:
-            logger.error("SMTP is not configured. Missing required SMTP variables.")
-            raise EmailDeliveryError(
-                "SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and FROM_EMAIL."
-            )
+        text_body, html_body = self._build_content(otp)
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Your TG Drive verification code"
+        msg["From"] = formataddr((self.from_name, self.from_email))
+        msg["To"] = to_email
+        msg.attach(MIMEText(text_body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-        msg = self._build_otp_message(to_email, otp)
         host = self.host
         user = self.user
         pwd = self.password
         from_addr = self.from_email
 
-        # Determine ports to try: primary port first, then fallback port
         ports_to_try = [self.port]
         fallback_port = 465 if self.port == 587 else 587
         if fallback_port not in ports_to_try:
@@ -182,34 +220,46 @@ If you did not request this code, someone may be attempting to access your drive
             try:
                 context = ssl.create_default_context()
                 if p == 465:
-                    # SMTPS — direct SSL connection
-                    with smtplib.SMTP_SSL(host, p, context=context, timeout=12) as server:
+                    with smtplib.SMTP_SSL(host, p, context=context, timeout=10) as server:
                         server.login(user, pwd)
                         server.sendmail(from_addr, [to_email], msg.as_string())
                 else:
-                    # STARTTLS — plain connection upgraded to TLS
-                    with smtplib.SMTP(host, p, timeout=12) as server:
+                    with smtplib.SMTP(host, p, timeout=10) as server:
                         server.ehlo()
                         server.starttls(context=context)
                         server.ehlo()
                         server.login(user, pwd)
                         server.sendmail(from_addr, [to_email], msg.as_string())
 
-                logger.info(f"OTP email sent successfully to {to_email[:3]}***@*** via {host}:{p}")
+                logger.info(f"OTP email sent successfully via SMTP to {to_email[:3]}***@*** via {host}:{p}")
                 return
             except Exception as e:
                 logger.warning(f"SMTP delivery attempt via {host}:{p} failed: {type(e).__name__} ({e})")
                 errors.append(f"{p}: {type(e).__name__}")
 
-        # If all ports failed
         logger.error(f"All SMTP delivery attempts to {host} failed: {', '.join(errors)}")
-        raise EmailDeliveryError("Failed to send verification email. Check SMTP configuration.")
+        raise EmailDeliveryError("Failed to send verification email via SMTP.")
+
+    def _send_sync(self, to_email: str, otp: str) -> None:
+        # 1. Prefer Resend API if API key is configured
+        if self.resend_api_key:
+            try:
+                self._send_via_resend(to_email, otp)
+                return
+            except Exception as re_err:
+                logger.warning(f"Resend delivery failed, attempting SMTP fallback: {re_err}")
+
+        # 2. Try SMTP if configured
+        if self.host and self.user and self.password:
+            self._send_via_smtp(to_email, otp)
+            return
+
+        raise EmailDeliveryError("No valid email service (Resend or SMTP) is configured.")
 
     async def send_otp(self, to_email: str, otp: str) -> None:
         """
-        Async wrapper — runs the blocking SMTP call in a thread executor.
+        Async wrapper — runs the email dispatch in a thread executor.
         Raises EmailDeliveryError on failure with a safe user-facing message.
-        OTP value is never logged.
         """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._send_sync, to_email, otp)
