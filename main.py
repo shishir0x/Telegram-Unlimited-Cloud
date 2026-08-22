@@ -48,23 +48,11 @@ async def lifespan(app: FastAPI):
     # Reset the cache directory, delete cache files
     reset_cache_dir()
 
-    if not ADMIN_PASSWORD or ADMIN_PASSWORD == "admin":
-        logger.warning(
-            "⚠️ SECURITY WARNING: ADMIN_PASSWORD is set to default 'admin' or empty! "
-            "Please update ADMIN_PASSWORD in your environment variables for security."
-        )
-
-    if not ADMIN_EMAIL:
-        logger.warning(
-            "⚠️ SECURITY WARNING: ADMIN_EMAIL is not configured! "
-            "OTP emails cannot be sent. Set ADMIN_EMAIL in your .env file."
-        )
-
-    if not email_service.is_configured:
-        logger.warning(
-            "⚠️ SECURITY WARNING: SMTP is not fully configured. "
-            "OTP emails will fail. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD in .env."
-        )
+    # Validate configuration on startup (never leaks secrets)
+    import config
+    is_valid, diagnostics = config.validate_config(raise_on_error=False)
+    for diag in diagnostics:
+        logger.warning(f"⚙️ Config: {diag}")
 
     # Initialize Telegram clients in the background so server starts immediately (<100ms)
     asyncio.create_task(initialize_clients())
@@ -90,6 +78,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Graceful shutdown: cleanly disconnect Telegram clients
+    try:
+        from utils.clients import stop_clients
+        await stop_clients()
+    except Exception as e:
+        logger.warning(f"Shutdown cleanup error: {e}")
+
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 logger = Logger(__name__)
@@ -111,20 +106,18 @@ class SecurityHeadersMiddleware:
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
-                headers["x-content-type-options"] = "nosniff"
-                headers["x-frame-options"] = "SAMEORIGIN"
-                headers["x-xss-protection"] = "1; mode=block"
-                headers["referrer-policy"] = "strict-origin-when-cross-origin"
-                headers["content-security-policy"] = (
-                    "default-src 'self'; "
-                    "script-src 'self' 'unsafe-inline'; "
-                    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                    "font-src 'self' https://fonts.gstatic.com; "
-                    "img-src 'self' data: blob: https://ssl.gstatic.com https://*.googleusercontent.com https://lh3.googleusercontent.com; "
-                    "media-src 'self' data: blob:; "
-                    "frame-src 'self' data: blob:; "
-                    "connect-src 'self'; "
-                    "frame-ancestors 'none';"
+                headers["X-Content-Type-Options"] = "nosniff"
+                headers["X-Frame-Options"] = "SAMEORIGIN"
+                headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+                headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+                headers["Content-Security-Policy"] = (
+                    "default-src 'self' data: blob: https:; "
+                    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+                    "style-src 'self' 'unsafe-inline' https:; "
+                    "img-src 'self' data: blob: https:; "
+                    "media-src 'self' blob: https:; "
+                    "connect-src 'self' https: wss:; "
+                    "frame-ancestors 'self';"
                 )
             await send(message)
 
@@ -132,6 +125,8 @@ class SecurityHeadersMiddleware:
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+
+# Page Routes
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home_page():
@@ -142,15 +137,34 @@ async def home_page():
 @app.api_route("/ping", methods=["GET", "HEAD", "POST", "OPTIONS"])
 @app.api_route("/healthz", methods=["GET", "HEAD", "POST", "OPTIONS"])
 async def health_check():
-    from utils.clients import multi_clients, premium_clients
+    from utils.clients import get_client_status
+    status = get_client_status()
     return JSONResponse(
         {
             "status": "ok",
             "message": "TG Drive is active and healthy",
-            "telegram_ready": (len(multi_clients) > 0 or len(premium_clients) > 0),
+            "telegram": status,
         },
         status_code=200,
     )
+
+
+@app.get("/health/live")
+async def liveness_check():
+    """Liveness probe: verifies process is alive and responsive."""
+    return JSONResponse({"status": "alive"}, status_code=200)
+
+
+@app.get("/health/ready")
+async def readiness_check():
+    """Readiness probe: verifies Telegram connectivity and metadata readiness."""
+    from utils.clients import is_telegram_ready
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+    is_ready = is_telegram_ready() and drive is not None
+    if is_ready:
+        return JSONResponse({"status": "ready", "telegram_ready": True, "drive_loaded": True}, status_code=200)
+    return JSONResponse({"status": "initializing", "telegram_ready": is_telegram_ready(), "drive_loaded": drive is not None}, status_code=503)
 
 
 @app.get("/stream")
@@ -205,6 +219,134 @@ async def dl_file(request: Request):
     except Exception as e:
         logger.error(f"Error streaming file '{path}': {e}")
         raise HTTPException(status_code=404, detail="File not found")
+
+
+@app.get("/downloadZip")
+async def download_zip(request: Request):
+    """
+    OneDrive/Google Drive style ZIP download for a single folder or multiple selections.
+    Preserves internal directory tree hierarchies.
+    """
+    from utils.directoryHandler import ensure_drive_data
+    from starlette.background import BackgroundTask
+    from utils.zipper import create_zip_archive, cleanup_temp_zip
+    drive = ensure_drive_data()
+
+    is_admin = is_admin_authenticated(request)
+    auth = request.query_params.get("auth")
+
+    raw_path = request.query_params.get("path")
+    raw_paths = request.query_params.get("paths")
+
+    target_paths = []
+    if raw_paths:
+        target_paths = [p.strip() for p in raw_paths.split(",") if p.strip()]
+    elif raw_path:
+        target_paths = [raw_path.strip()]
+
+    if not target_paths:
+        raise HTTPException(status_code=400, detail="Missing path or paths parameter")
+
+    if not is_admin and not auth:
+        raise HTTPException(status_code=401, detail="Unauthorized access")
+
+    custom_name = request.query_params.get("name")
+    default_name, items = drive.collect_items_for_zip(target_paths)
+
+    if not items:
+        raise HTTPException(status_code=404, detail="No files found in selected folder(s)")
+
+    zip_base_name = custom_name or default_name
+    zip_file_path, final_filename, total_size = await create_zip_archive(items, zip_base_name)
+
+    return FileResponse(
+        path=str(zip_file_path),
+        filename=final_filename,
+        media_type="application/zip",
+        background=BackgroundTask(cleanup_temp_zip, zip_file_path),
+        headers={
+            "Content-Disposition": f'attachment; filename="{urllib.parse.quote(final_filename)}"',
+            "Content-Length": str(total_size)
+        }
+    )
+
+
+@app.post("/api/downloadZip")
+async def api_download_zip(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Initiates a bulk ZIP download preparation for selected files & folders.
+    """
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"status": "Invalid payload"}, status_code=400)
+
+    paths = data.get("paths", [])
+    if isinstance(paths, str):
+        paths = [paths]
+    if not paths:
+        return JSONResponse({"status": "No paths provided"}, status_code=400)
+
+    custom_name = data.get("name")
+    default_name, items = drive.collect_items_for_zip(paths)
+    if not items:
+        return JSONResponse({"status": "No files found in selected items to download"}, status_code=404)
+
+    paths_param = ",".join(paths)
+    name_param = f"&name={urllib.parse.quote(custom_name)}" if custom_name else ""
+    dl_url = f"/downloadZip?paths={urllib.parse.quote(paths_param)}{name_param}"
+
+    return JSONResponse({
+        "status": "ok",
+        "file_count": len(items),
+        "total_size": sum(it.get("size", 0) for it in items),
+        "suggested_name": custom_name or default_name,
+        "download_url": dl_url
+    })
+
+
+@app.post("/api/search")
+async def api_search(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Deep search across all directories or scoped to current folder.
+    """
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    query = str(data.get("query", "")).strip()
+    search_root = str(data.get("path", "/")).strip() or "/"
+
+    if not query:
+        return JSONResponse({"status": "ok", "data": {"contents": {}}, "query": ""})
+
+    search_raw = drive.search_file_folder(query, search_root)
+    search_data = {"contents": search_raw}
+    folder_data = convert_class_to_dict(search_data, isObject=False, showtrash=False)
+
+    total_files, total_bytes = drive.get_drive_stats()
+    breadcrumbs = [
+        {"name": "My Drive", "path": "/", "id": "root"},
+        {"name": f'Search: "{query}"', "path": f"/search_{urllib.parse.quote(query)}", "id": "search"}
+    ]
+
+    return JSONResponse({
+        "status": "ok",
+        "query": query,
+        "data": folder_data,
+        "breadcrumbs": breadcrumbs,
+        "stats": {
+            "total_files": total_files,
+            "total_bytes": total_bytes
+        }
+    })
 
 
 # =========================================================
@@ -444,15 +586,22 @@ async def get_thumbnail(request: Request):
 async def api_check_password(request: Request):
     """
     Direct password verification endpoint for CLI tools (tgdrive_backup.py) and automation scripts.
-    Sets session cookie on success.
+    Protected by rate limiting and constant-time password verification.
     """
+    from utils.auth import rate_limit_check_password
+    rate_limit_check_password(request)
+
     try:
         data = await request.json()
     except Exception:
         return JSONResponse({"status": "Invalid payload"}, status_code=400)
 
-    submitted_password = data.get("password") or data.get("pass") or ""
-    if not ADMIN_PASSWORD or not secrets.compare_digest(str(submitted_password).encode(), str(ADMIN_PASSWORD).encode()):
+    submitted_password = str(data.get("password") or data.get("pass") or "").strip()
+    if not submitted_password or not ADMIN_PASSWORD:
+        await asyncio.sleep(0.3)
+        return JSONResponse({"status": "Invalid password"}, status_code=401)
+
+    if not secrets.compare_digest(submitted_password.encode(), ADMIN_PASSWORD.encode()):
         await asyncio.sleep(0.3)
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
@@ -647,34 +796,46 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
 
 
 @app.post("/api/getDirectory")
-async def api_get_directory(request: Request, _auth: Session = Depends(require_auth)):
+async def api_get_directory(request: Request):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
     auth = data.get("auth")
     path = data.get("path", "/")
+    is_admin = is_admin_authenticated(request)
 
-    logger.info(f"getFolder path={path}")
+    logger.info(f"getFolder path={path} is_admin={is_admin}")
+
+    # Enforce authorization: non-admin users can ONLY view /share_ paths with valid auth token
+    if not is_admin:
+        if not path.startswith("/share_") and not path.startswith("share_") and not auth:
+            raise HTTPException(status_code=401, detail="Authentication required")
 
     breadcrumbs = drive.get_breadcrumbs(path)
 
-    # All requests here are authenticated (require_auth dependency enforces this)
-    # Admin access paths
     if path == "/trash":
+        if not is_admin:
+            raise HTTPException(status_code=401, detail="Unauthorized access to trash")
         trash_data = {"contents": drive.get_trashed_files_folders()}
         folder_data = convert_class_to_dict(trash_data, isObject=False, showtrash=True)
 
     elif "/search_" in path:
+        if not is_admin:
+            raise HTTPException(status_code=401, detail="Unauthorized access to search")
         query = urllib.parse.unquote(path.split("_", 1)[1])
         search_data = {"contents": drive.search_file_folder(query)}
         folder_data = convert_class_to_dict(search_data, isObject=False, showtrash=False)
 
-    elif "/share_" in path:
-        share_path = path.split("_", 1)[1]
-        res = drive.get_directory(share_path, is_admin=True, auth=auth)
+    elif "/share_" in path or path.startswith("share_"):
+        share_path = path.replace("/share_", "").replace("share_", "").strip("/")
+        res = drive.get_directory(share_path, is_admin=is_admin, auth=auth)
         if not res:
-            return JSONResponse({"status": "Folder not found"}, status_code=404)
+            return JSONResponse({"status": "Folder not found or access expired"}, status_code=404)
         if isinstance(res, tuple):
             folder_data, auth_home_path = res
         else:
@@ -686,6 +847,8 @@ async def api_get_directory(request: Request, _auth: Session = Depends(require_a
         )
 
     else:
+        if not is_admin:
+            raise HTTPException(status_code=401, detail="Unauthorized")
         folder_data = drive.get_directory(path, is_admin=True)
         if not folder_data:
             return JSONResponse({"status": "Folder not found"}, status_code=404)
@@ -753,37 +916,53 @@ async def upload_file(
 ):
     global SAVE_PROGRESS
 
-    total_size = int(total_size)
-    SAVE_PROGRESS[id] = ("running", 0, total_size)
+    # Sanitize upload ID and file extensions to prevent path traversal
+    safe_id = "".join(c for c in str(id) if c.isalnum() or c in ("-", "_"))[:64]
+    if not safe_id:
+        safe_id = getRandomID()
 
-    ext = file.filename.lower().split(".")[-1]
+    raw_filename = file.filename or "uploaded_file"
+    safe_filename = "".join(c for c in raw_filename if c not in ('\x00', '\r', '\n', '/', '\\')).strip()
+    ext = (safe_filename.rsplit(".", 1)[-1] if "." in safe_filename else "bin").lower()
+    ext = "".join(c for c in ext if c.isalnum())[:16] or "bin"
+
+    try:
+        total_size = int(total_size)
+    except (ValueError, TypeError):
+        total_size = 0
+
+    SAVE_PROGRESS[safe_id] = ("running", 0, total_size)
+    if len(SAVE_PROGRESS) > 200:
+        excess = len(SAVE_PROGRESS) - 200
+        for old_k in list(SAVE_PROGRESS.keys())[:excess]:
+            SAVE_PROGRESS.pop(old_k, None)
 
     cache_dir = Path("./cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    file_location = cache_dir / f"{id}.{ext}"
+    file_location = cache_dir / f"{safe_id}.{ext}"
 
     file_size = 0
 
     async with aiofiles.open(file_location, "wb") as buffer:
         while chunk := await file.read(1024 * 1024):  # Read file in chunks of 1MB
-            SAVE_PROGRESS[id] = ("running", file_size, total_size)
+            SAVE_PROGRESS[safe_id] = ("running", file_size, total_size)
             file_size += len(chunk)
             if file_size > MAX_FILE_SIZE:
                 await buffer.close()
-                file_location.unlink()  # Delete the partially written file
+                file_location.unlink(missing_ok=True)  # Delete partially written file
                 raise HTTPException(
                     status_code=400,
                     detail=f"File size exceeds {MAX_FILE_SIZE} bytes limit",
                 )
             await buffer.write(chunk)
 
-    SAVE_PROGRESS[id] = ("completed", file_size, file_size)
+    SAVE_PROGRESS[safe_id] = ("completed", file_size, file_size)
 
     asyncio.create_task(
-        start_file_uploader(file_location, id, path, file.filename, file_size)
+        start_file_uploader(file_location, safe_id, path, safe_filename, file_size)
     )
 
-    return JSONResponse({"id": id, "status": "ok"})
+    return JSONResponse({"id": safe_id, "status": "ok"})
 
 
 @app.post("/api/getSaveProgress")
@@ -1120,4 +1299,81 @@ async def updateSyncStatus(request: Request, _auth: Session = Depends(require_au
                 pass
 
     return JSONResponse({"status": "ok"})
+
+
+@app.get("/api/admin/integrityReport")
+async def api_admin_integrity_report(session: Session = Depends(require_auth)):
+    """
+    Administrative Data Integrity Diagnostic Endpoint.
+    Scans the metadata tree, verifies file/folder structure and Telegram message mapping validity.
+    Does NOT mutate data.
+    """
+    from utils.directoryHandler import ensure_drive_data
+    from utils.clients import get_client_status
+
+    drive = ensure_drive_data()
+    if not drive or not hasattr(drive, "contents") or "/" not in drive.contents:
+        return JSONResponse({"status": "error", "message": "Drive metadata not loaded"}, status_code=503)
+
+    total_folders = 0
+    total_files = 0
+    total_bytes = 0
+    missing_file_ids = []
+    visited_folders = set()
+    cyclic_detected = False
+
+    def scan_folder(folder_obj, current_path: str = "/"):
+        nonlocal total_folders, total_files, total_bytes, cyclic_detected
+        contents = getattr(folder_obj, "contents", {})
+        if not isinstance(contents, dict):
+            return
+
+        for item_id, item in contents.items():
+            item_type = getattr(item, "type", "folder" if hasattr(item, "contents") else "file")
+            name = getattr(item, "name", "unnamed")
+            item_path = f"{current_path.rstrip('/')}/{name}"
+
+            if item_type == "folder":
+                total_folders += 1
+                if item_id in visited_folders:
+                    cyclic_detected = True
+                    continue
+                visited_folders.add(item_id)
+                scan_folder(item, item_path)
+            else:
+                total_files += 1
+                f_size = getattr(item, "size", 0)
+                try:
+                    total_bytes += int(f_size)
+                except Exception:
+                    pass
+
+                f_id = getattr(item, "file_id", None)
+                if not f_id:
+                    missing_file_ids.append({"path": item_path, "id": item_id})
+
+    try:
+        scan_folder(drive.contents["/"], "/")
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": f"Scan failed: {e}"}, status_code=500)
+
+    bak_exists = os.path.exists("cache/drive.data.bak")
+    bak_mtime = os.path.getmtime("cache/drive.data.bak") if bak_exists else None
+
+    return JSONResponse({
+        "status": "ok",
+        "timestamp": time.time(),
+        "integrity": {
+            "tree_valid": not cyclic_detected and len(missing_file_ids) == 0,
+            "cyclic_references": cyclic_detected,
+            "total_folders": total_folders,
+            "total_files": total_files,
+            "total_bytes": total_bytes,
+            "missing_file_ids_count": len(missing_file_ids),
+            "sample_missing_files": missing_file_ids[:10],
+            "backup_synchronized": bak_exists,
+            "backup_mtime": bak_mtime,
+        },
+        "telegram": get_client_status()
+    })
 

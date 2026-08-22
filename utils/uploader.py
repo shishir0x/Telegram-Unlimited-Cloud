@@ -61,6 +61,12 @@ async def start_file_uploader(
         DRIVE_DATA.new_file(directory_path, filename, message.id, size)
         PROGRESS_CACHE[id] = ("completed", size, size, filename)
 
+        # Keep cache bounded to latest 200 upload items
+        if len(PROGRESS_CACHE) > 200:
+            excess = len(PROGRESS_CACHE) - 200
+            for old_k in list(PROGRESS_CACHE.keys())[:excess]:
+                PROGRESS_CACHE.pop(old_k, None)
+
         # Pre-generate 10KB thumbnail for instant browser rendering
         try:
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""

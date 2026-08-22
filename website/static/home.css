@@ -3855,3 +3855,60 @@ body {
         max-height: 78vh;
     }
 }
+
+/* =========================================================
+   Search Result Location & Device Provenance Styling
+   ========================================================= */
+.gd-device-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+}
+
+.gd-device-mobile {
+    background: rgba(16, 185, 129, 0.15) !important;
+    color: #10b981 !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+
+.gd-device-pc {
+    background: rgba(59, 130, 246, 0.15) !important;
+    color: #3b82f6 !important;
+    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+}
+
+.gd-search-path-subline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 3px;
+    font-size: 0.73rem;
+    color: var(--gd-text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.gd-folder-chip.is-search-mode {
+    min-height: 56px;
+    padding: 8px 12px;
+}
+
+.gd-folder-chip.is-search-mode .gd-folder-chip-left {
+    align-items: center;
+}
+
+.gd-search-path-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+    font-size: 0.72rem;
+    color: var(--gd-text-secondary);
+}

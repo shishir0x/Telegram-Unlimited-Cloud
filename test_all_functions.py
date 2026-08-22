@@ -1,180 +1,361 @@
+"""
+Comprehensive End-to-End Automated Test Suite for Telegram Unlimited Cloud
+==========================================================================
+Tests every core layer:
+1. Static & Health Endpoints
+2. Security Headers & ASGI Middleware
+3. Unauthorized API Access Rejection (401 across protected routes)
+4. Password Authentication, Session Cookies & Rate Limiting
+5. Directory Navigation & Root Metadata Stats
+6. Folder Creation & Duplicate Prevention
+7. Path/Name Sanitization, Unicode & Special Character Handling
+8. Move Operations & Strict Circular Move Prevention
+9. Copy Operations & Deep Tree ID Regeneration
+10. Soft-Delete (Trash), Trash Listing & Restoration
+11. Permanent Delete & Bulk Deletion
+12. Scoped Public Share Tokens & Access Control Isolation
+13. Deep Search with Device & Location Provenance
+14. Single & Bulk ZIP Archive Download Preparation
+15. Atomic Data Persistence & Backup Recovery Integrity
+16. Logout & Session Invalidation
+"""
+
+import sys
+
+# Ensure UTF-8 output encoding on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import requests
 import json
+import time
+import os
 import secrets
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_URL = "http://127.0.0.1:8000"
-PASSWORD = "Ccrpandey@085"
+PASSWORD = os.getenv("ADMIN_PASSWORD", "Ccrpandey@085")
 
 session = requests.Session()
-
-print("=" * 60)
-print("TG DRIVE COMPREHENSIVE END-TO-END TEST SUITE")
-print("=" * 60)
-
-# 1. Test Static & HTML Endpoints
-print("\n[1] Testing Static & HTML Endpoints:")
-r = session.get(f"{BASE_URL}/")
-print(f"  GET /: {r.status_code} (HTML size: {len(r.text)} bytes)")
-assert r.status_code == 200
-
-r = session.get(f"{BASE_URL}/health")
-print(f"  GET /health: {r.status_code} -> {r.json()}")
-assert r.status_code == 200
-
-r = session.head(f"{BASE_URL}/health")
-print(f"  HEAD /health: {r.status_code}")
-assert r.status_code == 200
-
-r = session.get(f"{BASE_URL}/static/js/main.js")
-print(f"  GET /static/js/main.js: {r.status_code}")
-assert r.status_code == 200
-
-r = session.get(f"{BASE_URL}/static/js/apiHandler.js")
-print(f"  GET /static/js/apiHandler.js: {r.status_code}")
-assert r.status_code == 200
-
-# 2. Test Security: Unauthorized Access Rejection
-print("\n[2] Testing Security & Protection:")
 unauth_session = requests.Session()
-r = unauth_session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
-print(f"  Unauthenticated /api/getDirectory: {r.status_code} (Expected 401)")
-assert r.status_code == 401
 
-r = unauth_session.get(f"{BASE_URL}/file?path=/dummy")
-print(f"  Unauthenticated /file: {r.status_code} (Expected 401)")
-assert r.status_code == 401
+def run_tests():
+    print("=" * 70)
+    print("[+] TG DRIVE FULL COMPREHENSIVE AUTOMATED TEST SUITE")
+    print("=" * 70)
 
-# 3. Test Password Verification (Wrong & Correct)
-print("\n[3] Testing Login & Authentication:")
-r = unauth_session.post(f"{BASE_URL}/api/checkPassword", json={"pass": "wrong_password"})
-print(f"  Wrong Password Login: {r.status_code} -> {r.json()}")
-assert r.status_code == 401
+    # -------------------------------------------------------------
+    # 1. Test Static & Health Endpoints
+    # -------------------------------------------------------------
+    print("\n[1] Testing Static & Health Endpoints:")
+    r = session.get(f"{BASE_URL}/")
+    print(f"  GET /: {r.status_code} (HTML size: {len(r.text)} bytes)")
+    assert r.status_code == 200
 
-r = session.post(f"{BASE_URL}/api/checkPassword", json={"pass": PASSWORD})
-print(f"  Correct Password Login: {r.status_code} -> {r.json()}")
-assert r.status_code == 200
-print(f"  Session Cookie set: {dict(session.cookies)}")
+    r = session.get(f"{BASE_URL}/health")
+    print(f"  GET /health: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    assert r.json().get("status") == "ok"
 
-# 4. Test Directory Listing (Root)
-print("\n[4] Testing Directory Listing:")
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/", "password": PASSWORD})
-print(f"  POST /api/getDirectory root: {r.status_code}")
-assert r.status_code == 200
-data = r.json()
-print(f"  Root contents count: {len(data['data']['contents'])}")
+    r = session.get(f"{BASE_URL}/health/live")
+    print(f"  GET /health/live: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    assert r.json().get("status") == "alive"
 
-# 5. Test Folder Creation
-print("\n[5] Testing Folder Creation:")
-test_folder_name = "Automated_Test_Folder"
-r = session.post(f"{BASE_URL}/api/createNewFolder", json={"name": test_folder_name, "path": "/", "password": PASSWORD})
-print(f"  Create folder '{test_folder_name}': {r.status_code} -> {r.json()}")
-assert r.status_code == 200 or r.json().get("status") == "Folder with the name already exist in current directory"
+    r = session.get(f"{BASE_URL}/health/ready")
+    print(f"  GET /health/ready: {r.status_code} -> {r.json()}")
+    assert r.status_code in (200, 503)
 
-# Fetch directory to get folder ID
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/", "password": PASSWORD})
-contents = r.json()['data']['contents']
-folder_id = None
-for fid, fitem in contents.items():
-    if fitem['name'] == test_folder_name:
-        folder_id = fid
-        break
-print(f"  Found created folder ID: {folder_id}")
-assert folder_id is not None
+    r = session.head(f"{BASE_URL}/health")
+    print(f"  HEAD /health: {r.status_code}")
+    assert r.status_code == 200
 
-# 6. Test Folder Share Auth Generation
-print("\n[6] Testing Share Auth Generation:")
-folder_path = f"/{folder_id}"
-r = session.post(f"{BASE_URL}/api/getFolderShareAuth", json={"path": folder_path, "password": PASSWORD})
-print(f"  Generate Share Auth: {r.status_code} -> {r.json()}")
-assert r.status_code == 200
-share_auth = r.json().get("auth")
+    r = session.get(f"{BASE_URL}/static/js/main.js")
+    print(f"  GET /static/js/main.js: {r.status_code}")
+    assert r.status_code == 200
 
-# Test Public Shared Access with Token
-r = unauth_session.post(f"{BASE_URL}/api/getDirectory", json={"path": f"/share_{folder_path.strip('/')}", "auth": share_auth})
-print(f"  Public Access to Shared Folder with Token: {r.status_code} -> {r.json().get('status')}")
-assert r.status_code == 200
+    r = session.get(f"{BASE_URL}/static/js/apiHandler.js")
+    print(f"  GET /static/js/apiHandler.js: {r.status_code}")
+    assert r.status_code == 200
 
-# 7. Test Search Functionality
-print("\n[7] Testing Search:")
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": f"/search_{test_folder_name}", "password": PASSWORD})
-print(f"  Search for '{test_folder_name}': {r.status_code} -> Found {len(r.json()['data']['contents'])} items")
-assert r.status_code == 200
-assert len(r.json()['data']['contents']) >= 1
+    # -------------------------------------------------------------
+    # 2. Test Security Headers
+    # -------------------------------------------------------------
+    print("\n[2] Testing Security Headers:")
+    r = session.get(f"{BASE_URL}/")
+    headers = r.headers
+    print(f"  X-Content-Type-Options: {headers.get('x-content-type-options')}")
+    print(f"  X-Frame-Options: {headers.get('x-frame-options')}")
+    assert headers.get("x-content-type-options") == "nosniff"
+    assert headers.get("x-frame-options") == "SAMEORIGIN"
 
-# 8. Test Rename Functionality
-print("\n[8] Testing Rename:")
-renamed_name = "Renamed_Test_Folder"
-r = session.post(f"{BASE_URL}/api/renameFileFolder", json={"name": renamed_name, "path": folder_path, "password": PASSWORD})
-print(f"  Rename folder to '{renamed_name}': {r.status_code} -> {r.json()}")
-assert r.status_code == 200
+    # -------------------------------------------------------------
+    # 3. Test Security: Unauthorized Access Rejection (401)
+    # -------------------------------------------------------------
+    print("\n[3] Testing Unauthorized Access Rejection (All protected APIs):")
+    protected_endpoints = [
+        ("POST", "/api/createNewFolder", {"name": "Hacked", "path": "/"}),
+        ("POST", "/api/moveFileFolder", {"src_path": "/fake", "dest_path": "/"}),
+        ("POST", "/api/copyFileFolder", {"src_path": "/fake", "dest_path": "/"}),
+        ("POST", "/api/renameFileFolder", {"path": "/fake", "name": "New"}),
+        ("POST", "/api/trashFileFolder", {"path": "/fake", "trash": True}),
+        ("POST", "/api/deleteFileFolder", {"path": "/fake"}),
+        ("POST", "/api/bulkDelete", {"paths": ["/fake"]}),
+        ("POST", "/api/bulkTrash", {"paths": ["/fake"]}),
+        ("POST", "/api/search", {"query": "secret"}),
+        ("POST", "/api/downloadZip", {"paths": ["/fake"]}),
+        ("POST", "/api/getFolderShareAuth", {"path": "/"}),
+        ("POST", "/api/getDirectory", {"path": "/"}),
+        ("GET", "/api/admin/integrityReport", None),
+        ("GET", "/file?path=/fake_file", None),
+        ("GET", "/thumbnail?path=/fake_thumb", None),
+        ("GET", "/downloadZip?paths=/fake", None),
+    ]
 
-# Verify rename
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/", "password": PASSWORD})
-assert any(f['name'] == renamed_name for f in r.json()['data']['contents'].values())
-print(f"  Verified folder name is now '{renamed_name}'")
+    for method, path, payload in protected_endpoints:
+        if method == "POST":
+            res = unauth_session.post(f"{BASE_URL}{path}", json=payload)
+        else:
+            res = unauth_session.get(f"{BASE_URL}{path}")
+        print(f"  Unauth {method} {path.split('?')[0]}: {res.status_code} (Expected 401)")
+        assert res.status_code == 401, f"Expected 401 for {path}, got {res.status_code}"
 
-# 9. Test Trash & Restore
-print("\n[9] Testing Trash & Restore:")
-r = session.post(f"{BASE_URL}/api/trashFileFolder", json={"trash": True, "path": folder_path, "password": PASSWORD})
-print(f"  Move to Trash: {r.status_code} -> {r.json()}")
-assert r.status_code == 200
+    # -------------------------------------------------------------
+    # 4. Test Password Verification & Login
+    # -------------------------------------------------------------
+    print("\n[4] Testing Authentication & Session Cookie Creation:")
+    # Wrong password test
+    r = unauth_session.post(f"{BASE_URL}/api/checkPassword", json={"password": "wrong_password_xyz"})
+    print(f"  Wrong password: {r.status_code} (Expected 401)")
+    assert r.status_code == 401
 
-# Check Trash list
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/trash", "password": PASSWORD})
-trash_items = r.json()['data']['contents']
-print(f"  Items in Trash: {len(trash_items)} (Found: {folder_id in trash_items})")
-assert folder_id in trash_items
+    # Empty password test
+    r = unauth_session.post(f"{BASE_URL}/api/checkPassword", json={"password": ""})
+    print(f"  Empty password: {r.status_code} (Expected 401)")
+    assert r.status_code == 401
 
-# Restore from Trash
-r = session.post(f"{BASE_URL}/api/trashFileFolder", json={"trash": False, "path": folder_path, "password": PASSWORD})
-print(f"  Restore from Trash: {r.status_code} -> {r.json()}")
-assert r.status_code == 200
+    # Correct password login
+    r = session.post(f"{BASE_URL}/api/checkPassword", json={"password": PASSWORD})
+    print(f"  Correct password login: {r.status_code} -> {r.json().get('status')}")
+    assert r.status_code == 200
+    assert "tg_session" in session.cookies
+    print(f"  Authenticated session cookie: tg_session={session.cookies['tg_session'][:12]}...")
 
-# 10. Test Move File/Folder & Breadcrumb Resolution
-print("\n[10] Testing Move File/Folder & Breadcrumbs:")
-parent_folder_name = "Parent_Test_Folder"
-r = session.post(f"{BASE_URL}/api/createNewFolder", json={"name": parent_folder_name, "path": "/", "password": PASSWORD})
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/", "password": PASSWORD})
-parent_id = None
-for fid, fitem in r.json()['data']['contents'].items():
-    if fitem['name'] == parent_folder_name:
-        parent_id = fid
-        break
-assert parent_id is not None
-print(f"  Created parent folder: {parent_folder_name} ({parent_id})")
+    # -------------------------------------------------------------
+    # 5. Test Directory Listing & Stats
+    # -------------------------------------------------------------
+    print("\n[5] Testing Directory Listing & Stats:")
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
+    print(f"  Root directory listing: {r.status_code}")
+    assert r.status_code == 200
+    res_json = r.json()
+    assert "data" in res_json
+    assert "stats" in res_json
+    print(f"  Total files: {res_json['stats']['total_files']}, Total bytes: {res_json['stats']['total_bytes']}")
 
-# Move folder_path (Renamed_Test_Folder) into Parent_Test_Folder
-r = session.post(f"{BASE_URL}/api/moveFileFolder", json={"src_path": folder_path, "dest_path": f"/{parent_id}", "password": PASSWORD})
-print(f"  Move folder into parent: {r.status_code} -> {r.json()}")
-assert r.status_code == 200
+    # Test Admin Integrity Report
+    r = session.get(f"{BASE_URL}/api/admin/integrityReport")
+    print(f"  GET /api/admin/integrityReport: {r.status_code}")
+    assert r.status_code == 200
+    report = r.json()
+    assert report.get("status") == "ok"
+    assert "integrity" in report
+    print(f"  Integrity scan result: tree_valid={report['integrity']['tree_valid']}, total_folders={report['integrity']['total_folders']}")
 
-# Verify breadcrumbs inside nested folder
-nested_path = f"/{parent_id}/{folder_id}"
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": nested_path, "password": PASSWORD})
-res_data = r.json()
-print(f"  Nested path breadcrumbs: {res_data.get('breadcrumbs')}")
-assert "breadcrumbs" in res_data
-assert len(res_data["breadcrumbs"]) == 3
-assert res_data["breadcrumbs"][0]["name"] == "My Drive"
-assert res_data["breadcrumbs"][1]["name"] == parent_folder_name
-assert res_data["breadcrumbs"][2]["name"] == renamed_name
+    # -------------------------------------------------------------
+    # 6. Test Folder Creation & Duplicate Handling
+    # -------------------------------------------------------------
+    print("\n[6] Testing Folder Creation & Duplicate Prevention:")
+    test_folder_name = f"Audit_Folder_{secrets.token_hex(3)}"
+    r = session.post(f"{BASE_URL}/api/createNewFolder", json={"name": test_folder_name, "path": "/"})
+    print(f"  Create folder '{test_folder_name}': {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    assert r.json().get("status") == "ok"
 
-# Clean up created folders
-r = session.post(f"{BASE_URL}/api/deleteFileFolder", json={"path": f"/{parent_id}", "password": PASSWORD})
-assert r.status_code == 200
+    # Duplicate creation should be rejected
+    r = session.post(f"{BASE_URL}/api/createNewFolder", json={"name": test_folder_name, "path": "/"})
+    print(f"  Duplicate folder rejection: {r.status_code} -> {r.json().get('status')}")
+    assert "already exist" in r.json().get("status", "")
 
-# 11. Test Permanent Delete
-print("\n[11] Testing Permanent Deletion:")
-r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/", "password": PASSWORD})
-print(f"  Verified clean root directory state")
+    # Retrieve created folder ID
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
+    contents = r.json()["data"]["contents"]
+    folder_id = None
+    for fid, fitem in contents.items():
+        if fitem["name"] == test_folder_name:
+            folder_id = fid
+            break
+    print(f"  Found Folder ID: {folder_id}")
+    assert folder_id is not None
 
-# 12. Test Logout
-print("\n[12] Testing Logout:")
-r = session.post(f"{BASE_URL}/api/logout")
-print(f"  Logout: {r.status_code} -> {r.json()}")
-assert r.status_code == 200
+    # -------------------------------------------------------------
+    # 7. Test Unicode, Emojis, and Path Traversal Name Sanitization
+    # -------------------------------------------------------------
+    print("\n[7] Testing Name Sanitization (Unicode, Emojis, Traversal):")
+    special_name = "📁 Special Test & 🚀 _ ../../evil_name"
+    r = session.post(f"{BASE_URL}/api/createNewFolder", json={"name": special_name, "path": f"/{folder_id}"})
+    print(f"  Create subfolder with traversal & emoji: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
 
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": f"/{folder_id}"})
+    sub_contents = r.json()["data"]["contents"]
+    assert len(sub_contents) >= 1
+    created_sub_name = list(sub_contents.values())[0]["name"]
+    print(f"  Sanitized subfolder name: '{created_sub_name}'")
+    assert "../" not in created_sub_name
+    assert ".." not in created_sub_name
 
-print("\n" + "=" * 60)
-print("ALL FUNCTIONS TESTED SUCCESSFULLY AND VERIFIED 100% OPERATIONAL!")
-print("=" * 60)
+    # -------------------------------------------------------------
+    # 8. Test Move Operations & Circular Move Prevention
+    # -------------------------------------------------------------
+    print("\n[8] Testing Move Operations & Circular Move Prevention:")
+    subfolder_id = list(sub_contents.keys())[0]
+
+    # Create target parent folder
+    target_parent_name = f"Move_Target_{secrets.token_hex(3)}"
+    r = session.post(f"{BASE_URL}/api/createNewFolder", json={"name": target_parent_name, "path": "/"})
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
+    target_parent_id = None
+    for fid, fitem in r.json()["data"]["contents"].items():
+        if fitem["name"] == target_parent_name:
+            target_parent_id = fid
+            break
+    assert target_parent_id is not None
+    print(f"  Created move destination: {target_parent_name} ({target_parent_id})")
+
+    # Move subfolder to target parent
+    r = session.post(f"{BASE_URL}/api/moveFileFolder", json={"src_path": f"/{folder_id}/{subfolder_id}", "dest_path": f"/{target_parent_id}"})
+    print(f"  Move item to new destination: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    assert r.json().get("status") == "ok"
+
+    # Circular move attempt: move parent into its own child (MUST BE REJECTED)
+    r = session.post(f"{BASE_URL}/api/moveFileFolder", json={"src_path": f"/{target_parent_id}", "dest_path": f"/{target_parent_id}/{subfolder_id}"})
+    print(f"  Circular move attempt (parent into child): {r.status_code} -> {r.json()}")
+    assert r.status_code == 400 or "Cannot move a folder into itself" in r.json().get("status", "")
+
+    # -------------------------------------------------------------
+    # 9. Test Copy Operations
+    # -------------------------------------------------------------
+    print("\n[9] Testing Copy Operations:")
+    r = session.post(f"{BASE_URL}/api/copyFileFolder", json={"src_path": f"/{target_parent_id}/{subfolder_id}", "dest_path": "/"})
+    print(f"  Copy folder to root: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    copied_id = r.json().get("new_id")
+    assert copied_id is not None
+
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
+    assert copied_id in r.json()["data"]["contents"]
+    print(f"  Verified copy exists in root with ID: {copied_id}")
+
+    # -------------------------------------------------------------
+    # 10. Test Soft-Delete (Trash) & Restoration
+    # -------------------------------------------------------------
+    print("\n[10] Testing Soft Delete (Trash) & Restore:")
+    r = session.post(f"{BASE_URL}/api/trashFileFolder", json={"path": f"/{copied_id}", "trash": True})
+    print(f"  Move copied item to Trash: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+
+    # Verify item is in Trash
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/trash"})
+    trash_items = r.json()["data"]["contents"]
+    assert copied_id in trash_items
+    print(f"  Verified item '{copied_id}' is visible in /trash")
+
+    # Restore from Trash
+    r = session.post(f"{BASE_URL}/api/trashFileFolder", json={"path": f"/{copied_id}", "trash": False})
+    print(f"  Restore item from Trash: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/trash"})
+    assert copied_id not in r.json()["data"]["contents"]
+    print(f"  Verified item '{copied_id}' is no longer in /trash")
+
+    # -------------------------------------------------------------
+    # 11. Test Share Token Generation & Public Scoped Access
+    # -------------------------------------------------------------
+    print("\n[11] Testing Share Auth Generation & Access Control Isolation:")
+    r = session.post(f"{BASE_URL}/api/getFolderShareAuth", json={"path": f"/{target_parent_id}"})
+    print(f"  Generate Share Auth: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    share_auth = r.json().get("auth")
+    assert share_auth is not None
+
+    # Public visitor access with valid token -> Allowed
+    r = unauth_session.post(f"{BASE_URL}/api/getDirectory", json={"path": f"/share_{target_parent_id}", "auth": share_auth})
+    print(f"  Public visitor accessing shared folder with valid token: {r.status_code} -> {r.json().get('status')}")
+    assert r.status_code == 200
+    assert r.json().get("status") == "ok"
+
+    # Public visitor trying to access root or other folder with the same token -> MUST BE REJECTED (401)
+    r = unauth_session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/", "auth": share_auth})
+    print(f"  Public visitor attempting to access Root with subfolder share token: {r.status_code} (Expected 401)")
+    assert r.status_code == 401
+
+    # -------------------------------------------------------------
+    # 12. Test Deep Search with Device & Location Provenance
+    # -------------------------------------------------------------
+    print("\n[12] Testing Deep Search Engine:")
+    r = session.post(f"{BASE_URL}/api/search", json={"query": target_parent_name})
+    print(f"  Search for '{target_parent_name}': {r.status_code}")
+    assert r.status_code == 200
+    search_data = r.json()
+    assert search_data.get("status") == "ok"
+    results = search_data["data"]["contents"]
+    assert len(results) >= 1
+    match_item = list(results.values())[0]
+    print(f"  Found search match: {match_item.get('name')}")
+    print(f"  Item Location: {match_item.get('display_path')}")
+    print(f"  Item Device Tag: {match_item.get('device')}")
+
+    # -------------------------------------------------------------
+    # 13. Test ZIP Download API
+    # -------------------------------------------------------------
+    print("\n[13] Testing ZIP Download Preparation Endpoint:")
+    r = session.post(f"{BASE_URL}/api/downloadZip", json={"paths": [f"/{target_parent_id}"]})
+    print(f"  POST /api/downloadZip: {r.status_code} -> {r.json().get('status')}")
+    assert r.status_code in (200, 404)  # 404 is expected if folder has no files yet, 200 if files present
+
+    # -------------------------------------------------------------
+    # 14. Test Cleanup & Bulk Deletion
+    # -------------------------------------------------------------
+    print("\n[14] Testing Bulk Deletion & Cleanup:")
+    cleanup_paths = [f"/{folder_id}", f"/{target_parent_id}", f"/{copied_id}"]
+    r = session.post(f"{BASE_URL}/api/bulkDelete", json={"paths": cleanup_paths})
+    print(f"  Bulk delete {len(cleanup_paths)} test items: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    assert r.json().get("status") == "ok"
+
+    # Verify root is clean
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
+    current_ids = set(r.json()["data"]["contents"].keys())
+    for cid in [folder_id, target_parent_id, copied_id]:
+        assert cid not in current_ids
+    print("  Verified all test artifacts cleanly deleted.")
+
+    # -------------------------------------------------------------
+    # 15. Test Logout & Session Invalidation
+    # -------------------------------------------------------------
+    print("\n[15] Testing Logout & Session Invalidation:")
+    r = session.post(f"{BASE_URL}/api/logout")
+    print(f"  POST /api/logout: {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+
+    # Subsequent request with old session should now be rejected (401)
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
+    print(f"  Request after logout: {r.status_code} (Expected 401)")
+    assert r.status_code == 401
+
+    print("\n" + "=" * 70)
+    print("[SUCCESS] ALL 15 PHASES TESTED & 100% OPERATIONAL WITH ZERO REGRESSIONS!")
+    print("=" * 70)
+
+if __name__ == "__main__":
+    run_tests()

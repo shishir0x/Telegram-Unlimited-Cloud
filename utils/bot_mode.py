@@ -157,8 +157,7 @@ async def current_folder_handler(client: Client, message: Message):
 async def file_handler(client: Client, message: Message):
     global BOT_MODE, DRIVE_DATA
 
-    copied_message = await message.copy(config.STORAGE_CHANNEL)
-    file = (
+    media_obj = (
         copied_message.document
         or copied_message.video
         or copied_message.audio
@@ -166,17 +165,36 @@ async def file_handler(client: Client, message: Message):
         or copied_message.sticker
     )
 
+    if not media_obj:
+        return
+
+    # Extract or synthesize filename
+    file_name = getattr(media_obj, "file_name", None)
+    if not file_name:
+        if copied_message.photo:
+            file_name = f"photo_{copied_message.id}.jpg"
+        elif copied_message.sticker:
+            file_name = f"sticker_{copied_message.id}.webp"
+        elif copied_message.audio:
+            file_name = f"audio_{copied_message.id}.mp3"
+        elif copied_message.video:
+            file_name = f"video_{copied_message.id}.mp4"
+        else:
+            file_name = f"file_{copied_message.id}"
+
+    file_size = getattr(media_obj, "file_size", 0)
+
     DRIVE_DATA.new_file(
         BOT_MODE.current_folder,
-        file.file_name,
+        file_name,
         copied_message.id,
-        file.file_size,
+        file_size,
     )
 
     await message.reply_text(
         f"""✅ File Uploaded Successfully To Your TG Drive Website
                              
-**File Name:** {file.file_name}
+**File Name:** {file_name}
 **Folder:** {BOT_MODE.current_folder_name}
 """
     )

@@ -437,6 +437,42 @@ function showDirectory(data, breadcrumbs) {
     gridFoldersTitle.style.display = folders.length ? 'block' : 'none';
     gridFilesTitle.style.display = files.length ? 'block' : 'none';
 
+function getItemProvenance(item) {
+    const rawPath = item.human_path || item.display_path || item.path || '/';
+    let cleanPath = (rawPath || '/').replaceAll('//', '/');
+    if (cleanPath !== '/' && cleanPath.endsWith('/')) {
+        cleanPath = cleanPath.slice(0, -1);
+    }
+    
+    // Determine parent folder for display
+    let parentPath = item.display_path || '/';
+    if (!item.display_path && item.human_path) {
+        const parts = item.human_path.split('/').filter(Boolean);
+        if (parts.length > 1) {
+            parentPath = '/' + parts.slice(0, -1).join('/');
+        } else {
+            parentPath = '/';
+        }
+    }
+
+    const lower = (cleanPath + ' ' + (item.device || '') + ' ' + (item.name || '')).toLowerCase();
+    const isMobile = lower.includes('oneplus') || lower.includes('mobile') || lower.includes('phone') || lower.includes('android') || lower.includes('shared storage');
+    const isPC = lower.includes('computer') || lower.includes('c_drive') || lower.includes('d_drive') || lower.includes('windows') || lower.includes('desktop') || lower.includes('pc');
+
+    let badge = '';
+    if (isMobile) {
+        badge = `<span class="gd-device-pill gd-device-mobile" title="Phone Backup"><svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:currentColor;"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg> Phone</span>`;
+    } else if (isPC) {
+        badge = `<span class="gd-device-pill gd-device-pc" title="Computer / PC Backup"><svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:currentColor;"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg> PC</span>`;
+    }
+
+    return {
+        parentPath: parentPath,
+        fullPath: cleanPath,
+        badge: badge
+    };
+}
+
     let tableHtml = '';
     let menusHtml = '';
 
@@ -446,6 +482,9 @@ function showDirectory(data, breadcrumbs) {
         const dateStr = formatDate(item.upload_date);
         const owner = item.owner || 'Admin';
 
+        const isSearch = getCurrentPath().startsWith('/search_');
+        const prov = getItemProvenance(item);
+
         // Table Row
         tableHtml += `
             <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}">
@@ -453,9 +492,16 @@ function showDirectory(data, breadcrumbs) {
                     <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''} />
                 </td>
                 <td class="col-name-td">
-                    <div class="td-align file-name-cell">
-                        ${badge}
-                        <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                    <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
+                        <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                            ${badge}
+                            <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                        </div>
+                        ${isSearch ? `
+                        <div class="gd-search-path-subline" style="margin-left: 34px;">
+                            ${prov.badge}
+                            <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
+                        </div>` : ''}
                     </div>
                 </td>
                 <td class="col-type-td"><div class="td-align"><span class="type-pill pill-folder">Folder</span></div></td>
@@ -472,7 +518,7 @@ function showDirectory(data, breadcrumbs) {
 
         // Grid Folder Chip
         const folderChip = document.createElement('div');
-        folderChip.className = `gd-folder-chip folder-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}`;
+        folderChip.className = `gd-folder-chip folder-tr ${isSearch ? 'is-search-mode' : ''} ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}`;
         folderChip.setAttribute('draggable', 'false');
         folderChip.setAttribute('data-id', item.id);
         folderChip.setAttribute('data-path', item.path);
@@ -483,7 +529,14 @@ function showDirectory(data, breadcrumbs) {
             </div>
             <div class="gd-folder-chip-left">
                 <img class="item-icon-img" src="static/assets/folder-solid-icon.svg">
-                <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                <div style="min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden;flex:1;">
+                    <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                    ${isSearch ? `
+                    <div class="gd-search-path-subline" style="margin-top:0;">
+                        ${prov.badge}
+                        <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
+                    </div>` : ''}
+                </div>
             </div>
             <a data-id="${item.id}" class="more-btn" title="More actions"><img src="static/assets/more-icon.svg"></a>
         `;
@@ -493,7 +546,7 @@ function showDirectory(data, breadcrumbs) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-zip-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download as ZIP</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -505,6 +558,9 @@ function showDirectory(data, breadcrumbs) {
         const category = item.category || 'File';
         const owner = item.owner || 'Admin';
 
+        const isSearch = getCurrentPath().startsWith('/search_');
+        const prov = getItemProvenance(item);
+
         // Table Row
         tableHtml += `
             <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}">
@@ -512,9 +568,16 @@ function showDirectory(data, breadcrumbs) {
                     <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''} />
                 </td>
                 <td class="col-name-td">
-                    <div class="td-align file-name-cell">
-                        ${badge}
-                        <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                    <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
+                        <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                            ${badge}
+                            <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                        </div>
+                        ${isSearch ? `
+                        <div class="gd-search-path-subline" style="margin-left: 34px;">
+                            ${prov.badge}
+                            <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
+                        </div>` : ''}
                     </div>
                 </td>
                 <td class="col-type-td"><div class="td-align"><span class="type-pill">${category}</span></div></td>
@@ -578,6 +641,11 @@ function showDirectory(data, breadcrumbs) {
                     <span>${category}</span>
                     <span>${size}</span>
                 </div>
+                ${isSearch ? `
+                <div class="gd-search-path-subline" style="margin-top: 4px;">
+                    ${prov.badge}
+                    <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
+                </div>` : ''}
             </div>
         `;
         gridFiles.appendChild(fileCard);
@@ -586,7 +654,7 @@ function showDirectory(data, breadcrumbs) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download</div><hr><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -707,7 +775,12 @@ function selectItem(id) {
 
     // Build human-readable location path
     let readableLocation = 'My Drive';
-    if (CURRENT_BREADCRUMBS && CURRENT_BREADCRUMBS.length > 0) {
+    const isSearch = getCurrentPath().startsWith('/search_');
+    if (isSearch && (item.display_path || item.human_path)) {
+        const prov = (typeof getItemProvenance === 'function') ? getItemProvenance(item) : { parentPath: item.display_path || '/' };
+        const devPrefix = item.device ? `[${item.device}] ` : '';
+        readableLocation = `${devPrefix}${prov.parentPath}`;
+    } else if (CURRENT_BREADCRUMBS && CURRENT_BREADCRUMBS.length > 0) {
         readableLocation = CURRENT_BREADCRUMBS.map(c => c.name).join(' / ');
     }
 
@@ -940,15 +1013,9 @@ function deselectAllItems() {
 async function bulkDownloadSelected() {
     if (window.SELECTED_ITEMS.size === 0) return;
     const items = Array.from(window.SELECTED_ITEMS.values());
-    const fileItems = items.filter(i => i.type === 'file');
 
-    if (fileItems.length === 0) {
-        showToast('Please select at least one file to download (folders cannot be downloaded directly).');
-        return;
-    }
-
-    showToast(`Starting download for ${fileItems.length} file(s)... ⬇️`);
-    for (const item of fileItems) {
+    if (items.length === 1 && items[0].type === 'file') {
+        const item = items[0];
         const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
         const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
         const a = document.createElement('a');
@@ -957,8 +1024,33 @@ async function bulkDownloadSelected() {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        // Stagger browser downloads slightly to avoid browser throttling
-        await new Promise(r => setTimeout(r, 450));
+        showToast(`Downloading "${item.name}"... ⬇️`);
+        return;
+    }
+
+    if (items.length === 1 && items[0].type === 'folder') {
+        const folder = items[0];
+        const folderPath = (folder.path + '/' + folder.id).replaceAll('//', '/');
+        showToast(`Preparing ZIP archive for "${folder.name}"... 📦`);
+        window.location.href = `${getRootUrl()}/downloadZip?path=${encodeURIComponent(folderPath)}`;
+        return;
+    }
+
+    // Multiple files and/or folders selected: Download unified ZIP
+    const paths = items.map(item => (item.path + '/' + item.id).replaceAll('//', '/'));
+    showToast(`Preparing ZIP archive for ${items.length} selected item(s)... 📦`);
+    
+    try {
+        const res = await postJson('/api/downloadZip', { paths });
+        if (res && res.status === 'ok' && res.download_url) {
+            window.location.href = res.download_url;
+        } else {
+            const pathsParam = encodeURIComponent(paths.join(','));
+            window.location.href = `${getRootUrl()}/downloadZip?paths=${pathsParam}`;
+        }
+    } catch (e) {
+        const pathsParam = encodeURIComponent(paths.join(','));
+        window.location.href = `${getRootUrl()}/downloadZip?paths=${pathsParam}`;
     }
 }
 
@@ -1319,8 +1411,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const item = DIRECTORY_ITEMS[SELECTED_ITEM_ID];
             if (!item) return;
             const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
-            const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
-            window.open(directUrl, '_blank');
+            if (item.type === 'folder') {
+                showToast(`Preparing ZIP for folder "${item.name}"... 📦`);
+                window.location.href = `${getRootUrl()}/downloadZip?path=${encodeURIComponent(filePath)}`;
+            } else {
+                const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
+                const a = document.createElement('a');
+                a.href = directUrl;
+                a.download = item.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                showToast(`Downloading "${item.name}"... ⬇️`);
+            }
         });
     }
 

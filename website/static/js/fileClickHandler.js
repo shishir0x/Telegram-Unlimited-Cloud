@@ -78,6 +78,10 @@ function openMobileBottomSheet(id) {
                     <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
                     <span>Open folder</span>
                 </div>
+                <div class="gd-bs-item" id="bs-act-download">
+                    <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+                    <span>Download as ZIP</span>
+                </div>
             `;
         }
 
@@ -144,8 +148,19 @@ function openMobileBottomSheet(id) {
         actDownload.onclick = () => {
             closeMobileBottomSheet();
             const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
-            const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
-            window.open(directUrl, '_blank');
+            if (isFolder) {
+                showToast(`Preparing ZIP for folder "${item.name}"... 📦`);
+                window.location.href = `${getRootUrl()}/downloadZip?path=${encodeURIComponent(filePath)}`;
+            } else {
+                const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
+                const a = document.createElement('a');
+                a.href = directUrl;
+                a.download = item.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                showToast(`Downloading "${item.name}"... ⬇️`);
+            }
         };
     }
 
@@ -289,6 +304,38 @@ function openMoreButton(div) {
     }, 10);
 
     if (!isTrash) {
+        const dlZipOpt = moreDiv.querySelector(`#download-zip-opt-${id}`);
+        if (dlZipOpt) {
+            dlZipOpt.onclick = (e) => {
+                e.stopPropagation();
+                closeMoreMenu(moreDiv);
+                const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+                if (!item) return;
+                const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+                showToast(`Preparing ZIP for folder "${item.name}"... 📦`);
+                window.location.href = `${getRootUrl()}/downloadZip?path=${encodeURIComponent(filePath)}`;
+            };
+        }
+
+        const dlOpt = moreDiv.querySelector(`#download-opt-${id}`);
+        if (dlOpt) {
+            dlOpt.onclick = (e) => {
+                e.stopPropagation();
+                closeMoreMenu(moreDiv);
+                const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+                if (!item) return;
+                const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+                const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
+                const a = document.createElement('a');
+                a.href = directUrl;
+                a.download = item.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                showToast(`Downloading "${item.name}"... ⬇️`);
+            };
+        }
+
         const previewOpt = moreDiv.querySelector(`#preview-opt-${id}`);
         if (previewOpt) {
             previewOpt.onclick = (e) => {

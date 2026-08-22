@@ -267,7 +267,11 @@ function showToast(message, duration = 3000) {
 
     const toast = document.createElement('div');
     toast.className = 'gd-toast';
-    toast.innerHTML = message;
+    if (typeof message === 'string' && !message.includes('<')) {
+        toast.textContent = message;
+    } else {
+        toast.innerHTML = String(message || '');
+    }
     container.appendChild(toast);
 
     requestAnimationFrame(() => {

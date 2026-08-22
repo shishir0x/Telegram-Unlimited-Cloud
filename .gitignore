@@ -3,6 +3,7 @@
 .env.*
 *.env
 !sample.env
+!.env.example
 *.session
 *.session-journal
 
@@ -16,6 +17,9 @@ __pycache__/
 cache/
 downloads/
 *.data
+*.data.bak
+*.bak
+*.tmp
 logs.txt
 *.log
 

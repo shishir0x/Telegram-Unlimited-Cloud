@@ -13,19 +13,44 @@ logger = Logger(__name__)
 cache_dir = Path("./cache")
 cache_dir.mkdir(parents=True, exist_ok=True)
 drive_cache_path = cache_dir / "drive.data"
+drive_backup_path = cache_dir / "drive.data.bak"
+
+
+def sanitize_name(name: str) -> str:
+    """Sanitizes file and folder names against path traversal, control chars, and illegal symbols."""
+    if not name:
+        return "Unnamed"
+    # Remove null bytes, newlines, and illegal path characters
+    clean = str(name).replace("\x00", "").replace("\r", "").replace("\n", "").replace("/", "_").replace("\\", "_").strip()
+    clean = clean.replace("..", "_")
+    # Truncate extremely long names to 255 chars
+    return clean[:255] if clean else "Unnamed"
 
 
 def ensure_drive_data():
     global DRIVE_DATA
     if DRIVE_DATA is None:
+        loaded = False
         if drive_cache_path.exists():
             try:
                 with open(drive_cache_path, "rb") as f:
                     DRIVE_DATA = dill.load(f)
-            except Exception:
-                DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
-        else:
+                    loaded = True
+            except Exception as e:
+                logger.warning(f"Could not load primary drive.data ({e}). Trying backup...")
+
+        if not loaded and drive_backup_path.exists():
+            try:
+                with open(drive_backup_path, "rb") as f:
+                    DRIVE_DATA = dill.load(f)
+                    loaded = True
+                    logger.info("Successfully recovered drive data from drive.data.bak")
+            except Exception as e:
+                logger.warning(f"Could not load backup drive.data.bak: {e}")
+
+        if not loaded:
             DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
+            DRIVE_DATA.save()
     return DRIVE_DATA
 
 
@@ -46,7 +71,7 @@ def get_current_utc_time():
 
 class Folder:
     def __init__(self, name: str, path: str) -> None:
-        self.name = name
+        self.name = sanitize_name(name) if name != "/" else "/"
         self.contents = {}
         if name == "/":
             self.id = "root"
@@ -67,7 +92,7 @@ class File:
         size: int,
         path: str,
     ) -> None:
-        self.name = name
+        self.name = sanitize_name(name)
         self.file_id = file_id
         self.id = getRandomID()
         self.size = size
@@ -84,15 +109,33 @@ class NewDriveData:
         self.isUpdated = False
 
     def save(self) -> None:
-        with open(drive_cache_path, "wb") as f:
-            dill.dump(self, f)
-        self.isUpdated = True
-        logger.info("Drive data saved successfully.")
+        """Atomically saves drive data to disk with automatic .bak backup copy."""
+        tmp_path = drive_cache_path.with_suffix(".tmp")
+        try:
+            with open(tmp_path, "wb") as f:
+                dill.dump(self, f)
+            # Create/update backup before replacing primary
+            if drive_cache_path.exists():
+                try:
+                    shutil.copy2(drive_cache_path, drive_backup_path)
+                except Exception:
+                    pass
+            os.replace(tmp_path, drive_cache_path)
+            self.isUpdated = True
+            logger.info("Drive data saved successfully (atomic replace).")
+        except Exception as e:
+            logger.error(f"Failed to save drive data: {e}")
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
 
     def new_folder(self, path: str, name: str) -> None:
-        logger.info(f"Creating new folder '{name}' in path '{path}'.")
+        clean_name = sanitize_name(name)
+        logger.info(f"Creating new folder '{clean_name}' in path '{path}'.")
 
-        folder = Folder(name, path)
+        folder = Folder(clean_name, path)
         if path == "/" or not path:
             directory_folder: Folder = self.contents["/"]
             directory_folder.contents[folder.id] = folder
@@ -107,9 +150,10 @@ class NewDriveData:
         return folder.path + folder.id
 
     def new_file(self, path: str, name: str, file_id: int, size: int) -> None:
-        logger.info(f"Creating new file '{name}' in path '{path}'.")
+        clean_name = sanitize_name(name)
+        logger.info(f"Creating new file '{clean_name}' in path '{path}'.")
 
-        file = File(name, file_id, size, path)
+        file = File(clean_name, file_id, size, path)
         if path == "/" or not path:
             directory_folder: Folder = self.contents["/"]
             directory_folder.contents[file.id] = file
@@ -244,6 +288,7 @@ class NewDriveData:
 
     def rename_file_folder(self, path: str, new_name: str) -> None:
         clean = path.strip("/")
+        clean_new_name = sanitize_name(new_name)
         if "/" in clean:
             folder_path = "/" + "/".join(clean.split("/")[:-1])
             file_id = clean.split("/")[-1]
@@ -252,9 +297,9 @@ class NewDriveData:
             file_id = clean
         folder_data = self.get_directory(folder_path)
         if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
-            folder_data.contents[file_id].name = new_name
+            folder_data.contents[file_id].name = clean_new_name
             self.save()
-            logger.info(f"Item at path '{path}' renamed to '{new_name}'.")
+            logger.info(f"Item at path '{path}' renamed to '{clean_new_name}'.")
 
     def trash_file_folder(self, path: str, trash: bool) -> None:
         action = "Trashing" if trash else "Restoring"
@@ -613,22 +658,122 @@ class NewDriveData:
         logger.info(f"Copied item '{item.name}' to '{dest_folder_path}' as '{new_item.name}' ({new_item.id}).")
         return new_item.id
 
-    def search_file_folder(self, query: str):
-        logger.info(f"Searching for items matching query '{query}'.")
+    def search_file_folder(self, query: str, search_root: str = "/"):
+        logger.info(f"Searching for items matching query '{query}' starting at '{search_root}'.")
+        query_clean = (query or "").strip().lower()
+        if not query_clean:
+            return {}
 
-        root_dir = self.get_directory("/")
+        import copy
+        root_res = self.get_directory(search_root)
+        root_folder = (root_res[0] if isinstance(root_res, tuple) else root_res) or self.contents.get("/")
         search_results = {}
 
-        def traverse_directory(folder):
-            for item in folder.contents.values():
-                if query.lower() in item.name.lower():
-                    search_results[item.id] = item
-                if item.type == "folder":
-                    traverse_directory(item)
+        def detect_device(path_str: str) -> str:
+            lower = path_str.lower()
+            if any(k in lower for k in ["oneplus", "samsung", "pixel", "xiaomi", "redmi", "oppo", "vivo", "realme", "phone", "mobile", "android", "shared storage"]):
+                return "Mobile"
+            if any(k in lower for k in ["computer", "c_drive", "d_drive", "windows", "desktop", "laptop", "pc"]):
+                return "Computer"
+            return ""
 
-        traverse_directory(root_dir)
+        def traverse_directory(folder, current_human_path=""):
+            if not hasattr(folder, "contents"):
+                return
+            for item in folder.contents.values():
+                if getattr(item, "trash", False):
+                    continue
+
+                item_name = getattr(item, "name", "")
+                item_name_lower = item_name.lower()
+                matches = query_clean in item_name_lower
+
+                if not matches and query_clean.startswith("."):
+                    ext = "." + item_name_lower.rsplit(".", 1)[-1] if "." in item_name_lower else ""
+                    if ext == query_clean:
+                        matches = True
+
+                parent_path = current_human_path if current_human_path else "/"
+                full_path = (current_human_path + "/" + item_name).replace("//", "/") if current_human_path else f"/{item_name}"
+                device_type = detect_device(full_path)
+
+                if matches:
+                    item_copy = copy.deepcopy(item)
+                    item_copy.display_path = parent_path
+                    item_copy.human_path = full_path
+                    item_copy.device = device_type
+                    search_results[item.id] = item_copy
+
+                if getattr(item, "type", "") == "folder":
+                    traverse_directory(item, full_path)
+
+        start_path = "" if search_root in ["/", "root", ""] else getattr(root_folder, "name", "")
+        traverse_directory(root_folder, start_path)
         logger.info(f"Search completed. Found {len(search_results)} matching items.")
         return search_results
+
+    def collect_items_for_zip(self, paths: list[str]) -> tuple[str, list[dict]]:
+        """
+        Collects all files for given paths (files or folders).
+        Returns (archive_suggested_name, list of {file_id, file_name, archive_path, size})
+        """
+        items_to_download = []
+        seen_paths = set()
+        default_zip_name = "Download"
+
+        if len(paths) == 1:
+            single_path = ("/" + paths[0].strip("/")).replace("//", "/")
+            try:
+                res = self.get_directory(single_path)
+                folder = res[0] if isinstance(res, tuple) else res
+                if folder and hasattr(folder, "name") and folder.name != "/":
+                    default_zip_name = folder.name
+            except Exception:
+                pass
+
+        def add_file(f, rel_archive_path):
+            if rel_archive_path in seen_paths:
+                return
+            seen_paths.add(rel_archive_path)
+            items_to_download.append({
+                "file_id": f.file_id,
+                "file_name": f.name,
+                "archive_path": rel_archive_path,
+                "size": getattr(f, "size", 0)
+            })
+
+        def traverse_folder(folder, current_prefix=""):
+            if not hasattr(folder, "contents"):
+                return
+            for child in folder.contents.values():
+                if getattr(child, "trash", False):
+                    continue
+                if getattr(child, "type", "") == "file":
+                    add_file(child, f"{current_prefix}/{child.name}".strip("/"))
+                elif getattr(child, "type", "") == "folder":
+                    traverse_folder(child, f"{current_prefix}/{child.name}".strip("/"))
+
+        for p in paths:
+            clean = ("/" + p.replace("/share_", "").replace("share_", "").strip("/")).replace("//", "/")
+            
+            # 1. Check if it's a folder
+            folder_res = self.get_directory(clean)
+            folder_obj = folder_res[0] if isinstance(folder_res, tuple) else folder_res
+            if folder_obj and getattr(folder_obj, "type", "") == "folder":
+                folder_root_name = folder_obj.name if folder_obj.name != "/" else "Drive"
+                prefix = folder_root_name if (len(paths) > 1 or folder_root_name != "Drive") else ""
+                traverse_folder(folder_obj, prefix)
+                continue
+
+            # 2. Check if it's a file
+            try:
+                file_obj = self.get_file(clean)
+                if file_obj and getattr(file_obj, "type", "") == "file":
+                    add_file(file_obj, file_obj.name)
+            except Exception:
+                pass
+
+        return default_zip_name, items_to_download
 
     def get_drive_stats(self):
         total_files = 0

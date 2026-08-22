@@ -136,8 +136,8 @@ _PENDING_OTPS: dict[str, PendingOTP] = {} # "admin" key -> PendingOTP
 
 def _check_rate_limit(category: str, ip: str, limit: int, window_seconds: int) -> None:
     """
-    Simple sliding-window rate limiter.
-    Raises HTTP 429 if the caller exceeds `limit` requests within `window_seconds`.
+    Sliding-window rate limiter with automatic stale window cleanup.
+    Raises HTTP 429 if caller exceeds `limit` requests within `window_seconds`.
     """
     key = f"{category}:{ip}"
     now = time.time()
@@ -149,8 +149,8 @@ def _check_rate_limit(category: str, ip: str, limit: int, window_seconds: int) -
 
     entry["count"] += 1
     if entry["count"] > limit:
-        retry_after = int(window_seconds - (now - entry["window_start"])) + 1
-        logger.warning(f"Rate limit exceeded: {category} from {ip}")
+        retry_after = max(1, int(window_seconds - (now - entry["window_start"])) + 1)
+        logger.warning(f"Rate limit exceeded: {category} from {ip} ({entry['count']} reqs / {window_seconds}s)")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many requests. Please wait before trying again.",
@@ -160,17 +160,26 @@ def _check_rate_limit(category: str, ip: str, limit: int, window_seconds: int) -
 
 def rate_limit_login(request: Request) -> None:
     """Call this at the start of the login endpoint."""
-    _check_rate_limit("login", request.client.host, *LOGIN_RATE_LIMIT)
+    ip = get_client_ip(request)
+    _check_rate_limit("login", ip, *LOGIN_RATE_LIMIT)
+
+
+def rate_limit_check_password(request: Request) -> None:
+    """Call this at the start of checkPassword endpoint to protect CLI and direct password checks."""
+    ip = get_client_ip(request)
+    _check_rate_limit("check_password", ip, 15, 60)
 
 
 def rate_limit_otp_request(request: Request) -> None:
     """Call this at the start of the OTP send endpoint."""
-    _check_rate_limit("otp_request", request.client.host, *OTP_REQUEST_RATE_LIMIT)
+    ip = get_client_ip(request)
+    _check_rate_limit("otp_request", ip, *OTP_REQUEST_RATE_LIMIT)
 
 
 def rate_limit_otp_verify(request: Request) -> None:
     """Call this at the start of the OTP verify endpoint."""
-    _check_rate_limit("otp_verify", request.client.host, *OTP_VERIFY_RATE_LIMIT)
+    ip = get_client_ip(request)
+    _check_rate_limit("otp_verify", ip, *OTP_VERIFY_RATE_LIMIT)
 
 
 # ---------------------------------------------------------------------------
@@ -250,11 +259,13 @@ def get_otp_status() -> dict:
 # ---------------------------------------------------------------------------
 
 def _save_sessions_to_disk() -> None:
-    """Save active, unexpired sessions to cache/auth_sessions.json."""
+    """Atomically save active, unexpired sessions to cache/auth_sessions.json."""
     try:
         _SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
         data = {tok: sess.to_dict() for tok, sess in _SESSIONS.items() if not sess.is_expired}
-        _SESSION_FILE.write_text(json.dumps(data), encoding="utf-8")
+        temp_file = _SESSION_FILE.with_suffix(".tmp")
+        temp_file.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(temp_file, _SESSION_FILE)
     except Exception as e:
         logger.warning(f"Could not persist sessions to disk: {e}")
 

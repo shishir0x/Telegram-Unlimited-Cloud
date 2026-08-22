@@ -5,37 +5,31 @@ import os
 load_dotenv()
 
 # Telegram API credentials obtained from https://my.telegram.org/auth
-API_ID = int(os.getenv("API_ID"))  # Your Telegram API ID
-API_HASH = os.getenv("API_HASH")  # Your Telegram API Hash
+_api_id_raw = os.getenv("API_ID")
+API_ID = int(_api_id_raw) if _api_id_raw and _api_id_raw.strip().lstrip("-").isdigit() else 0
+API_HASH = os.getenv("API_HASH", "")
 
 # List of Telegram bot tokens used for file upload/download operations
-BOT_TOKENS = os.getenv("BOT_TOKENS", "").strip(", ").split(",")
-BOT_TOKENS = [token.strip() for token in BOT_TOKENS if token.strip() != ""]
+BOT_TOKENS = [token.strip() for token in os.getenv("BOT_TOKENS", "").split(",") if token.strip()]
 
 # List of Premium Telegram Account Pyrogram String Sessions used for file upload/download operations
-STRING_SESSIONS = os.getenv("STRING_SESSIONS", "").strip(", ").split(",")
-STRING_SESSIONS = [
-    session.strip() for session in STRING_SESSIONS if session.strip() != ""
-]
+STRING_SESSIONS = [session.strip() for session in os.getenv("STRING_SESSIONS", "").split(",") if session.strip()]
 
 # Chat ID of the Telegram storage channel where files will be stored
-STORAGE_CHANNEL = int(os.getenv("STORAGE_CHANNEL"))  # Your storage channel's chat ID
+_storage_channel_raw = os.getenv("STORAGE_CHANNEL")
+STORAGE_CHANNEL = int(_storage_channel_raw) if _storage_channel_raw and _storage_channel_raw.strip().lstrip("-").isdigit() else 0
 
 # Message ID of a file in the storage channel used for storing database backups
-DATABASE_BACKUP_MSG_ID = int(
-    os.getenv("DATABASE_BACKUP_MSG_ID")
-)  # Message ID for database backup
+_db_msg_id_raw = os.getenv("DATABASE_BACKUP_MSG_ID")
+DATABASE_BACKUP_MSG_ID = int(_db_msg_id_raw) if _db_msg_id_raw and _db_msg_id_raw.strip().isdigit() else 0
 
 # Password used to access the website's admin panel
-# IMPORTANT: Change this to a strong random value in production.
-# This is ONLY used for password verification — it is NEVER stored in a
-# session or cookie. The old behavior (storing ADMIN_PASSWORD as the cookie
-# value) has been removed.
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")  # Default to "admin" if not set
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+INSECURE_DEFAULT_PASSWORDS = {"admin", "password", "123456", "secret", "root", "12345678", "admin123"}
+IS_DEFAULT_PASSWORD = (not ADMIN_PASSWORD) or (ADMIN_PASSWORD.lower() in INSECURE_DEFAULT_PASSWORDS)
 
 # Email address of the admin. OTP verification codes are sent to this address.
-# REQUIRED: Set this to your email before deploying.
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")  # e.g. you@example.com
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip()
 
 # SMTP settings for sending OTP emails (compatible with Gmail, Resend, Mailgun, etc.)
 # Gmail quick setup: use smtp.gmail.com:587, and create an App Password at
@@ -75,5 +69,39 @@ if MAIN_BOT_TOKEN.strip() == "":
     MAIN_BOT_TOKEN = None
 
 # List of Telegram User IDs who have admin access to the bot mode
-TELEGRAM_ADMIN_IDS = os.getenv("TELEGRAM_ADMIN_IDS", "").strip(", ").split(",")
-TELEGRAM_ADMIN_IDS = [int(id) for id in TELEGRAM_ADMIN_IDS if id.strip() != ""]
+TELEGRAM_ADMIN_IDS = [
+    int(id_str.strip())
+    for id_str in os.getenv("TELEGRAM_ADMIN_IDS", "").split(",")
+    if id_str.strip().lstrip("-").isdigit()
+]
+
+
+def validate_config(raise_on_error: bool = False) -> tuple[bool, list[str]]:
+    """
+    Validates essential environment configuration on application startup.
+    Returns (is_valid, list_of_diagnostics). Never leaks secret values.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not API_ID:
+        errors.append("API_ID is missing or not a valid integer. Obtain from https://my.telegram.org/auth")
+    if not API_HASH or len(API_HASH.strip()) < 8:
+        errors.append("API_HASH is missing or invalid.")
+    if not BOT_TOKENS:
+        errors.append("BOT_TOKENS is empty. At least one bot token is required for storage operations.")
+    if not STORAGE_CHANNEL:
+        errors.append("STORAGE_CHANNEL is missing. Set to your Telegram storage channel/group ID.")
+    if not DATABASE_BACKUP_MSG_ID:
+        warnings.append("DATABASE_BACKUP_MSG_ID is 0. Metadata backup to Telegram channel may fail until configured.")
+    if IS_DEFAULT_PASSWORD:
+        errors.append("ADMIN_PASSWORD is using an insecure default or empty value. Set a strong password.")
+    if not ADMIN_EMAIL:
+        warnings.append("ADMIN_EMAIL is not set. OTP 2FA verification will not be available.")
+
+    is_valid = len(errors) == 0
+
+    if not is_valid and raise_on_error:
+        raise ValueError("Critical configuration errors:\n - " + "\n - ".join(errors))
+
+    return is_valid, errors + warnings

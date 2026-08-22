@@ -14,6 +14,7 @@ premium_clients = {}
 work_loads = {}
 premium_work_loads = {}
 main_bot = None
+_retry_task = None
 
 
 async def initialize_clients():
@@ -114,7 +115,7 @@ async def initialize_clients():
                 except Exception:
                     pass
 
-    asyncio.create_task(retry_pending_clients())
+    _retry_task = asyncio.create_task(retry_pending_clients())
 
     if len(multi_clients) == 0:
         logger.warning("⚠️ Bot clients encountered temporary FloodWait. Server is active and will auto-reconnect in the background.")
@@ -138,10 +139,62 @@ def get_client(premium_required=False) -> Client:
     global multi_clients, work_loads, premium_clients, premium_work_loads
 
     if premium_required:
+        if premium_clients and premium_work_loads:
+            index = min(premium_work_loads, key=premium_work_loads.get)
+            premium_work_loads[index] += 1
+            return premium_clients[index]
+        # Fallback to standard client if premium client not available
+        logger.warning("Premium client requested but none active; falling back to standard client.")
+
+    if multi_clients and work_loads:
+        index = min(work_loads, key=work_loads.get)
+        work_loads[index] += 1
+        return multi_clients[index]
+
+    if premium_clients and premium_work_loads:
         index = min(premium_work_loads, key=premium_work_loads.get)
         premium_work_loads[index] += 1
         return premium_clients[index]
 
-    index = min(work_loads, key=work_loads.get)
-    work_loads[index] += 1
-    return multi_clients[index]
+    raise RuntimeError("No active Telegram clients are currently connected. Please verify bot tokens in .env.")
+
+
+def is_telegram_ready() -> bool:
+    """Returns True if at least one Telegram bot/user client is connected and ready."""
+    return len(multi_clients) > 0 or len(premium_clients) > 0
+
+
+def get_client_status() -> dict:
+    """Returns safe summary status of active Telegram connections."""
+    return {
+        "bot_clients_active": len(multi_clients),
+        "premium_clients_active": len(premium_clients),
+        "drive_data_loaded": getattr(config, "_drive_data_loaded", False),
+        "telegram_ready": is_telegram_ready(),
+    }
+
+
+async def stop_clients():
+    """Gracefully stop all connected Telegram clients and background tasks."""
+    global multi_clients, premium_clients, _retry_task
+    logger.info("Stopping Telegram clients gracefully...")
+    if _retry_task and not _retry_task.done():
+        _retry_task.cancel()
+
+    for cid, client in list(multi_clients.items()):
+        try:
+            if getattr(client, "is_connected", False):
+                await client.stop()
+        except Exception as e:
+            logger.warning(f"Error stopping Bot client {cid}: {e}")
+
+    for cid, client in list(premium_clients.items()):
+        try:
+            if getattr(client, "is_connected", False):
+                await client.stop()
+        except Exception as e:
+            logger.warning(f"Error stopping Premium client {cid}: {e}")
+
+    multi_clients.clear()
+    premium_clients.clear()
+    logger.info("All Telegram clients stopped cleanly.")

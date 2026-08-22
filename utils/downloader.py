@@ -77,9 +77,7 @@ async def get_file_info_from_url(url):
         url,
         output_dir=cache_dir,
         debug=False,
-        progress_callback=download_progress_callback,
-        progress_args=(id,),
         max_retries=5,
     )
     file_info = await downloader.get_file_info()
-    return {"file_size": file_info["total_size"], "file_name": file_info["filename"]}
+    return {"file_size": file_info.get("total_size", 0), "file_name": file_info.get("filename", "downloaded_file")}
