@@ -74,6 +74,19 @@ async def lifespan(app: FastAPI):
     # Start background session/OTP cleanup task
     start_cleanup_task()
 
+    import socket
+    local_ip = "127.0.0.1"
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
+
+    logger.info(f"🌐 Local Browser: http://localhost:8000")
+    logger.info(f"📱 Mobile Devices on Wi-Fi: http://{local_ip}:8000")
+
     yield
 
 
@@ -414,6 +427,38 @@ async def get_thumbnail(request: Request):
 
 
 # Api Routes
+
+
+@app.post("/api/checkPassword")
+async def api_check_password(request: Request):
+    """
+    Direct password verification endpoint for CLI tools (tgdrive_backup.py) and automation scripts.
+    Sets session cookie on success.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"status": "Invalid payload"}, status_code=400)
+
+    submitted_password = data.get("password") or data.get("pass") or ""
+    if not ADMIN_PASSWORD or not secrets.compare_digest(str(submitted_password).encode(), str(ADMIN_PASSWORD).encode()):
+        await asyncio.sleep(0.3)
+        return JSONResponse({"status": "Invalid password"}, status_code=401)
+
+    client_ip = get_client_ip(request)
+    token = create_session(ip=client_ip)
+    is_https = request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
+
+    resp = JSONResponse({"status": "ok", "token": token})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        max_age=SESSION_TTL_SECONDS,
+        secure=is_https,
+        samesite="lax",
+    )
+    return resp
 
 
 @app.post("/api/login")
