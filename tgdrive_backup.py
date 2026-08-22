@@ -92,7 +92,7 @@ IGNORED_DIRS = {
     "release",
     "debug",
 
-    # Python Virtualenvs & Caches
+    # Python Virtualenvs, Packages & Caches
     "__pycache__",
     ".pytest_cache",
     ".mypy_cache",
@@ -104,6 +104,14 @@ IGNORED_DIRS = {
     "virtualenv",
     ".tox",
     ".eggs",
+    "site-packages",
+    "dist-packages",
+    "__pyinstaller",
+    "pyinstaller",
+    "pip-wheel-metadata",
+    "egg-info",
+    "dist-info",
+    "wheelhouse",
 
     # Package Manager, AI Tools & Dev Caches
     ".cache",
@@ -244,7 +252,11 @@ def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
         return True
 
     # Check known junk substring patterns
-    if any(f"/{ig}/" in f"/{path_lower}/" for ig in ["node_modules", "appdata", ".git", ".venv", "venv", "__pycache__", ".cache", ".npm", ".cargo", ".gradle"]):
+    if any(ig in path_lower for ig in [
+        "node_modules", "appdata", ".git", ".venv", "venv", "__pycache__",
+        ".cache", ".npm", ".cargo", ".gradle", "site-packages", "pyinstaller",
+        "dist-info", "egg-info", "crossdevice", "microsoft"
+    ]):
         return True
 
     # Always skip hidden or system folders starting with '.' or '$'
@@ -1360,11 +1372,30 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
         choice = input("\nSelect an option (1-5): ").strip()
 
         if choice == "1":
-            sub = input(f"Backup entire C:\\Users or specific user folder? (Press Enter for '{user_home.name}', or type 'all'): ").strip().lower()
-            if sub == "all":
+            print(f"\n📂 User Root: {user_home}")
+            print("   Options:")
+            print(f"     • Press [Enter]   -> Backup user folder ({user_home.name})")
+            print(f"     • Type 'portfolio' or 'documents/portfolio' -> Backup specific project folder")
+            print(f"     • Type 'all'      -> Backup entire C:\\Users tree")
+            sub = input("\nYour choice: ").strip().strip('"').strip("'")
+            if not sub:
+                return "local", user_home, f"C_Drive/Users/{user_home.name}", None
+            elif sub.lower() == "all":
                 return "local", c_users_path, "C_Drive/Users", None
             else:
-                return "local", user_home, f"C_Drive/Users/{user_home.name}", None
+                target_sub = user_home / sub
+                if target_sub.exists():
+                    try:
+                        rel = target_sub.relative_to(user_home)
+                        return "local", target_sub, f"C_Drive/Users/{user_home.name}/{str(rel).replace('\\', '/')}", None
+                    except Exception:
+                        return "local", target_sub, convert_local_path_to_tg_structure(target_sub), None
+                elif Path(sub).exists():
+                    p = Path(sub).resolve()
+                    return "local", p, convert_local_path_to_tg_structure(p), None
+                else:
+                    print(f"❌ Folder '{sub}' not found inside {user_home}")
+                    continue
 
         elif choice == "2":
             if not d_drive_path.exists():
