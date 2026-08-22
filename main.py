@@ -244,7 +244,7 @@ def generate_pillow_thumbnail(input_data: str | Path | io.BytesIO | bytes, outpu
 
 
 class ThumbnailService:
-    def __init__(self, max_ram_items: int = 300, max_disk_mb: int = 50):
+    def __init__(self, max_ram_items: int = 500, max_disk_mb: int = int(os.getenv("THUMB_CACHE_MAX_MB", "500"))):
         self.ram_cache: collections.OrderedDict[int, bytes] = collections.OrderedDict()
         self.max_ram_items = max_ram_items
         self.max_disk_bytes = max_disk_mb * 1024 * 1024
@@ -252,6 +252,8 @@ class ThumbnailService:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.semaphore = asyncio.Semaphore(4)
         self.in_flight: dict[int, asyncio.Future] = {}
+        # Initial disk prune check on startup
+        self.prune_disk_if_needed()
 
     def get_ram(self, file_id: int) -> bytes | None:
         if file_id in self.ram_cache:
@@ -266,18 +268,26 @@ class ThumbnailService:
             self.ram_cache.popitem(last=False)
 
     def prune_disk_if_needed(self):
+        """Auto-prunes thumbnails when disk usage exceeds 500MB (deletes oldest files first)."""
         try:
             files = list(self.cache_dir.glob("*.jpg"))
+            if not files:
+                return
             total_size = sum(f.stat().st_size for f in files if f.exists())
             if total_size > self.max_disk_bytes:
+                logger.info(f"Thumbnail cache ({total_size / (1024*1024):.1f}MB) exceeded limit ({self.max_disk_bytes / (1024*1024):.1f}MB). Auto-pruning oldest files...")
+                # Sort by last modified time (oldest first)
                 files.sort(key=lambda f: f.stat().st_mtime)
-                for f in files[: len(files) // 2]:
+                # Remove oldest 30% of thumbnails to bring disk space safely below threshold
+                target_delete_count = max(1, int(len(files) * 0.3))
+                for f in files[:target_delete_count]:
                     try:
                         f.unlink(missing_ok=True)
                     except Exception:
                         pass
-        except Exception:
-            pass
+                logger.info(f"Auto-pruned {target_delete_count} oldest thumbnails from disk.")
+        except Exception as e:
+            logger.warning(f"Error during thumbnail disk pruning: {e}")
 
     async def get_or_fetch(self, file_id: int, file_name: str) -> bytes | None:
         file_id = int(file_id)
