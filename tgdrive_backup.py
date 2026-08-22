@@ -37,9 +37,9 @@ from typing import List, Dict, Set, Tuple, Optional
 # Load environment variables from .env
 load_dotenv()
 
-# System directories to ignore
+# System & heavy dependency directories to ignore during backup
 IGNORED_DIRS = {
-    # Windows System Folders
+    # Windows System & OS Junk
     "appdata",
     "application data",
     "local settings",
@@ -53,7 +53,63 @@ IGNORED_DIRS = {
     "recovery",
     "config.msi",
     "msocache",
-    # Android Folders to Skip (Android/media and Samsung Backup are enabled)
+    "perflogs",
+    "intel",
+
+    # Heavy Dependency & Build Folders (Crucial for C: Drive!)
+    "node_modules",
+    "bower_components",
+    "dist",
+    "build",
+    "out",
+    "target",
+    "bin",
+    "obj",
+    "pkg",
+
+    # Python Virtualenvs & Caches
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    "virtualenv",
+    ".tox",
+    ".eggs",
+
+    # Package Manager & Tooling Caches
+    ".cache",
+    ".npm",
+    ".yarn",
+    ".pnpm-store",
+    ".cargo",
+    ".rustup",
+    ".gradle",
+    ".m2",
+    ".nuget",
+    ".dart_tool",
+    ".pub-cache",
+
+    # IDEs & VCS Metadata
+    ".git",
+    ".github",
+    ".svn",
+    ".hg",
+    ".vscode",
+    ".idea",
+    ".vs",
+
+    # Temporary Folders
+    "temp",
+    "tmp",
+    "cache",
+    "caches",
+    "logs",
+
+    # Android Folders to Skip (Android/media is preserved for photos/WhatsApp)
     "android/data",
     "android/obb",
     ".trash",
@@ -64,15 +120,6 @@ IGNORED_DIRS = {
     ".filemanagerrecycler",
     ".aceself",
     ".slogan",
-    # Dev & Cache Junk
-    "node_modules",
-    "__pycache__",
-    ".git",
-    ".vscode",
-    ".idea",
-    ".venv",
-    "venv",
-    ".cache",
 }
 
 IGNORED_FILES_LOWER = {
@@ -85,10 +132,14 @@ IGNORED_FILES_LOWER = {
     "hiberfil.sys",
     "pagefile.sys",
     "swapfile.sys",
+    "dumpstack.log",
 }
 
 IGNORED_FILE_PREFIXES = ("ntuser.dat", "usrclass.dat", "~$", ".~", "dumpstack.log")
-IGNORED_FILE_EXTENSIONS = (".tmp", ".crdownload", ".part", ".log1", ".log2", ".dmp")
+IGNORED_FILE_EXTENSIONS = (
+    ".tmp", ".temp", ".crdownload", ".part", ".log1", ".log2", ".dmp",
+    ".cache", ".lock", ".iso", ".vmdk", ".vdi", ".swp"
+)
 
 MANIFEST_PATH = Path.home() / ".tgdrive_sync_manifest.json"
 
@@ -146,10 +197,19 @@ def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
             return True
         return False
 
+    # Check direct name
     if name_lower in IGNORED_DIRS:
         return True
-    if any(ignored in path_lower for ignored in IGNORED_DIRS):
+
+    # Check path parts
+    path_parts = [p.lower() for p in Path(full_rel_path).parts] if full_rel_path else [name_lower]
+    if any(part in IGNORED_DIRS for part in path_parts):
         return True
+
+    # Check known junk substring patterns
+    if any(f"/{ig}/" in f"/{path_lower}/" for ig in ["node_modules", ".git", ".venv", "venv", "__pycache__", ".cache"]):
+        return True
+
     if name_lower.startswith((".", "$")):
         return True
     return False
