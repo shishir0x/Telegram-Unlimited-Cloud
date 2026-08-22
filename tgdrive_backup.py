@@ -75,6 +75,8 @@ IGNORED_DIRS = {
     "phonelink",
     "phone link",
     "your phone",
+    "microsoft",
+    "microsoftedgebackups",
 
     # Heavy Dependency & Build Folders (Crucial for C: Drive!)
     "node_modules",
