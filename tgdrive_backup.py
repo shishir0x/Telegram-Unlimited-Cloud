@@ -421,7 +421,7 @@ class TGDriveBackupClient:
         try:
             res = self.session.post(
                 f"{self.base_url}/api/getDirectory",
-                json={"pass": self.password, "password": self.password, "path": folder_id_path},
+                json={"path": folder_id_path},
                 timeout=15,
             )
             if res.status_code == 200:
@@ -472,8 +472,6 @@ class TGDriveBackupClient:
                     self.session.post(
                         f"{self.base_url}/api/createNewFolder",
                         json={
-                            "pass": self.password,
-                            "password": self.password,
                             "path": current_id_path,
                             "name": part,
                         },
@@ -597,7 +595,6 @@ class TGDriveBackupClient:
                 files = {"file": (file_name, f)}
                 form_data = {
                     "path": remote_id_path,
-                    "password": self.password,
                     "id": upload_id,
                     "total_size": str(file_size),
                 }
@@ -629,7 +626,7 @@ class TGDriveBackupClient:
                 try:
                     prog_res = self.session.post(
                         f"{self.base_url}/api/getUploadProgress",
-                        json={"password": self.password, "id": upload_id},
+                        json={"id": upload_id},
                         timeout=10,
                     )
                     if prog_res.status_code == 200:
@@ -708,7 +705,6 @@ class TGDriveBackupClient:
             files = {"file": (file_name, file_obj)}
             form_data = {
                 "path": remote_id_path,
-                "password": self.password,
                 "id": upload_id,
                 "total_size": str(file_size),
             }
@@ -740,7 +736,7 @@ class TGDriveBackupClient:
                 try:
                     prog_res = self.session.post(
                         f"{self.base_url}/api/getUploadProgress",
-                        json={"password": self.password, "id": upload_id},
+                        json={"id": upload_id},
                         timeout=10,
                     )
                     if prog_res.status_code == 200:

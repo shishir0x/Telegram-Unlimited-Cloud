@@ -114,31 +114,39 @@ function navigateToPath(targetPath, pushState = true) {
 
 function updateSidebarNavSelection(path) {
     const isTrash = path && path.startsWith('/trash');
+    const isRecent = path && (path === '/recent' || path.startsWith('/recent'));
+    const isStarred = path && (path === '/starred' || path.startsWith('/starred'));
     const isSync = (window.CURRENT_PAGE_VIEW === 'sync');
     const navMyDrive = document.getElementById('nav-my-drive');
+    const navRecent = document.getElementById('nav-recent');
+    const navStarred = document.getElementById('nav-starred');
     const navSyncActivity = document.getElementById('nav-sync-activity');
     const navTrash = document.getElementById('nav-trash');
     const newBtn = document.getElementById('new-button');
 
-    if (navMyDrive && navTrash) {
-        if (isSync) {
-            navMyDrive.className = 'gd-nav-item unselected-item';
-            navTrash.className = 'gd-nav-item unselected-item';
-            if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';
-            if (newBtn) newBtn.style.display = 'inline-flex';
-        } else if (isTrash) {
-            navMyDrive.className = 'gd-nav-item unselected-item';
-            navTrash.className = 'gd-nav-item selected-item';
-            if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
-            if (newBtn) newBtn.style.display = 'none';
-        } else {
-            navMyDrive.className = 'gd-nav-item selected-item';
-            navTrash.className = 'gd-nav-item unselected-item';
-            if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
-            if (newBtn) newBtn.style.display = 'inline-flex';
-        }
+    const allNavs = [navMyDrive, navRecent, navStarred, navSyncActivity, navTrash];
+    allNavs.forEach(n => {
+        if (n) n.className = 'gd-nav-item unselected-item';
+    });
+
+    if (isSync) {
+        if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'inline-flex';
+    } else if (isTrash) {
+        if (navTrash) navTrash.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'none';
+    } else if (isRecent) {
+        if (navRecent) navRecent.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'inline-flex';
+    } else if (isStarred) {
+        if (navStarred) navStarred.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'inline-flex';
+    } else {
+        if (navMyDrive) navMyDrive.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'inline-flex';
     }
 }
+
 
 // Handle Browser Back / Forward buttons natively
 window.addEventListener('popstate', (e) => {

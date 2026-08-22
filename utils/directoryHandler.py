@@ -79,6 +79,8 @@ class Folder:
             self.id = getRandomID()
         self.type = "folder"
         self.trash = False
+        self.starred = False
+        self.tags = []
         self.path = ("/" + path.strip("/") + "/").replace("//", "/")
         self.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.auth_hashes = []
@@ -98,6 +100,8 @@ class File:
         self.size = size
         self.type = "file"
         self.trash = False
+        self.starred = False
+        self.tags = []
         self.path = path[:-1] if path[-1] == "/" else path
         self.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -352,6 +356,182 @@ class NewDriveData:
         traverse_directory(root_dir)
         return trash_data
 
+    def set_starred(self, path: str, starred: bool = None) -> bool:
+        clean = path.strip("/")
+        if "/" in clean:
+            folder_path = "/" + "/".join(clean.split("/")[:-1])
+            file_id = clean.split("/")[-1]
+        else:
+            folder_path = "/"
+            file_id = clean
+
+        target_item = None
+        folder_data = self.get_directory(folder_path)
+        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+            target_item = folder_data.contents[file_id]
+        else:
+            def find_item(folder):
+                if hasattr(folder, "contents"):
+                    if file_id in folder.contents:
+                        return folder.contents[file_id]
+                    for child in folder.contents.values():
+                        if getattr(child, "type", "") == "folder":
+                            res = find_item(child)
+                            if res:
+                                return res
+                return None
+            target_item = find_item(self.contents.get("/"))
+
+        if not target_item:
+            return False
+
+        if starred is None:
+            new_starred = not getattr(target_item, "starred", False)
+        else:
+            new_starred = bool(starred)
+
+        target_item.starred = new_starred
+        self.save()
+        logger.info(f"Item at '{path}' starred status set to {new_starred}.")
+        return new_starred
+
+    def get_starred_files_folders(self) -> dict:
+        root_dir = self.get_directory("/")
+        starred_data = {}
+
+        def traverse(folder):
+            if hasattr(folder, "contents"):
+                for item in folder.contents.values():
+                    if getattr(item, "trash", False):
+                        continue
+                    if getattr(item, "starred", False):
+                        starred_data[item.id] = item
+                    if getattr(item, "type", "") == "folder":
+                        traverse(item)
+
+        traverse(root_dir)
+        return starred_data
+
+    def get_recent_files(self, limit: int = 50) -> dict:
+        root_dir = self.get_directory("/")
+        all_files = []
+
+        def traverse(folder):
+            if hasattr(folder, "contents"):
+                for item in folder.contents.values():
+                    if getattr(item, "trash", False):
+                        continue
+                    if getattr(item, "type", "") == "file":
+                        all_files.append(item)
+                    elif getattr(item, "type", "") == "folder":
+                        traverse(item)
+
+        traverse(root_dir)
+        all_files.sort(key=lambda x: str(getattr(x, "upload_date", "")), reverse=True)
+        recent_dict = {}
+        for f in all_files[:limit]:
+            recent_dict[f.id] = f
+        return recent_dict
+
+    def add_tag(self, path: str, tag: str) -> list[str]:
+        clean_tag = tag.strip()
+        if not clean_tag:
+            return []
+
+        clean = path.strip("/")
+        if "/" in clean:
+            folder_path = "/" + "/".join(clean.split("/")[:-1])
+            file_id = clean.split("/")[-1]
+        else:
+            folder_path = "/"
+            file_id = clean
+
+        target_item = None
+        folder_data = self.get_directory(folder_path)
+        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+            target_item = folder_data.contents[file_id]
+        else:
+            def find_item(folder):
+                if hasattr(folder, "contents"):
+                    if file_id in folder.contents:
+                        return folder.contents[file_id]
+                    for child in folder.contents.values():
+                        if getattr(child, "type", "") == "folder":
+                            res = find_item(child)
+                            if res:
+                                return res
+                return None
+            target_item = find_item(self.contents.get("/"))
+
+        if not target_item:
+            return []
+
+        if not hasattr(target_item, "tags") or not isinstance(target_item.tags, list):
+            target_item.tags = []
+
+        if clean_tag not in target_item.tags:
+            target_item.tags.append(clean_tag)
+            self.save()
+            logger.info(f"Added tag '{clean_tag}' to item at '{path}'.")
+
+        return target_item.tags
+
+    def remove_tag(self, path: str, tag: str) -> list[str]:
+        clean_tag = tag.strip()
+        clean = path.strip("/")
+        if "/" in clean:
+            folder_path = "/" + "/".join(clean.split("/")[:-1])
+            file_id = clean.split("/")[-1]
+        else:
+            folder_path = "/"
+            file_id = clean
+
+        target_item = None
+        folder_data = self.get_directory(folder_path)
+        if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+            target_item = folder_data.contents[file_id]
+        else:
+            def find_item(folder):
+                if hasattr(folder, "contents"):
+                    if file_id in folder.contents:
+                        return folder.contents[file_id]
+                    for child in folder.contents.values():
+                        if getattr(child, "type", "") == "folder":
+                            res = find_item(child)
+                            if res:
+                                return res
+                return None
+            target_item = find_item(self.contents.get("/"))
+
+        if not target_item or not hasattr(target_item, "tags") or not isinstance(target_item.tags, list):
+            return []
+
+        if clean_tag in target_item.tags:
+            target_item.tags.remove(clean_tag)
+            self.save()
+            logger.info(f"Removed tag '{clean_tag}' from item at '{path}'.")
+
+        return target_item.tags
+
+    def get_tagged_items(self, tag: str) -> dict:
+        root_dir = self.get_directory("/")
+        tagged_dict = {}
+        target_tag = tag.strip().lower()
+
+        def traverse(folder):
+            if hasattr(folder, "contents"):
+                for item in folder.contents.values():
+                    if getattr(item, "trash", False):
+                        continue
+                    item_tags = [t.lower() for t in getattr(item, "tags", []) if isinstance(t, str)]
+                    if target_tag in item_tags:
+                        tagged_dict[item.id] = item
+                    if getattr(item, "type", "") == "folder":
+                        traverse(item)
+
+        traverse(root_dir)
+        return tagged_dict
+
     @staticmethod
     def _collect_file_ids(item) -> list[int]:
         ids = []
@@ -457,6 +637,15 @@ class NewDriveData:
             return crumbs
         if path.startswith("/trash") or path == "trash":
             return [{"name": "Trash", "path": "/trash", "id": "trash"}]
+        if path.startswith("/starred") or path == "starred":
+            return [{"name": "My Drive", "path": "/", "id": "root"}, {"name": "Starred", "path": "/starred", "id": "starred"}]
+        if path.startswith("/recent") or path == "recent":
+            return [{"name": "My Drive", "path": "/", "id": "root"}, {"name": "Recent", "path": "/recent", "id": "recent"}]
+        if path.startswith("/tags/") or path.startswith("tags/"):
+            tag_name = path.replace("/tags/", "").replace("tags/", "").strip("/")
+            import urllib.parse
+            tag_decoded = urllib.parse.unquote(tag_name)
+            return [{"name": "My Drive", "path": "/", "id": "root"}, {"name": f"Tag: {tag_decoded}", "path": path, "id": "tags"}]
         if "/search_" in path or path.startswith("search_") or path.startswith("/search"):
             q = path.split("_", 1)[1] if "_" in path else ""
             import urllib.parse
@@ -465,6 +654,7 @@ class NewDriveData:
                 {"name": "My Drive", "path": "/", "id": "root"},
                 {"name": f'Search: "{q_decoded}"', "path": path, "id": "search"}
             ]
+
 
         # Strip share prefix & any accidental query parameters
         clean = path.replace("/share_", "").replace("share_", "").strip("/")

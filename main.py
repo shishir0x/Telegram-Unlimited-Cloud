@@ -778,7 +778,7 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
 
     data = await request.json()
 
-    logger.info(f"createNewFolder {data}")
+    logger.info(f"createNewFolder path={data.get('path')} name={data.get('name')}")
     target_dir = drive.get_directory(data["path"])
     if target_dir and hasattr(target_dir, "contents"):
         for id in target_dir.contents:
@@ -823,6 +823,25 @@ async def api_get_directory(request: Request):
             raise HTTPException(status_code=401, detail="Unauthorized access to trash")
         trash_data = {"contents": drive.get_trashed_files_folders()}
         folder_data = convert_class_to_dict(trash_data, isObject=False, showtrash=True)
+
+    elif path == "/starred":
+        if not is_admin:
+            raise HTTPException(status_code=401, detail="Unauthorized access to starred")
+        starred_data = {"contents": drive.get_starred_files_folders()}
+        folder_data = convert_class_to_dict(starred_data, isObject=False, showtrash=False)
+
+    elif path == "/recent":
+        if not is_admin:
+            raise HTTPException(status_code=401, detail="Unauthorized access to recent")
+        recent_data = {"contents": drive.get_recent_files(limit=50)}
+        folder_data = convert_class_to_dict(recent_data, isObject=False, showtrash=False)
+
+    elif path.startswith("/tags/"):
+        if not is_admin:
+            raise HTTPException(status_code=401, detail="Unauthorized access to tags")
+        tag_name = urllib.parse.unquote(path.replace("/tags/", "").strip("/"))
+        tagged_data = {"contents": drive.get_tagged_items(tag_name)}
+        folder_data = convert_class_to_dict(tagged_data, isObject=False, showtrash=False)
 
     elif "/search_" in path:
         if not is_admin:
@@ -876,7 +895,7 @@ async def move_file_folder(request: Request, _auth: Session = Depends(require_au
 
     data = await request.json()
 
-    logger.info(f"moveFileFolder {data}")
+    logger.info(f"moveFileFolder src={data.get('src_path')} dest={data.get('dest_path')}")
     try:
         drive.move_file_folder(data["src_path"], data["dest_path"])
         return JSONResponse({"status": "ok"})
@@ -892,7 +911,7 @@ async def copy_file_folder_api(request: Request, _auth: Session = Depends(requir
 
     data = await request.json()
 
-    logger.info(f"copyFileFolder {data}")
+    logger.info(f"copyFileFolder src={data.get('src_path')} dest={data.get('dest_path')}")
     try:
         new_id = drive.copy_file_folder(data["src_path"], data.get("dest_path"))
         return JSONResponse({"status": "ok", "new_id": new_id})
@@ -971,7 +990,7 @@ async def get_save_progress(request: Request, _auth: Session = Depends(require_a
 
     data = await request.json()
 
-    logger.info(f"getUploadProgress {data}")
+    logger.info(f"getSaveProgress id={data.get('id')}")
     try:
         progress = SAVE_PROGRESS[data["id"]]
         return JSONResponse({"status": "ok", "data": progress})
@@ -985,7 +1004,7 @@ async def get_upload_progress(request: Request, _auth: Session = Depends(require
 
     data = await request.json()
 
-    logger.info(f"getUploadProgress {data}")
+    logger.info(f"getUploadProgress id={data.get('id')}")
 
     try:
         progress = PROGRESS_CACHE[data["id"]]
@@ -1023,7 +1042,7 @@ async def cancel_upload(request: Request, _auth: Session = Depends(require_auth)
 
     data = await request.json()
 
-    logger.info(f"cancelUpload {data}")
+    logger.info(f"cancelUpload id={data.get('id')}")
     STOP_TRANSMISSION.append(data["id"])
     STOP_DOWNLOAD.append(data["id"])
     return JSONResponse({"status": "ok"})
@@ -1036,9 +1055,50 @@ async def rename_file_folder(request: Request, _auth: Session = Depends(require_
 
     data = await request.json()
 
-    logger.info(f"renameFileFolder {data}")
+    logger.info(f"renameFileFolder path={data.get('path')} name={data.get('name')}")
     drive.rename_file_folder(data["path"], data["name"])
     return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/starFileFolder")
+async def star_file_folder(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
+    drive = ensure_drive_data()
+
+    data = await request.json()
+    path = data.get("path")
+    starred = data.get("starred")  # None to toggle, or boolean
+    if not path:
+        return JSONResponse({"status": "Path is required"}, status_code=400)
+
+    logger.info(f"starFileFolder path={path} starred={starred}")
+    new_status = drive.set_starred(path, starred)
+    asyncio.create_task(backup_drive_data(loop=False))
+    return JSONResponse({"status": "ok", "starred": new_status})
+
+
+@app.post("/api/tagFileFolder")
+async def tag_file_folder(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
+    drive = ensure_drive_data()
+
+    data = await request.json()
+    path = data.get("path")
+    action = data.get("action", "add")  # 'add' or 'remove'
+    tag = data.get("tag", "").strip()
+
+    if not path or not tag:
+        return JSONResponse({"status": "Path and tag are required"}, status_code=400)
+
+    logger.info(f"tagFileFolder path={path} action={action} tag={tag}")
+    if action == "add":
+        tags = drive.add_tag(path, tag)
+    else:
+        tags = drive.remove_tag(path, tag)
+
+    asyncio.create_task(backup_drive_data(loop=False))
+    return JSONResponse({"status": "ok", "tags": tags})
+
 
 
 @app.post("/api/trashFileFolder")
@@ -1048,7 +1108,7 @@ async def trash_file_folder(request: Request, _auth: Session = Depends(require_a
 
     data = await request.json()
 
-    logger.info(f"trashFileFolder {data}")
+    logger.info(f"trashFileFolder path={data.get('path')} trash={data.get('trash')}")
     drive.trash_file_folder(data["path"], data["trash"])
     return JSONResponse({"status": "ok"})
 
@@ -1060,7 +1120,7 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
     drive = ensure_drive_data()
 
     data = await request.json()
-    logger.info(f"deleteFileFolder {data}")
+    logger.info(f"deleteFileFolder path={data.get('path')}")
     deleted_msg_ids = drive.delete_file_folder(data["path"])
 
     # Delete message(s) from Telegram Storage Channel
@@ -1128,7 +1188,7 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
 async def getFileInfoFromUrl(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
 
-    logger.info(f"getFileInfoFromUrl {data}")
+    logger.info(f"getFileInfoFromUrl url={data.get('url')}")
     try:
         file_info = await get_file_info_from_url(data["url"])
         return JSONResponse({"status": "ok", "data": file_info})
@@ -1140,7 +1200,7 @@ async def getFileInfoFromUrl(request: Request, _auth: Session = Depends(require_
 async def startFileDownloadFromUrl(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
 
-    logger.info(f"startFileDownloadFromUrl {data}")
+    logger.info(f"startFileDownloadFromUrl filename={data.get('filename')} path={data.get('path')}")
     try:
         id = getRandomID()
         asyncio.create_task(
@@ -1157,7 +1217,7 @@ async def getFileDownloadProgress(request: Request, _auth: Session = Depends(req
 
     data = await request.json()
 
-    logger.info(f"getFileDownloadProgress {data}")
+    logger.info(f"getFileDownloadProgress id={data.get('id')}")
 
     try:
         progress = DOWNLOAD_PROGRESS[data["id"]]
@@ -1173,7 +1233,7 @@ async def getFolderShareAuth(request: Request, _auth: Session = Depends(require_
 
     data = await request.json()
 
-    logger.info(f"getFolderShareAuth {data}")
+    logger.info(f"getFolderShareAuth path={data.get('path')}")
 
     try:
         auth = drive.get_folder_auth(data["path"])

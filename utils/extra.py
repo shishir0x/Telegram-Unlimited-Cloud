@@ -65,6 +65,8 @@ def convert_class_to_dict(data, isObject, showtrash=False):
                     "category": "Folder",
                     "mime_type": "inode/directory",
                     "extension": "",
+                    "starred": getattr(folder, "starred", False),
+                    "tags": getattr(folder, "tags", []),
                     "owner": getattr(folder, "owner", "Admin"),
                     "upload_date": getattr(folder, "upload_date", ""),
                 }
@@ -85,10 +87,13 @@ def convert_class_to_dict(data, isObject, showtrash=False):
                     "mime_type": mime_type,
                     "extension": ext,
                     "icon": icon,
+                    "starred": getattr(file, "starred", False),
+                    "tags": getattr(file, "tags", []),
                     "owner": getattr(file, "owner", "Admin"),
                     "upload_date": getattr(file, "upload_date", ""),
                 }
     return new_data
+
 
 
 async def auto_ping_website():

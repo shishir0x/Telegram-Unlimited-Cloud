@@ -481,9 +481,13 @@ function getItemProvenance(item) {
         const badge = getFileBadge(item);
         const dateStr = formatDate(item.upload_date);
         const owner = item.owner || 'Admin';
+        const isStarred = Boolean(item.starred);
+        const tags = Array.isArray(item.tags) ? item.tags : [];
 
         const isSearch = getCurrentPath().startsWith('/search_');
         const prov = getItemProvenance(item);
+
+        const tagsHtml = tags.length ? tags.map(t => `<span class="gd-tag-badge" onclick="event.stopPropagation(); navigateToPath('/tags/${encodeURIComponent(t)}');">🏷️ ${escapeHtml(t)}</span>`).join('') : '';
 
         // Table Row
         tableHtml += `
@@ -494,11 +498,15 @@ function getItemProvenance(item) {
                 <td class="col-name-td">
                     <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
                         <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                            <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
+                                <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                            </button>
                             ${badge}
                             <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                            ${tagsHtml}
                         </div>
                         ${isSearch ? `
-                        <div class="gd-search-path-subline" style="margin-left: 34px;">
+                        <div class="gd-search-path-subline" style="margin-left: 58px;">
                             ${prov.badge}
                             <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
                         </div>` : ''}
@@ -528,6 +536,9 @@ function getItemProvenance(item) {
                 <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
             </div>
             <div class="gd-folder-chip-left">
+                <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
+                    <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                </button>
                 <img class="item-icon-img" src="static/assets/folder-solid-icon.svg">
                 <div style="min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden;flex:1;">
                     <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
@@ -546,7 +557,7 @@ function getItemProvenance(item) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-zip-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download as ZIP</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-zip-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download as ZIP</div><hr><div id="star-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> ${isStarred ? 'Remove from Starred' : 'Add to Starred'}</div><hr><div id="tags-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></svg> Manage Tags</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -557,9 +568,13 @@ function getItemProvenance(item) {
         const dateStr = formatDate(item.upload_date);
         const category = item.category || 'File';
         const owner = item.owner || 'Admin';
+        const isStarred = Boolean(item.starred);
+        const tags = Array.isArray(item.tags) ? item.tags : [];
 
         const isSearch = getCurrentPath().startsWith('/search_');
         const prov = getItemProvenance(item);
+
+        const tagsHtml = tags.length ? tags.map(t => `<span class="gd-tag-badge" onclick="event.stopPropagation(); navigateToPath('/tags/${encodeURIComponent(t)}');">🏷️ ${escapeHtml(t)}</span>`).join('') : '';
 
         // Table Row
         tableHtml += `
@@ -570,11 +585,15 @@ function getItemProvenance(item) {
                 <td class="col-name-td">
                     <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
                         <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                            <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
+                                <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                            </button>
                             ${badge}
                             <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                            ${tagsHtml}
                         </div>
                         ${isSearch ? `
-                        <div class="gd-search-path-subline" style="margin-left: 34px;">
+                        <div class="gd-search-path-subline" style="margin-left: 58px;">
                             ${prov.badge}
                             <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
                         </div>` : ''}
@@ -632,6 +651,9 @@ function getItemProvenance(item) {
                 <div class="gd-card-select-btn ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''}" data-id="${item.id}" title="Select">
                     <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                 </div>
+                <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" style="position: absolute; top: 8px; right: 38px; z-index: 4;" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
+                    <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                </button>
                 ${previewInnerHtml}
                 <a data-id="${item.id}" class="more-btn gd-file-card-more-btn" title="More actions" onclick="event.stopPropagation();"><img src="static/assets/more-icon.svg"></a>
             </div>
@@ -654,13 +676,14 @@ function getItemProvenance(item) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download</div><hr><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download</div><hr><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="star-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> ${isStarred ? 'Remove from Starred' : 'Add to Starred'}</div><hr><div id="tags-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></svg> Manage Tags</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
     tableBody.innerHTML = tableHtml;
     const ctxContainer = document.getElementById('context-menus-container');
     if (ctxContainer) ctxContainer.innerHTML = menusHtml;
+
 
     // Attach Selection, Click, Double Click, and Right-Click Context Menu Events
     document.querySelectorAll('.item-select-checkbox').forEach(cb => {
@@ -1473,9 +1496,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Google Drive Keyboard Shortcuts
     document.addEventListener('keydown', (e) => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+        const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
+        
+        // Command Palette (Ctrl+K or Cmd+K)
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            toggleCommandPalette();
             return;
         }
+
+        if (isInput) return;
 
         if (e.key === 'Delete' || e.key === 'Backspace') {
             if (window.SELECTED_ITEMS && window.SELECTED_ITEMS.size > 0) {
@@ -1502,6 +1532,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     openFilePreview.call({ getAttribute: () => singleItem.id });
                 }
             }
+        } else if (e.key === '/') {
+            e.preventDefault();
+            const searchInput = document.getElementById('file-search');
+            if (searchInput) searchInput.focus();
+        } else if (e.key === '?' || (e.shiftKey && e.key === '?')) {
+            e.preventDefault();
+            openKeyboardShortcutsModal();
+        } else if (e.key.toLowerCase() === 'v' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            applyViewMode(CURRENT_VIEW_MODE === 'grid' ? 'list' : 'grid');
+        } else if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            const infoBtn = document.getElementById('toggle-info-pane');
+            if (infoBtn) infoBtn.click();
+        } else if (e.shiftKey && e.key.toLowerCase() === 'n') {
+            e.preventDefault();
+            const newFolderBtn = document.getElementById('new-folder-btn');
+            if (newFolderBtn) newFolderBtn.click();
+        } else if (e.shiftKey && e.key.toLowerCase() === 'u') {
+            e.preventDefault();
+            const fileInput = document.getElementById('file-input');
+            if (fileInput) fileInput.click();
         }
     });
 
@@ -1520,7 +1572,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (previewLightbox) {
         previewLightbox.addEventListener('click', (e) => {
-            // Tap on backdrop closes modal
             if (e.target === previewLightbox || e.target.id === 'preview-content-holder') {
                 closePreviewLightbox();
             }
@@ -1529,6 +1580,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closePreviewLightbox();
+            closeCommandPalette();
+            closeKeyboardShortcutsModal();
+            closeManageTagsModal();
             deselectAllItems();
         }
     });
@@ -1557,13 +1611,387 @@ document.addEventListener('DOMContentLoaded', () => {
     const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
     if (bulkDeleteBtn) bulkDeleteBtn.addEventListener('click', bulkDeleteSelected);
 
+    // Tags Modal Handlers
+    const addTagBtn = document.getElementById('add-tag-submit-btn');
+    const newTagInput = document.getElementById('new-tag-input');
+    const manageTagsClose = document.getElementById('manage-tags-close');
+
+    if (addTagBtn) addTagBtn.addEventListener('click', addTagToCurrentItem);
+    if (manageTagsClose) manageTagsClose.addEventListener('click', closeManageTagsModal);
+    if (newTagInput) {
+        newTagInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addTagToCurrentItem();
+            }
+        });
+    }
+
+    // Keyboard Shortcuts Modal Close
+    const shortcutsClose = document.getElementById('shortcuts-modal-close');
+    if (shortcutsClose) shortcutsClose.addEventListener('click', closeKeyboardShortcutsModal);
+
     setupDragAndDrop();
     applyViewMode(CURRENT_VIEW_MODE);
     initSyncActivityManager();
+    initCommandPalette();
 
     // Initial fetch — server enforces auth via session cookie; 401 triggers login modal
     getCurrentDirectory();
 });
+
+// ==========================================
+// Star, Tag Management & Global Shortcuts
+// ==========================================
+
+window.toggleStarItem = async function(id, itemPath, explicitState = null) {
+    try {
+        const res = await postJson('/api/starFileFolder', {
+            path: itemPath,
+            starred: explicitState
+        });
+        if (res && res.status === 'ok') {
+            const isStarred = res.data && res.data.starred;
+            showToast(isStarred ? 'Added to Starred ⭐' : 'Removed from Starred');
+            if (typeof broadcastDriveChange === 'function') {
+                broadcastDriveChange('STAR', { path: itemPath, starred: isStarred });
+            }
+            if (typeof getCurrentDirectory === 'function') {
+                getCurrentDirectory();
+            }
+        } else {
+            showToast('Failed to update star status');
+        }
+    } catch (e) {
+        showToast('Error updating star status');
+    }
+};
+
+let CURRENT_TAG_ITEM_ID = null;
+
+window.openManageTagsModal = function(id) {
+    const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+    if (!item) return;
+    CURRENT_TAG_ITEM_ID = id;
+
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('manage-tags-modal');
+    const tagInput = document.getElementById('new-tag-input');
+
+    if (tagInput) tagInput.value = '';
+    renderModalTags();
+
+    if (bgBlur) {
+        bgBlur.style.zIndex = '100';
+        bgBlur.style.opacity = '1';
+    }
+    if (modal) {
+        modal.style.zIndex = '101';
+        modal.style.opacity = '1';
+    }
+    if (tagInput) setTimeout(() => tagInput.focus(), 150);
+};
+
+window.closeManageTagsModal = function() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('manage-tags-modal');
+    if (bgBlur) bgBlur.style.opacity = '0';
+    if (modal) modal.style.opacity = '0';
+    setTimeout(() => {
+        if (bgBlur) bgBlur.style.zIndex = '-1';
+        if (modal) modal.style.zIndex = '-1';
+    }, 200);
+    CURRENT_TAG_ITEM_ID = null;
+};
+
+function renderModalTags() {
+    const tagsListEl = document.getElementById('modal-tags-list');
+    if (!tagsListEl || !CURRENT_TAG_ITEM_ID) return;
+    const item = DIRECTORY_ITEMS[CURRENT_TAG_ITEM_ID];
+    if (!item) return;
+
+    const tags = Array.isArray(item.tags) ? item.tags : [];
+    if (tags.length === 0) {
+        tagsListEl.innerHTML = '<div style="color: var(--gd-text-secondary); font-size: 0.88rem;">No tags assigned yet.</div>';
+        return;
+    }
+
+    tagsListEl.innerHTML = tags.map(tag => `
+        <span class="gd-tag-chip" style="margin-right: 6px; margin-bottom: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: rgba(66, 133, 244, 0.12); color: #4285f4; border-radius: 12px; font-size: 0.82rem; font-weight: 500;">
+            <span>#${escapeHtml(tag)}</span>
+            <button onclick="removeTagFromCurrentItem('${escapeHtml(tag)}')" style="background: none; border: none; cursor: pointer; color: inherit; font-size: 1rem; line-height: 1; padding: 0 2px;">&times;</button>
+        </span>
+    `).join('');
+}
+
+window.addTagToCurrentItem = async function() {
+    const tagInput = document.getElementById('new-tag-input');
+    if (!tagInput || !CURRENT_TAG_ITEM_ID) return;
+    const tag = tagInput.value.trim().replace(/^#+/, '');
+    if (!tag) return;
+
+    const item = DIRECTORY_ITEMS[CURRENT_TAG_ITEM_ID];
+    if (!item) return;
+    const itemFullPath = (item.path + '/' + item.id).replaceAll('//', '/');
+
+    try {
+        const res = await postJson('/api/tagFileFolder', {
+            path: itemFullPath,
+            action: 'add',
+            tag: tag
+        });
+        if (res && res.status === 'ok') {
+            if (!Array.isArray(item.tags)) item.tags = [];
+            if (!item.tags.includes(tag)) item.tags.push(tag);
+            tagInput.value = '';
+            renderModalTags();
+            showToast(`Added tag #${tag} 🏷️`);
+            if (typeof broadcastDriveChange === 'function') {
+                broadcastDriveChange('TAG_ADD', { path: itemFullPath, tag });
+            }
+            if (typeof getCurrentDirectory === 'function') {
+                getCurrentDirectory();
+            }
+        } else {
+            showToast(res.status || 'Failed to add tag');
+        }
+    } catch (e) {
+        showToast('Error adding tag');
+    }
+};
+
+window.removeTagFromCurrentItem = async function(tag) {
+    if (!CURRENT_TAG_ITEM_ID) return;
+    const item = DIRECTORY_ITEMS[CURRENT_TAG_ITEM_ID];
+    if (!item) return;
+    const itemFullPath = (item.path + '/' + item.id).replaceAll('//', '/');
+
+    try {
+        const res = await postJson('/api/tagFileFolder', {
+            path: itemFullPath,
+            action: 'remove',
+            tag: tag
+        });
+        if (res && res.status === 'ok') {
+            if (Array.isArray(item.tags)) {
+                item.tags = item.tags.filter(t => t !== tag);
+            }
+            renderModalTags();
+            showToast(`Removed tag #${tag}`);
+            if (typeof broadcastDriveChange === 'function') {
+                broadcastDriveChange('TAG_REMOVE', { path: itemFullPath, tag });
+            }
+            if (typeof getCurrentDirectory === 'function') {
+                getCurrentDirectory();
+            }
+        }
+    } catch (e) {
+        showToast('Error removing tag');
+    }
+};
+
+window.openKeyboardShortcutsModal = function() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('keyboard-shortcuts-modal');
+    if (bgBlur) {
+        bgBlur.style.zIndex = '100';
+        bgBlur.style.opacity = '1';
+    }
+    if (modal) {
+        modal.style.zIndex = '101';
+        modal.style.opacity = '1';
+    }
+};
+
+window.closeKeyboardShortcutsModal = function() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('keyboard-shortcuts-modal');
+    if (bgBlur) bgBlur.style.opacity = '0';
+    if (modal) modal.style.opacity = '0';
+    setTimeout(() => {
+        if (bgBlur) bgBlur.style.zIndex = '-1';
+        if (modal) modal.style.zIndex = '-1';
+    }, 200);
+};
+
+// ==========================================
+// Command Palette (Ctrl+K) Controller
+// ==========================================
+
+let CMD_PALETTE_ITEMS = [];
+let CMD_PALETTE_ACTIVE_IDX = 0;
+
+function getStaticCommands() {
+    return [
+        { id: 'nav-my-drive', label: 'Go to My Drive', icon: '🏠', action: () => navigateToPath('/') },
+        { id: 'nav-starred', label: 'Go to Starred', icon: '⭐', action: () => navigateToPath('/starred') },
+        { id: 'nav-recent', label: 'Go to Recent Files', icon: '🕒', action: () => navigateToPath('/recent') },
+        { id: 'nav-trash', label: 'Go to Trash', icon: '🗑️', action: () => navigateToPath('/trash') },
+        { id: 'nav-sync', label: 'View Live Sync Activity', icon: '⚡', action: () => window.showSyncActivityView() },
+        { id: 'act-new-folder', label: 'Create New Folder', icon: '📁', action: () => { const b = document.getElementById('new-folder-btn'); if (b) b.click(); } },
+        { id: 'act-upload-file', label: 'Upload Local File', icon: '⬆️', action: () => { const b = document.getElementById('file-input'); if (b) b.click(); } },
+        { id: 'act-upload-url', label: 'Upload from URL', icon: '🌐', action: () => { const b = document.getElementById('url-upload'); if (b) b.click(); } },
+        { id: 'act-toggle-view', label: 'Toggle List / Grid View', icon: '🔲', action: () => applyViewMode(CURRENT_VIEW_MODE === 'grid' ? 'list' : 'grid') },
+        { id: 'act-toggle-insp', label: 'Toggle Details Inspector', icon: 'ℹ️', action: () => { const b = document.getElementById('toggle-info-pane'); if (b) b.click(); } },
+        { id: 'act-shortcuts', label: 'Show Keyboard Shortcuts', icon: '⌨️', action: () => openKeyboardShortcutsModal() }
+    ];
+}
+
+window.toggleCommandPalette = function() {
+    const modal = document.getElementById('cmd-palette-modal');
+    if (!modal) return;
+    if (modal.classList.contains('active')) {
+        closeCommandPalette();
+    } else {
+        openCommandPalette();
+    }
+};
+
+window.openCommandPalette = function() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('cmd-palette-modal');
+    const input = document.getElementById('cmd-palette-input');
+    if (!modal) return;
+
+    if (bgBlur) {
+        bgBlur.style.zIndex = '100';
+        bgBlur.style.opacity = '1';
+    }
+    modal.classList.add('active');
+    if (input) {
+        input.value = '';
+        setTimeout(() => input.focus(), 80);
+    }
+    renderCommandPaletteResults('');
+};
+
+window.closeCommandPalette = function() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('cmd-palette-modal');
+    if (modal) modal.classList.remove('active');
+    if (bgBlur) {
+        bgBlur.style.opacity = '0';
+        setTimeout(() => { bgBlur.style.zIndex = '-1'; }, 200);
+    }
+};
+
+function renderCommandPaletteResults(query) {
+    const resultsContainer = document.getElementById('cmd-palette-results');
+    if (!resultsContainer) return;
+
+    const q = (query || '').toLowerCase().trim();
+    const staticCmds = getStaticCommands();
+    let matches = [];
+
+    // 1. Filter system commands
+    staticCmds.forEach(cmd => {
+        if (!q || cmd.label.toLowerCase().includes(q)) {
+            matches.push(cmd);
+        }
+    });
+
+    // 2. Add matching items from current directory
+    if (typeof DIRECTORY_ITEMS !== 'undefined' && DIRECTORY_ITEMS) {
+        Object.entries(DIRECTORY_ITEMS).forEach(([id, item]) => {
+            if (!q || item.name.toLowerCase().includes(q)) {
+                matches.push({
+                    id: `item-${id}`,
+                    label: item.name,
+                    icon: item.type === 'folder' ? '📁' : '📄',
+                    subtext: item.type === 'folder' ? 'Folder' : convertBytes(item.size),
+                    action: () => {
+                        if (item.type === 'folder') {
+                            navigateToPath((item.path + '/' + item.id).replaceAll('//', '/'));
+                        } else {
+                            openFilePreview.call({ getAttribute: () => item.id });
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    CMD_PALETTE_ITEMS = matches;
+    CMD_PALETTE_ACTIVE_IDX = 0;
+
+    if (matches.length === 0) {
+        resultsContainer.innerHTML = `<div class="gd-cmd-empty">No matching commands or files found. Press Enter to search everywhere for "${escapeHtml(q)}".</div>`;
+        return;
+    }
+
+    resultsContainer.innerHTML = matches.map((item, idx) => `
+        <div class="gd-cmd-item ${idx === 0 ? 'active' : ''}" data-idx="${idx}">
+            <span class="gd-cmd-icon">${item.icon}</span>
+            <div class="gd-cmd-info">
+                <span class="gd-cmd-title">${escapeHtml(item.label)}</span>
+                ${item.subtext ? `<span class="gd-cmd-subtext">${escapeHtml(item.subtext)}</span>` : ''}
+            </div>
+        </div>
+    `).join('');
+
+    resultsContainer.querySelectorAll('.gd-cmd-item').forEach(el => {
+        el.onclick = () => {
+            const idx = parseInt(el.getAttribute('data-idx'), 10);
+            executeCommandPaletteItem(idx);
+        };
+    });
+}
+
+function executeCommandPaletteItem(idx) {
+    if (CMD_PALETTE_ITEMS[idx] && typeof CMD_PALETTE_ITEMS[idx].action === 'function') {
+        closeCommandPalette();
+        CMD_PALETTE_ITEMS[idx].action();
+    } else {
+        const input = document.getElementById('cmd-palette-input');
+        const q = input ? input.value.trim() : '';
+        if (q) {
+            closeCommandPalette();
+            navigateToPath(`/search_${encodeURIComponent(q)}`);
+        }
+    }
+}
+
+function initCommandPalette() {
+    const input = document.getElementById('cmd-palette-input');
+    const escBadge = document.querySelector('.gd-cmd-esc-badge');
+
+    if (escBadge) escBadge.onclick = closeCommandPalette;
+
+    if (input) {
+        input.addEventListener('input', (e) => {
+            renderCommandPaletteResults(e.target.value);
+        });
+
+        input.addEventListener('keydown', (e) => {
+            const resultsContainer = document.getElementById('cmd-palette-results');
+            const items = resultsContainer ? resultsContainer.querySelectorAll('.gd-cmd-item') : [];
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (items.length > 0) {
+                    items[CMD_PALETTE_ACTIVE_IDX]?.classList.remove('active');
+                    CMD_PALETTE_ACTIVE_IDX = (CMD_PALETTE_ACTIVE_IDX + 1) % items.length;
+                    items[CMD_PALETTE_ACTIVE_IDX]?.classList.add('active');
+                    items[CMD_PALETTE_ACTIVE_IDX]?.scrollIntoView({ block: 'nearest' });
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (items.length > 0) {
+                    items[CMD_PALETTE_ACTIVE_IDX]?.classList.remove('active');
+                    CMD_PALETTE_ACTIVE_IDX = (CMD_PALETTE_ACTIVE_IDX - 1 + items.length) % items.length;
+                    items[CMD_PALETTE_ACTIVE_IDX]?.classList.add('active');
+                    items[CMD_PALETTE_ACTIVE_IDX]?.scrollIntoView({ block: 'nearest' });
+                }
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                executeCommandPaletteItem(CMD_PALETTE_ACTIVE_IDX);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeCommandPalette();
+            }
+        });
+    }
+}
 
 // ==========================================
 // Live Sync Manager Telemetry & Native Activity UI

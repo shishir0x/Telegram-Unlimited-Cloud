@@ -324,26 +324,89 @@ def run_tests():
     assert r.status_code in (200, 404)  # 404 is expected if folder has no files yet, 200 if files present
 
     # -------------------------------------------------------------
-    # 14. Test Cleanup & Bulk Deletion
+    # 14. Test Star & Tagging System + Virtual Views (/starred, /recent, /tags/<tag>)
     # -------------------------------------------------------------
-    print("\n[14] Testing Bulk Deletion & Cleanup:")
-    cleanup_paths = [f"/{folder_id}", f"/{target_parent_id}", f"/{copied_id}"]
-    r = session.post(f"{BASE_URL}/api/bulkDelete", json={"paths": cleanup_paths})
-    print(f"  Bulk delete {len(cleanup_paths)} test items: {r.status_code} -> {r.json()}")
+    print("\n[14] Testing Star & Tagging Endpoints + Next-Gen Views:")
+    # A. Test Star File/Folder
+    r = session.post(f"{BASE_URL}/api/starFileFolder", json={"path": f"/{target_parent_id}", "starred": True})
+    print(f"  Star folder '/{target_parent_id}': {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    assert r.json().get("starred") is True
+
+    # B. Test /starred directory view
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/starred"})
+    print(f"  POST /api/getDirectory for '/starred': {r.status_code} -> {r.json().get('status')}")
+    assert r.status_code == 200
+    starred_contents = r.json()["data"]["contents"]
+    assert target_parent_id in starred_contents
+    assert starred_contents[target_parent_id].get("starred") is True
+    print(f"  Verified folder appears in Starred view ({len(starred_contents)} items).")
+
+    # C. Test Tag File/Folder (Add tag)
+    r = session.post(f"{BASE_URL}/api/tagFileFolder", json={"path": f"/{target_parent_id}", "action": "add", "tag": "Important"})
+    print(f"  Add tag 'Important': {r.status_code} -> {r.json()}")
+    assert r.status_code == 200
+    assert "Important" in r.json().get("tags", [])
+
+    # D. Test /tags/Important view
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/tags/Important"})
+    print(f"  POST /api/getDirectory for '/tags/Important': {r.status_code} -> {r.json().get('status')}")
+    assert r.status_code == 200
+    tagged_contents = r.json()["data"]["contents"]
+    assert target_parent_id in tagged_contents
+    assert "Important" in tagged_contents[target_parent_id].get("tags", [])
+    print(f"  Verified folder appears in /tags/Important view ({len(tagged_contents)} items).")
+
+    # E. Test /recent view
+    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/recent"})
+    print(f"  POST /api/getDirectory for '/recent': {r.status_code} -> {r.json().get('status')}")
+    assert r.status_code == 200
+    assert "contents" in r.json()["data"]
+    print(f"  Verified /recent view loaded successfully.")
+
+    # F. Test Unstar & Remove Tag
+    r = session.post(f"{BASE_URL}/api/starFileFolder", json={"path": f"/{target_parent_id}", "starred": False})
+    assert r.status_code == 200
+    assert r.json().get("starred") is False
+
+    r = session.post(f"{BASE_URL}/api/tagFileFolder", json={"path": f"/{target_parent_id}", "action": "remove", "tag": "Important"})
+    assert r.status_code == 200
+    assert "Important" not in r.json().get("tags", [])
+    print("  Verified star and tag removal.")
+
+    # -------------------------------------------------------------
+    # 15. Test Cleanup & Bulk Deletion
+    # -------------------------------------------------------------
+    print("\n[15] Testing Bulk Deletion & Cleanup:")
+    # Fetch current root items and identify all test artifacts
+    r_root = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
+    test_ids = []
+    if r_root.status_code == 200:
+        for item_id, item_val in r_root.json().get("data", {}).get("contents", {}).items():
+            name = item_val.get("name", "")
+            if name.startswith(("Audit_Folder", "Move_Target", "Copy of", "Special Test")) or item_id in [folder_id, target_parent_id, copied_id]:
+                test_ids.append(f"/{item_id}")
+
+    if not test_ids:
+        test_ids = [f"/{folder_id}", f"/{target_parent_id}", f"/{copied_id}"]
+
+    r = session.post(f"{BASE_URL}/api/bulkDelete", json={"paths": test_ids})
+    print(f"  Bulk delete {len(test_ids)} test items: {r.status_code} -> {r.json()}")
     assert r.status_code == 200
     assert r.json().get("status") == "ok"
 
-    # Verify root is clean
+    # Verify root is clean of test items
     r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/"})
-    current_ids = set(r.json()["data"]["contents"].keys())
-    for cid in [folder_id, target_parent_id, copied_id]:
-        assert cid not in current_ids
+    current_names = [v.get("name") for v in r.json()["data"]["contents"].values()]
+    print(f"  Root items remaining after cleanup: {current_names}")
+    for name in current_names:
+        assert not name.startswith(("Audit_Folder", "Move_Target", "Copy of", "Special Test"))
     print("  Verified all test artifacts cleanly deleted.")
 
     # -------------------------------------------------------------
-    # 15. Test Logout & Session Invalidation
+    # 16. Test Logout & Session Invalidation
     # -------------------------------------------------------------
-    print("\n[15] Testing Logout & Session Invalidation:")
+    print("\n[16] Testing Logout & Session Invalidation:")
     r = session.post(f"{BASE_URL}/api/logout")
     print(f"  POST /api/logout: {r.status_code} -> {r.json()}")
     assert r.status_code == 200
@@ -354,7 +417,7 @@ def run_tests():
     assert r.status_code == 401
 
     print("\n" + "=" * 70)
-    print("[SUCCESS] ALL 15 PHASES TESTED & 100% OPERATIONAL WITH ZERO REGRESSIONS!")
+    print("[SUCCESS] ALL 16 PHASES TESTED & 100% OPERATIONAL WITH ZERO REGRESSIONS!")
     print("=" * 70)
 
 if __name__ == "__main__":
