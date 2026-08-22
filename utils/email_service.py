@@ -45,37 +45,39 @@ class EmailService:
 
     @property
     def host(self) -> str:
-        return os.getenv("SMTP_HOST", "").strip()
+        return os.getenv("SMTP_HOST", "smtp.gmail.com").strip().strip('"').strip("'")
 
     @property
     def port(self) -> int:
+        val = os.getenv("SMTP_PORT", "587").strip().strip('"').strip("'")
         try:
-            return int(os.getenv("SMTP_PORT", "587").strip())
+            return int(val)
         except ValueError:
             return 587
 
     @property
     def user(self) -> str:
-        return os.getenv("SMTP_USER", "").strip()
+        return os.getenv("SMTP_USER", "").strip().strip('"').strip("'")
 
     @property
     def password(self) -> str:
-        raw = os.getenv("SMTP_PASSWORD", "").strip()
-        if "gmail.com" in self.host.lower() and len(raw.replace(" ", "")) == 16:
+        raw = os.getenv("SMTP_PASSWORD", "").strip().strip('"').strip("'")
+        if "gmail.com" in self.host.lower():
             return raw.replace(" ", "")
         return raw
 
     @property
     def from_email(self) -> str:
-        return (os.getenv("FROM_EMAIL") or self.user).strip()
+        raw = (os.getenv("FROM_EMAIL") or self.user).strip().strip('"').strip("'")
+        return raw
 
     @property
     def from_name(self) -> str:
-        return os.getenv("FROM_NAME", "TG Drive").strip()
+        return os.getenv("FROM_NAME", "TG Drive").strip().strip('"').strip("'")
 
     @property
     def use_ssl(self) -> bool:
-        return os.getenv("SMTP_USE_TLS", "false").strip().lower() == "true"
+        return os.getenv("SMTP_USE_TLS", "false").strip().lower() == "true" or self.port == 465
 
     @property
     def is_configured(self) -> bool:
@@ -155,51 +157,53 @@ If you did not request this code, someone may be attempting to access your drive
 
     def _send_sync(self, to_email: str, otp: str) -> None:
         """
-        Synchronous SMTP delivery. Run via executor to keep it non-blocking.
-        OTP value is only used to build the email body — never logged.
+        Synchronous SMTP delivery with automatic dual-port fallback (587 STARTTLS / 465 SSL).
         """
         if not self.is_configured:
+            logger.error("SMTP is not configured. Missing required SMTP variables.")
             raise EmailDeliveryError(
                 "SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and FROM_EMAIL."
             )
 
         msg = self._build_otp_message(to_email, otp)
+        host = self.host
+        user = self.user
+        pwd = self.password
+        from_addr = self.from_email
 
-        try:
-            if self.use_ssl:
-                # SMTPS — direct SSL connection (port 465)
+        # Determine ports to try: primary port first, then fallback port
+        ports_to_try = [self.port]
+        fallback_port = 465 if self.port == 587 else 587
+        if fallback_port not in ports_to_try:
+            ports_to_try.append(fallback_port)
+
+        errors = []
+        for p in ports_to_try:
+            try:
                 context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(self.host, self.port, context=context, timeout=15) as server:
-                    server.login(self.user, self.password)
-                    server.sendmail(self.from_email, [to_email], msg.as_string())
-            else:
-                # STARTTLS — plain connection upgraded to TLS (port 587)
-                context = ssl.create_default_context()
-                with smtplib.SMTP(self.host, self.port, timeout=15) as server:
-                    server.ehlo()
-                    server.starttls(context=context)
-                    server.ehlo()
-                    server.login(self.user, self.password)
-                    server.sendmail(self.from_email, [to_email], msg.as_string())
+                if p == 465:
+                    # SMTPS — direct SSL connection
+                    with smtplib.SMTP_SSL(host, p, context=context, timeout=12) as server:
+                        server.login(user, pwd)
+                        server.sendmail(from_addr, [to_email], msg.as_string())
+                else:
+                    # STARTTLS — plain connection upgraded to TLS
+                    with smtplib.SMTP(host, p, timeout=12) as server:
+                        server.ehlo()
+                        server.starttls(context=context)
+                        server.ehlo()
+                        server.login(user, pwd)
+                        server.sendmail(from_addr, [to_email], msg.as_string())
 
-            # Log success WITHOUT including OTP value
-            logger.info(f"OTP email sent successfully to {to_email[:3]}***@***")
+                logger.info(f"OTP email sent successfully to {to_email[:3]}***@*** via {host}:{p}")
+                return
+            except Exception as e:
+                logger.warning(f"SMTP delivery attempt via {host}:{p} failed: {type(e).__name__} ({e})")
+                errors.append(f"{p}: {type(e).__name__}")
 
-        except smtplib.SMTPAuthenticationError:
-            logger.error("SMTP authentication failed — check SMTP_USER and SMTP_PASSWORD")
-            raise EmailDeliveryError("Email delivery failed: authentication error")
-        except smtplib.SMTPConnectError:
-            logger.error(f"Cannot connect to SMTP server {self.host}:{self.port}")
-            raise EmailDeliveryError("Email delivery failed: cannot reach mail server")
-        except smtplib.SMTPException as e:
-            logger.error(f"SMTP error during OTP delivery: {type(e).__name__}")
-            raise EmailDeliveryError("Email delivery failed: SMTP error")
-        except TimeoutError:
-            logger.error(f"SMTP connection timed out to {self.host}:{self.port}")
-            raise EmailDeliveryError("Email delivery failed: connection timed out")
-        except OSError as e:
-            logger.error(f"Network error during email delivery: {type(e).__name__}")
-            raise EmailDeliveryError("Email delivery failed: network error")
+        # If all ports failed
+        logger.error(f"All SMTP delivery attempts to {host} failed: {', '.join(errors)}")
+        raise EmailDeliveryError("Failed to send verification email. Check SMTP configuration.")
 
     async def send_otp(self, to_email: str, otp: str) -> None:
         """
