@@ -39,7 +39,7 @@ load_dotenv()
 
 # System & heavy dependency directories to ignore during backup
 IGNORED_DIRS = {
-    # Windows System & OS Junk
+    # Windows System & Profile Junk
     "appdata",
     "application data",
     "local settings",
@@ -55,10 +55,26 @@ IGNORED_DIRS = {
     "msocache",
     "perflogs",
     "intel",
+    "all users",
+    "default user",
+    "cookies",
+    "recent",
+    "sendto",
+    "start menu",
+    "nethood",
+    "printhood",
+    "templates",
+    "searches",
+    "saved games",
+    "contacts",
+    "links",
+    "virtualbox vms",
+    ".virtualbox",
 
     # Heavy Dependency & Build Folders (Crucial for C: Drive!)
     "node_modules",
     "bower_components",
+    "jspm_packages",
     "dist",
     "build",
     "out",
@@ -66,6 +82,8 @@ IGNORED_DIRS = {
     "bin",
     "obj",
     "pkg",
+    "release",
+    "debug",
 
     # Python Virtualenvs & Caches
     "__pycache__",
@@ -80,7 +98,7 @@ IGNORED_DIRS = {
     ".tox",
     ".eggs",
 
-    # Package Manager & Tooling Caches
+    # Package Manager, AI Tools & Dev Caches
     ".cache",
     ".npm",
     ".yarn",
@@ -92,6 +110,16 @@ IGNORED_DIRS = {
     ".nuget",
     ".dart_tool",
     ".pub-cache",
+    ".gemini",
+    ".antigravity",
+    ".cursor",
+    ".windsurf",
+    ".ollama",
+    ".docker",
+    ".conda",
+    ".anaconda",
+    ".dotnet",
+    ".android",
 
     # IDEs & VCS Metadata
     ".git",
@@ -99,6 +127,8 @@ IGNORED_DIRS = {
     ".svn",
     ".hg",
     ".vscode",
+    ".vscode-insiders",
+    ".vscode-cli",
     ".idea",
     ".vs",
 
@@ -135,10 +165,10 @@ IGNORED_FILES_LOWER = {
     "dumpstack.log",
 }
 
-IGNORED_FILE_PREFIXES = ("ntuser.dat", "usrclass.dat", "~$", ".~", "dumpstack.log")
+IGNORED_FILE_PREFIXES = ("ntuser.dat", "usrclass.dat", "~$", ".~", "dumpstack.log", "iconcache")
 IGNORED_FILE_EXTENSIONS = (
     ".tmp", ".temp", ".crdownload", ".part", ".log1", ".log2", ".dmp",
-    ".cache", ".lock", ".iso", ".vmdk", ".vdi", ".swp"
+    ".cache", ".lock", ".iso", ".vmdk", ".vdi", ".vhdx", ".swp", ".sys", ".lnk"
 )
 
 MANIFEST_PATH = Path.home() / ".tgdrive_sync_manifest.json"
@@ -186,7 +216,7 @@ def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str
 
 
 def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
-    name_lower = dir_name.lower()
+    name_lower = dir_name.lower().strip()
     path_lower = full_rel_path.lower().replace("\\", "/").strip("/")
 
     # Explicitly allow Android root and Android/media (for WhatsApp, Telegram, etc.)
@@ -207,16 +237,17 @@ def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
         return True
 
     # Check known junk substring patterns
-    if any(f"/{ig}/" in f"/{path_lower}/" for ig in ["node_modules", ".git", ".venv", "venv", "__pycache__", ".cache"]):
+    if any(f"/{ig}/" in f"/{path_lower}/" for ig in ["node_modules", "appdata", ".git", ".venv", "venv", "__pycache__", ".cache", ".npm", ".cargo", ".gradle"]):
         return True
 
+    # Always skip hidden or system folders starting with '.' or '$'
     if name_lower.startswith((".", "$")):
         return True
     return False
 
 
 def should_skip_file(file_name: str) -> bool:
-    name_lower = file_name.lower()
+    name_lower = file_name.lower().strip()
     if name_lower in IGNORED_FILES_LOWER:
         return True
     if any(name_lower.startswith(p) for p in IGNORED_FILE_PREFIXES):
@@ -755,11 +786,12 @@ class TGDriveBackupClient:
         }, f"Scanning source: {source_dir}")
 
         # ── Step 1: Discover all folders and files ───────────────────────────
-        print("⏳ Scanning directories (including empty folders)...")
+        print("⏳ Scanning directory structure (skipping AppData, node_modules & dev junk)...")
         all_folders: List[str] = []
         all_files: List[Tuple[Path, str]] = []  # (local_path, rel_folder)
 
-        for root, dirs, files in os.walk(source_dir):
+        scan_tick = 0
+        for root, dirs, files in os.walk(source_dir, followlinks=False, onerror=lambda e: None):
             rel_dir = os.path.relpath(root, source_dir).replace("\\", "/")
             if rel_dir == ".":
                 rel_dir = ""
@@ -771,6 +803,14 @@ class TGDriveBackupClient:
             for f in files:
                 if not should_skip_file(f):
                     all_files.append((Path(root) / f, rel_dir))
+
+            scan_tick += 1
+            if scan_tick % 25 == 0:
+                sys.stdout.write(f"\r  🔍 Discovered: {len(all_folders):,} folders, {len(all_files):,} files...")
+                sys.stdout.flush()
+
+        sys.stdout.write(f"\r  ✅ Scan complete: {len(all_folders):,} folders, {len(all_files):,} files found.\n")
+        sys.stdout.flush()
 
         # ── Step 2: Pre-sync all folders ─────────────────────────────────────
         self.sync_folders_first(all_folders, target_tg_root)
