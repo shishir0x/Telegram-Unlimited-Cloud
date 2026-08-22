@@ -70,6 +70,11 @@ IGNORED_DIRS = {
     "links",
     "virtualbox vms",
     ".virtualbox",
+    "crossdevice",
+    "cross device",
+    "phonelink",
+    "phone link",
+    "your phone",
 
     # Heavy Dependency & Build Folders (Crucial for C: Drive!)
     "node_modules",
