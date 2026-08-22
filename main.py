@@ -445,7 +445,7 @@ async def api_login(request: Request):
         await asyncio.sleep(0.5)
         return JSONResponse({"status": "Invalid email or password"}, status_code=401)
 
-    # Credentials correct — generate and email OTP
+    # Credentials correct — generate and send OTP
     otp_state = get_otp_status()
     if otp_state["pending"] and not otp_state.get("can_resend", True):
         return JSONResponse(
@@ -454,21 +454,42 @@ async def api_login(request: Request):
         )
 
     otp = create_pending_otp()
+    delivery_channels = []
 
+    # 1. Deliver OTP via Telegram Bot directly to STORAGE_CHANNEL
+    try:
+        from utils.clients import multi_clients
+        bot_client = multi_clients.get(1) or (list(multi_clients.values())[0] if multi_clients else None)
+        if bot_client and STORAGE_CHANNEL:
+            otp_msg = (
+                f"🔐 **TG Drive Verification Code**\n\n"
+                f"Your 6-digit login code is:\n`{otp}`\n\n"
+                f"⏱️ Expires in **5 minutes** (single-use).\n"
+                f"Requested for: `{submitted_email}`"
+            )
+            await bot_client.send_message(int(STORAGE_CHANNEL), otp_msg)
+            delivery_channels.append("Telegram Channel")
+            logger.info(f"OTP verification code sent to Telegram Storage Channel ({STORAGE_CHANNEL})")
+    except Exception as te:
+        logger.warning(f"Telegram Bot OTP send failed: {te}")
+
+    # 2. Deliver OTP via Email (SMTP)
     if email_service.is_configured:
         try:
             await email_service.send_otp(ADMIN_EMAIL, otp)
-        except EmailDeliveryError as e:
-            logger.error(f"OTP email delivery failed: {e}")
-            return JSONResponse(
-                {"status": "Failed to send verification email. Check SMTP configuration."},
-                status_code=503,
-            )
-    else:
-        # SMTP not configured: print OTP to server console (dev/debug mode only)
-        logger.warning(f"[DEV MODE] OTP for {submitted_email}: {otp}")
+            delivery_channels.append("Email")
+            logger.info("OTP verification code sent via Email")
+        except Exception as ee:
+            logger.warning(f"SMTP OTP delivery skipped/failed: {ee}")
 
-    return JSONResponse({"status": "otp_sent"})
+    # If at least one channel delivered the OTP:
+    if delivery_channels:
+        msg_text = f"Verification code sent to {' & '.join(delivery_channels)}."
+        return JSONResponse({"status": "otp_sent", "message": msg_text})
+
+    # Dev/fallback mode: log code to console
+    logger.warning(f"[CONSOLE OTP] Verification code for {submitted_email}: {otp}")
+    return JSONResponse({"status": "otp_sent", "message": "Verification code generated."})
 
 
 @app.post("/api/verifyOtp")

@@ -79,6 +79,10 @@ function initAuthListeners() {
                     // Advance to OTP step
                     document.getElementById('login-step-1').style.display = 'none';
                     document.getElementById('login-step-2').style.display = '';
+                    const subtext = document.querySelector('#login-step-2 .gd-login-subtext');
+                    if (subtext && json.message) {
+                        subtext.textContent = json.message + ' Enter it below.';
+                    }
                     const otpInput = document.getElementById('auth-otp');
                     if (otpInput) { otpInput.value = ''; otpInput.focus(); }
                 } else {
