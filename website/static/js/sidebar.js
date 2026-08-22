@@ -184,24 +184,47 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Sidebar collapse & mobile off-canvas drawer toggle
     const sidebarToggle = document.getElementById('sidebar-toggle');
+    const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
     const sidebar = document.getElementById('gd-sidebar');
     const sidebarBackdrop = document.getElementById('sidebar-backdrop');
 
     function closeSidebarDrawer() {
         if (sidebar) sidebar.classList.remove('open');
         if (sidebarBackdrop) sidebarBackdrop.classList.remove('active');
+        document.body.classList.remove('drawer-open');
     }
 
-    if (sidebarToggle && sidebar) {
-        sidebarToggle.addEventListener('click', () => {
-            if (window.innerWidth <= 768) {
-                sidebar.classList.toggle('open');
-                if (sidebarBackdrop) {
-                    sidebarBackdrop.classList.toggle('active', sidebar.classList.contains('open'));
-                }
+    function openSidebarDrawer() {
+        if (sidebar) sidebar.classList.add('open');
+        if (sidebarBackdrop) sidebarBackdrop.classList.add('active');
+        document.body.classList.add('drawer-open');
+    }
+
+    function toggleSidebar() {
+        if (window.innerWidth <= 768) {
+            if (sidebar && sidebar.classList.contains('open')) {
+                closeSidebarDrawer();
             } else {
+                openSidebarDrawer();
+            }
+        } else {
+            if (sidebar) {
                 sidebar.classList.toggle('collapsed');
             }
+        }
+    }
+
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleSidebar();
+        });
+    }
+
+    if (sidebarCloseBtn) {
+        sidebarCloseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeSidebarDrawer();
         });
     }
 
@@ -216,6 +239,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 closeSidebarDrawer();
             }
         });
+    });
+
+    // Handle screen resize smoothly without stuck classes
+    window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+            closeSidebarDrawer();
+        } else {
+            if (sidebar) sidebar.classList.remove('collapsed');
+        }
     });
 
     // Mobile FAB and "+ New" Bottom Sheet

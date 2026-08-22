@@ -322,12 +322,13 @@ function handleFolderDrop(e) {
 // Main Directory Renderer
 function showDirectory(data, breadcrumbs) {
     CURRENT_DIRECTORY_DATA = data;
-    const contents = data['contents'] || {};
+    window.CURRENT_BREADCRUMBS = breadcrumbs || window.CURRENT_BREADCRUMBS || [];
+    const contents = data ? (data['contents'] || {}) : {};
     DIRECTORY_ITEMS = contents;
     const isTrash = getCurrentPath().startsWith('/trash');
 
     if (window.CURRENT_PAGE_VIEW !== 'sync') {
-        updateBreadcrumbs(breadcrumbs);
+        updateBreadcrumbs(window.CURRENT_BREADCRUMBS);
     }
 
     const tableBody = document.getElementById('directory-data');
@@ -345,25 +346,89 @@ function showDirectory(data, breadcrumbs) {
     THUMB_ACTIVE_COUNT = 0;
 
     let entries = Object.entries(contents);
+
+    // Apply Filter Chips (All, Folders, Images, Videos, Audio, PDFs, Code, Archives)
+    if (window.CURRENT_FILTER && window.CURRENT_FILTER !== 'all') {
+        entries = entries.filter(([key, value]) => {
+            if (window.CURRENT_FILTER === 'folder') return value.type === 'folder';
+            if (value.type !== 'file') return false;
+            const ext = (value.name && value.name.includes('.')) ? value.name.split('.').pop().toLowerCase() : '';
+            const cat = (value.category || '').toLowerCase();
+            if (window.CURRENT_FILTER === 'image') return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'avif', 'heic', 'heif'].includes(ext) || cat === 'image';
+            if (window.CURRENT_FILTER === 'video') return ['mp4', 'mkv', 'webm', 'mov', 'avi', 'ts', 'ogv', 'm4v', '3gp', 'flv'].includes(ext) || cat === 'video';
+            if (window.CURRENT_FILTER === 'audio') return ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus', 'wma'].includes(ext) || cat === 'audio';
+            if (window.CURRENT_FILTER === 'pdf') return ext === 'pdf' || cat === 'pdf';
+            if (window.CURRENT_FILTER === 'code') return ['txt', 'md', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'scss', 'json', 'xml', 'csv', 'log', 'sh', 'bat', 'yaml', 'yml', 'c', 'cpp', 'h', 'java', 'rs', 'go', 'sql', 'env'].includes(ext) || cat === 'code';
+            if (window.CURRENT_FILTER === 'archive') return ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso'].includes(ext) || cat === 'archive';
+            return true;
+        });
+    }
+
     let folders = entries.filter(([key, value]) => value.type === 'folder');
     let files = entries.filter(([key, value]) => value.type === 'file');
 
-    folders.sort((a, b) => new Date(b[1].upload_date) - new Date(a[1].upload_date));
-    files.sort((a, b) => new Date(b[1].upload_date) - new Date(a[1].upload_date));
+    // Multi-Criteria Sorting Engine (Name, Date Modified, File Size, Type)
+    const sortMultiplier = (window.CURRENT_SORT.order === 'desc') ? -1 : 1;
+    const sortComparator = (a, b) => {
+        const itemA = a[1];
+        const itemB = b[1];
+        if (window.CURRENT_SORT.key === 'name') {
+            return sortMultiplier * itemA.name.localeCompare(itemB.name, undefined, { numeric: true, sensitivity: 'base' });
+        } else if (window.CURRENT_SORT.key === 'date') {
+            const dateA = new Date(itemA.upload_date || 0).getTime();
+            const dateB = new Date(itemB.upload_date || 0).getTime();
+            return sortMultiplier * (dateA - dateB);
+        } else if (window.CURRENT_SORT.key === 'size') {
+            const sizeA = Number(itemA.size) || 0;
+            const sizeB = Number(itemB.size) || 0;
+            return sortMultiplier * (sizeA - sizeB);
+        } else if (window.CURRENT_SORT.key === 'type') {
+            const typeA = itemA.type === 'folder' ? 'Folder' : (itemA.category || itemA.name.split('.').pop() || '');
+            const typeB = itemB.type === 'folder' ? 'Folder' : (itemB.category || itemB.name.split('.').pop() || '');
+            return sortMultiplier * typeA.localeCompare(typeB);
+        }
+        return 0;
+    };
+
+    folders.sort(sortComparator);
+    files.sort(sortComparator);
+
+    // Update Header Sort Indicator Arrows
+    ['name', 'type', 'date', 'size'].forEach(col => {
+        const ind = document.getElementById(`sort-ind-${col}`);
+        if (ind) {
+            if (window.CURRENT_SORT.key === col) {
+                ind.innerText = window.CURRENT_SORT.order === 'asc' ? '▲' : '▼';
+            } else {
+                ind.innerText = '';
+            }
+        }
+    });
+
+    // Update Sort Dropdown Active Option
+    document.querySelectorAll('.gd-sort-option').forEach(opt => {
+        const sKey = opt.getAttribute('data-sort');
+        const sOrder = opt.getAttribute('data-order');
+        if (sKey === window.CURRENT_SORT.key && sOrder === window.CURRENT_SORT.order) {
+            opt.classList.add('active');
+        } else {
+            opt.classList.remove('active');
+        }
+    });
 
     // Handle Empty State
     if (folders.length === 0 && files.length === 0) {
         const emptyHtml = `
             <tr>
-                <td colspan="6" style="text-align: center; padding: 60px 20px; color: var(--gd-text-tertiary);">
+                <td colspan="7" style="text-align: center; padding: 60px 20px; color: var(--gd-text-tertiary);">
                     <div style="font-size: 3rem; margin-bottom: 12px;">📁</div>
-                    <div style="font-size: 1.1rem; font-weight: 500; color: var(--gd-text-secondary);">No files in this folder</div>
+                    <div style="font-size: 1.1rem; font-weight: 500; color: var(--gd-text-secondary);">No items match this filter or folder is empty</div>
                     <div style="font-size: 0.85rem; margin-top: 6px;">Use "+ New" button or drag & drop files here to upload</div>
                 </td>
             </tr>
         `;
         tableBody.innerHTML = emptyHtml;
-        gridFolders.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--gd-text-tertiary);">Folder is empty</div>`;
+        gridFolders.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--gd-text-tertiary);">No items found</div>`;
         gridFoldersTitle.style.display = 'none';
         gridFilesTitle.style.display = 'none';
         return;
@@ -383,7 +448,10 @@ function showDirectory(data, breadcrumbs) {
 
         // Table Row
         tableHtml += `
-            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr">
+            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}">
+                <td class="col-select-td" onclick="event.stopPropagation();">
+                    <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''} />
+                </td>
                 <td class="col-name-td">
                     <div class="td-align file-name-cell">
                         ${badge}
@@ -404,12 +472,15 @@ function showDirectory(data, breadcrumbs) {
 
         // Grid Folder Chip
         const folderChip = document.createElement('div');
-        folderChip.className = 'gd-folder-chip folder-tr';
+        folderChip.className = `gd-folder-chip folder-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}`;
         folderChip.setAttribute('draggable', 'false');
         folderChip.setAttribute('data-id', item.id);
         folderChip.setAttribute('data-path', item.path);
         folderChip.setAttribute('data-name', item.name);
         folderChip.innerHTML = `
+            <div class="gd-card-select-btn ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''}" data-id="${item.id}" title="Select">
+                <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            </div>
             <div class="gd-folder-chip-left">
                 <img class="item-icon-img" src="static/assets/folder-solid-icon.svg">
                 <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
@@ -436,7 +507,10 @@ function showDirectory(data, breadcrumbs) {
 
         // Table Row
         tableHtml += `
-            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr">
+            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}">
+                <td class="col-select-td" onclick="event.stopPropagation();">
+                    <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''} />
+                </td>
                 <td class="col-name-td">
                     <div class="td-align file-name-cell">
                         ${badge}
@@ -457,7 +531,7 @@ function showDirectory(data, breadcrumbs) {
 
         // Grid File Card
         const fileCard = document.createElement('div');
-        fileCard.className = 'gd-file-card file-tr';
+        fileCard.className = `gd-file-card file-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}`;
         fileCard.setAttribute('draggable', 'false');
         fileCard.setAttribute('data-id', item.id);
         fileCard.setAttribute('data-path', item.path);
@@ -492,6 +566,9 @@ function showDirectory(data, breadcrumbs) {
 
         fileCard.innerHTML = `
             <div class="gd-file-card-preview">
+                <div class="gd-card-select-btn ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''}" data-id="${item.id}" title="Select">
+                    <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                </div>
                 ${previewInnerHtml}
                 <a data-id="${item.id}" class="more-btn gd-file-card-more-btn" title="More actions" onclick="event.stopPropagation();"><img src="static/assets/more-icon.svg"></a>
             </div>
@@ -517,31 +594,64 @@ function showDirectory(data, breadcrumbs) {
     const ctxContainer = document.getElementById('context-menus-container');
     if (ctxContainer) ctxContainer.innerHTML = menusHtml;
 
-    // Attach Click and Double Click Events
-    if (!isTrash) {
-        // Folders
-        document.querySelectorAll('.folder-tr').forEach(el => {
-            el.ondblclick = openFolder;
-            el.onclick = function (e) {
-                if (e.target.closest('.more-btn')) return;
-                selectItem(this.getAttribute('data-id'));
-                openFolder.call(this);
-            };
-        });
+    // Attach Selection, Click, Double Click, and Right-Click Context Menu Events
+    document.querySelectorAll('.item-select-checkbox').forEach(cb => {
+        cb.onchange = function (e) {
+            e.stopPropagation();
+            toggleItemSelection(this.getAttribute('data-id'));
+        };
+    });
 
-        // Files
-        document.querySelectorAll('.file-tr').forEach(el => {
-            el.ondblclick = openFilePreview;
-            el.onclick = function (e) {
-                if (e.target.closest('.more-btn')) return;
-                if (window.innerWidth <= 768) {
-                    openFilePreview.call(this);
-                } else {
-                    selectItem(this.getAttribute('data-id'));
-                }
-            };
-        });
-    }
+    document.querySelectorAll('.gd-card-select-btn').forEach(btn => {
+        btn.onclick = function (e) {
+            e.stopPropagation();
+            toggleItemSelection(this.getAttribute('data-id'));
+        };
+    });
+
+    // Folders Event Attachment
+    document.querySelectorAll('.folder-tr').forEach(el => {
+        const id = el.getAttribute('data-id');
+        el.ondblclick = openFolder;
+        el.onclick = function (e) {
+            if (e.target.closest('.more-btn') || e.target.closest('.col-select-td') || e.target.closest('.gd-card-select-btn')) return;
+            if (e.shiftKey && window.LAST_SELECTED_ID) {
+                rangeSelectItems(window.LAST_SELECTED_ID, id);
+            } else {
+                window.LAST_SELECTED_ID = id;
+                selectItem(id);
+                if (!isTrash) openFolder.call(this);
+            }
+        };
+        el.oncontextmenu = function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            selectItem(id);
+            openContextMenuAt(id, e.clientX, e.clientY);
+        };
+    });
+
+    // Files Event Attachment
+    document.querySelectorAll('.file-tr').forEach(el => {
+        const id = el.getAttribute('data-id');
+        el.ondblclick = openFilePreview;
+        el.onclick = function (e) {
+            if (e.target.closest('.more-btn') || e.target.closest('.col-select-td') || e.target.closest('.gd-card-select-btn')) return;
+            if (e.shiftKey && window.LAST_SELECTED_ID) {
+                rangeSelectItems(window.LAST_SELECTED_ID, id);
+            } else {
+                window.LAST_SELECTED_ID = id;
+                selectItem(id);
+                if (!isTrash) openFilePreview.call(this);
+            }
+        };
+        el.oncontextmenu = function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            selectItem(id);
+            openContextMenuAt(id, e.clientX, e.clientY);
+        };
+    });
 
     document.querySelectorAll('.more-btn').forEach(div => {
         div.addEventListener('click', function (event) {
@@ -550,6 +660,8 @@ function showDirectory(data, breadcrumbs) {
             openMoreButton(div);
         });
     });
+
+    updateBulkActionBar();
 }
 
 // Global Storage Stats Updater for Sidebar Widget
@@ -672,11 +784,229 @@ function copyPreviewText() {
     }
 }
 
+// Multi-Select & Bulk Actions State Management
+window.SELECTED_ITEMS = new Map();
+window.LAST_SELECTED_ID = null;
+window.CURRENT_SORT = { key: 'date', order: 'desc' };
+window.CURRENT_FILTER = 'all';
+
+function setDirectorySort(key, order) {
+    if (order) {
+        window.CURRENT_SORT = { key, order };
+    } else {
+        if (window.CURRENT_SORT.key === key) {
+            window.CURRENT_SORT.order = window.CURRENT_SORT.order === 'asc' ? 'desc' : 'asc';
+        } else {
+            window.CURRENT_SORT = { key, order: (key === 'name' ? 'asc' : 'desc') };
+        }
+    }
+    if (typeof CURRENT_DIRECTORY_DATA !== 'undefined' && CURRENT_DIRECTORY_DATA) {
+        showDirectory(CURRENT_DIRECTORY_DATA, window.CURRENT_BREADCRUMBS || []);
+    }
+}
+
+function setDirectoryFilter(filterType) {
+    window.CURRENT_FILTER = filterType;
+    document.querySelectorAll('.gd-filter-chip').forEach(chip => {
+        if (chip.getAttribute('data-filter') === filterType) {
+            chip.classList.add('active');
+        } else {
+            chip.classList.remove('active');
+        }
+    });
+    if (typeof CURRENT_DIRECTORY_DATA !== 'undefined' && CURRENT_DIRECTORY_DATA) {
+        showDirectory(CURRENT_DIRECTORY_DATA, window.CURRENT_BREADCRUMBS || []);
+    }
+}
+
+function rangeSelectItems(startId, endId) {
+    if (!DIRECTORY_ITEMS) return;
+    const allIds = Object.keys(DIRECTORY_ITEMS);
+    const idx1 = allIds.indexOf(startId);
+    const idx2 = allIds.indexOf(endId);
+    if (idx1 === -1 || idx2 === -1) return;
+
+    const [minIdx, maxIdx] = [Math.min(idx1, idx2), Math.max(idx1, idx2)];
+    for (let i = minIdx; i <= maxIdx; i++) {
+        const id = allIds[i];
+        window.SELECTED_ITEMS.set(id, DIRECTORY_ITEMS[id]);
+    }
+    updateBulkActionBar();
+}
+
+function openContextMenuAt(id, clientX, clientY) {
+    if (window.innerWidth <= 768) {
+        if (typeof openMobileBottomSheet === 'function') openMobileBottomSheet(id);
+        return;
+    }
+
+    if (typeof closeAllMoreMenus === 'function') closeAllMoreMenus();
+
+    const moreDiv = document.getElementById(`more-option-${id}`);
+    if (!moreDiv) return;
+
+    const menuWidth = 200;
+    const menuHeight = 240;
+    const x = Math.max(10, Math.min(clientX, window.innerWidth - menuWidth - 12));
+    const y = Math.max(10, Math.min(clientY, window.innerHeight - menuHeight - 12));
+
+    moreDiv.style.position = 'fixed';
+    moreDiv.style.left = `${x}px`;
+    moreDiv.style.top = `${y}px`;
+    moreDiv.style.zIndex = '1000';
+    moreDiv.style.opacity = '1';
+    moreDiv.style.pointerEvents = 'auto';
+
+    const onDocClick = (e) => {
+        if (!moreDiv.contains(e.target)) {
+            if (typeof closeMoreMenu === 'function') closeMoreMenu(moreDiv);
+            document.removeEventListener('click', onDocClick);
+        }
+    };
+    setTimeout(() => {
+        document.addEventListener('click', onDocClick);
+    }, 10);
+}
+
+function updateBulkActionBar() {
+    const bar = document.getElementById('bulk-actions-bar');
+    const label = document.getElementById('bulk-count-label');
+    const headerCheck = document.getElementById('header-select-all');
+    const count = window.SELECTED_ITEMS.size;
+
+    if (label) {
+        label.innerText = `${count} selected`;
+    }
+
+    if (bar) {
+        if (count > 0) {
+            bar.classList.add('active');
+        } else {
+            bar.classList.remove('active');
+        }
+    }
+
+    // Sync header checkbox
+    if (headerCheck) {
+        const totalItems = Object.keys(DIRECTORY_ITEMS || {}).length;
+        headerCheck.checked = totalItems > 0 && count === totalItems;
+        headerCheck.indeterminate = count > 0 && count < totalItems;
+    }
+
+    // Update row & card classes
+    document.querySelectorAll('.body-tr, .gd-folder-chip, .gd-file-card').forEach(el => {
+        const id = el.getAttribute('data-id');
+        const isChecked = window.SELECTED_ITEMS.has(id);
+        if (isChecked) {
+            el.classList.add('is-selected');
+        } else {
+            el.classList.remove('is-selected');
+        }
+        const rowCb = el.querySelector('.item-select-checkbox');
+        if (rowCb) rowCb.checked = isChecked;
+        const cardBtn = el.querySelector('.gd-card-select-btn');
+        if (cardBtn) {
+            if (isChecked) cardBtn.classList.add('checked');
+            else cardBtn.classList.remove('checked');
+        }
+    });
+}
+
+function toggleItemSelection(id) {
+    const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+    if (!item) return;
+
+    if (window.SELECTED_ITEMS.has(id)) {
+        window.SELECTED_ITEMS.delete(id);
+    } else {
+        window.SELECTED_ITEMS.set(id, item);
+    }
+    updateBulkActionBar();
+}
+
+function selectAllItems() {
+    if (!DIRECTORY_ITEMS) return;
+    for (const [id, item] of Object.entries(DIRECTORY_ITEMS)) {
+        window.SELECTED_ITEMS.set(id, item);
+    }
+    updateBulkActionBar();
+}
+
+function deselectAllItems() {
+    window.SELECTED_ITEMS.clear();
+    updateBulkActionBar();
+}
+
+async function bulkDownloadSelected() {
+    if (window.SELECTED_ITEMS.size === 0) return;
+    const items = Array.from(window.SELECTED_ITEMS.values());
+    const fileItems = items.filter(i => i.type === 'file');
+
+    if (fileItems.length === 0) {
+        showToast('Please select at least one file to download (folders cannot be downloaded directly).');
+        return;
+    }
+
+    showToast(`Starting download for ${fileItems.length} file(s)... ⬇️`);
+    for (const item of fileItems) {
+        const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+        const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
+        const a = document.createElement('a');
+        a.href = directUrl;
+        a.download = item.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Stagger browser downloads slightly to avoid browser throttling
+        await new Promise(r => setTimeout(r, 450));
+    }
+}
+
+async function bulkDeleteSelected() {
+    if (window.SELECTED_ITEMS.size === 0) return;
+    const count = window.SELECTED_ITEMS.size;
+    const isTrash = getCurrentPath().includes('/trash');
+    const msg = isTrash 
+        ? `Are you sure you want to permanently delete these ${count} item(s) from Telegram storage? This cannot be undone.`
+        : `Move ${count} item(s) to trash?`;
+
+    if (!confirm(msg)) return;
+
+    const paths = Array.from(window.SELECTED_ITEMS.values()).map(item => {
+        return (item.path + '/' + item.id).replaceAll('//', '/');
+    });
+
+    if (isTrash) {
+        const res = await postJson('/api/bulkDelete', { paths });
+        if (res && res.status === 'ok') {
+            showToast(`Permanently deleted ${count} item(s) 🗑️`);
+            deselectAllItems();
+            getCurrentDirectory();
+        } else {
+            alert('Failed to delete selected items.');
+        }
+    } else {
+        const res = await postJson('/api/bulkTrash', { paths, trash: true });
+        if (res && res.status === 'ok') {
+            showToast(`Moved ${count} item(s) to trash 🗑️`);
+            deselectAllItems();
+            getCurrentDirectory();
+        } else {
+            alert('Failed to trash selected items.');
+        }
+    }
+}
+
 // In-App File & Media Preview Lightbox
 function openFilePreview() {
     const id = this.getAttribute ? this.getAttribute('data-id') : (typeof this.id === 'string' ? this.id : null);
     const item = (typeof DIRECTORY_ITEMS !== 'undefined' && id) ? DIRECTORY_ITEMS[id] : null;
     if (!item) return;
+
+    if (item.type === 'folder') {
+        openFolder.call(this);
+        return;
+    }
 
     const fileName = item.name.toLowerCase();
     const path = (item.path + '/' + item.id).replaceAll('//', '/');
@@ -698,8 +1028,8 @@ function openFilePreview() {
         document.body.removeChild(dl);
     };
 
-    const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.avif'];
-    const videoExts = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.ts', '.ogv', '.m4v'];
+    const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.avif', '.heic', '.heif'];
+    const videoExts = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.ts', '.ogv', '.m4v', '.3gp', '.flv'];
     const audioExts = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.opus', '.wma'];
     const codeTextExts = [
         '.txt', '.md', '.markdown', '.py', '.js', '.ts', '.jsx', '.tsx',
@@ -715,59 +1045,71 @@ function openFilePreview() {
     const isPdf = fileName.endsWith('.pdf');
     const isText = codeTextExts.some(ext => fileName.endsWith(ext));
 
-    if (holder) {
-        holder.innerHTML = '';
-        if (isImage) {
-            holder.innerHTML = `<img src="${directUrl}" alt="${escapeHtml(item.name)}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
-        } else if (isVideo) {
-            holder.innerHTML = `<video controls autoplay playsinline style="max-width:90vw; max-height:80vh;"><source src="${directUrl}">Your browser does not support video playback.</video>`;
-        } else if (isAudio) {
-            holder.innerHTML = `
-                <div class="gd-preview-audio-wrap">
-                    <div class="gd-preview-audio-icon">🎵</div>
-                    <div class="gd-preview-audio-title">${escapeHtml(item.name)}</div>
-                    <div class="gd-preview-audio-size">${convertBytes(item.size)}</div>
-                    <audio controls autoplay style="width: 100%; max-width: 420px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>
-                </div>`;
-        } else if (isPdf) {
-            holder.innerHTML = `<iframe src="${directUrl}" class="gd-preview-pdf-frame"></iframe>`;
-        } else if (isText) {
-            holder.innerHTML = `
-                <div class="gd-preview-text-wrap">
-                    <div class="gd-preview-text-header">
-                        <span>${escapeHtml(item.name)}</span>
-                        <button class="gd-btn-copy-code" onclick="copyPreviewText()">Copy Content</button>
-                    </div>
-                    <pre class="gd-preview-code"><code id="preview-text-code">Loading content...</code></pre>
-                </div>`;
-            fetch(directUrl, { credentials: 'same-origin' })
-                .then(res => {
-                    if (!res.ok) throw new Error('HTTP ' + res.status);
-                    return res.text();
-                })
-                .then(text => {
-                    const codeEl = document.getElementById('preview-text-code');
-                    if (codeEl) codeEl.innerText = text;
-                })
-                .catch(err => {
-                    const codeEl = document.getElementById('preview-text-code');
-                    if (codeEl) codeEl.innerText = 'Unable to load text preview: ' + err.message;
-                });
-        } else {
-            // Not previewable in browser -> download directly
-            showToast('Downloading ' + item.name + '... ⬇️');
-            const dl = document.createElement('a');
-            dl.href = directUrl;
-            dl.download = item.name;
-            dl.target = '_blank';
-            document.body.appendChild(dl);
-            dl.click();
-            document.body.removeChild(dl);
-            return;
+    if (isImage || isVideo || isAudio || isPdf || isText) {
+        if (holder) {
+            holder.innerHTML = '';
+            if (isImage) {
+                holder.innerHTML = `
+                    <img src="${directUrl}" alt="${escapeHtml(item.name)}" 
+                        style="max-width:90vw; max-height:80vh; object-fit:contain;"
+                        onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                    <div style="display:none; text-align:center; color:#fff; padding:30px;">
+                        <div style="font-size:2.5rem; margin-bottom:10px;">⚠️</div>
+                        <p>Image preview unavailable. Click below to download directly.</p>
+                        <a href="${directUrl}" download="${escapeHtml(item.name)}" class="gd-primary-btn" style="margin-top:12px; display:inline-block;">Download Image</a>
+                    </div>`;
+            } else if (isVideo) {
+                holder.innerHTML = `
+                    <video controls autoplay playsinline style="max-width:90vw; max-height:80vh;">
+                        <source src="${directUrl}">
+                        Your browser does not support video playback.
+                    </video>`;
+            } else if (isAudio) {
+                holder.innerHTML = `
+                    <div class="gd-preview-audio-wrap">
+                        <div class="gd-preview-audio-icon">🎵</div>
+                        <div class="gd-preview-audio-title">${escapeHtml(item.name)}</div>
+                        <div class="gd-preview-audio-size">${convertBytes(item.size)}</div>
+                        <audio controls autoplay style="width: 100%; max-width: 420px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>
+                    </div>`;
+            } else if (isPdf) {
+                holder.innerHTML = `<iframe src="${directUrl}" class="gd-preview-pdf-frame"></iframe>`;
+            } else if (isText) {
+                holder.innerHTML = `
+                    <div class="gd-preview-text-wrap">
+                        <div class="gd-preview-text-header">
+                            <span>${escapeHtml(item.name)}</span>
+                            <button class="gd-btn-copy-code" onclick="copyPreviewText()">Copy Content</button>
+                        </div>
+                        <pre class="gd-preview-code"><code id="preview-text-code">Loading content...</code></pre>
+                    </div>`;
+                fetch(directUrl, { credentials: 'same-origin' })
+                    .then(res => {
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        return res.text();
+                    })
+                    .then(text => {
+                        const codeEl = document.getElementById('preview-text-code');
+                        if (codeEl) codeEl.innerText = text;
+                    })
+                    .catch(err => {
+                        const codeEl = document.getElementById('preview-text-code');
+                        if (codeEl) codeEl.innerText = 'Unable to load text preview: ' + err.message;
+                    });
+            }
         }
+        if (lightbox) lightbox.classList.add('active');
+    } else {
+        // Universal direct download fallback for non-previewable files (zip, exe, iso, etc.)
+        showToast('Downloading ' + item.name + '... ⬇️');
+        const dl = document.createElement('a');
+        dl.href = directUrl;
+        dl.download = item.name;
+        dl.target = '_blank';
+        document.body.appendChild(dl);
+        dl.click();
+        document.body.removeChild(dl);
     }
-
-    if (lightbox) lightbox.classList.add('active');
 }
 
 // Drag & Drop Upload Zone (Explorer to Browser & Sidebar drop targets)
@@ -982,7 +1324,85 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Preview Lightbox Close
+    // Table Header Sort Clicks
+    ['name', 'type', 'date', 'size'].forEach(col => {
+        const th = document.getElementById(`th-sort-${col}`);
+        if (th) {
+            th.addEventListener('click', (e) => {
+                e.stopPropagation();
+                setDirectorySort(col);
+            });
+        }
+    });
+
+    // Sort Dropdown Button & Options
+    const sortMenuBtn = document.getElementById('sort-menu-btn');
+    const sortDropdown = document.getElementById('sort-dropdown-menu');
+    if (sortMenuBtn && sortDropdown) {
+        sortMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sortDropdown.classList.toggle('active');
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!sortDropdown.contains(e.target) && e.target !== sortMenuBtn) {
+                sortDropdown.classList.remove('active');
+            }
+        });
+
+        document.querySelectorAll('.gd-sort-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                const sKey = opt.getAttribute('data-sort');
+                const sOrder = opt.getAttribute('data-order');
+                setDirectorySort(sKey, sOrder);
+                sortDropdown.classList.remove('active');
+            });
+        });
+    }
+
+    // Filter Chips
+    document.querySelectorAll('.gd-filter-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            const f = chip.getAttribute('data-filter');
+            setDirectoryFilter(f);
+        });
+    });
+
+    // Google Drive Keyboard Shortcuts
+    document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+            return;
+        }
+
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (window.SELECTED_ITEMS && window.SELECTED_ITEMS.size > 0) {
+                e.preventDefault();
+                bulkDeleteSelected();
+            }
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            selectAllItems();
+        } else if (e.key === 'F2') {
+            if (window.SELECTED_ITEMS && window.SELECTED_ITEMS.size === 1) {
+                e.preventDefault();
+                const singleItem = Array.from(window.SELECTED_ITEMS.values())[0];
+                const renameBtn = document.getElementById(`rename-${singleItem.id}`);
+                if (renameBtn) renameFileFolder.call(renameBtn);
+            }
+        } else if (e.key === 'Enter') {
+            if (window.SELECTED_ITEMS && window.SELECTED_ITEMS.size === 1) {
+                e.preventDefault();
+                const singleItem = Array.from(window.SELECTED_ITEMS.values())[0];
+                if (singleItem.type === 'folder') {
+                    navigateToPath((singleItem.path + '/' + singleItem.id).replaceAll('//', '/'));
+                } else {
+                    openFilePreview.call({ getAttribute: () => singleItem.id });
+                }
+            }
+        }
+    });
+
+    // Preview Lightbox Close (Button + Escape Key + Backdrop click)
     const previewClose = document.getElementById('preview-close-btn');
     const previewLightbox = document.getElementById('media-preview-modal');
     function closePreviewLightbox() {
@@ -992,33 +1412,54 @@ document.addEventListener('DOMContentLoaded', () => {
             if (holder) holder.innerHTML = '';
         }
     }
-    if (previewClose && previewLightbox) {
+    if (previewClose) {
         previewClose.addEventListener('click', closePreviewLightbox);
+    }
+    if (previewLightbox) {
+        previewLightbox.addEventListener('click', (e) => {
+            // Tap on backdrop closes modal
+            if (e.target === previewLightbox || e.target.id === 'preview-content-holder') {
+                closePreviewLightbox();
+            }
+        });
     }
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closePreviewLightbox();
+            deselectAllItems();
         }
     });
+
+    // Header Select-All & Bulk Action Toolbar Bindings
+    const headerCheck = document.getElementById('header-select-all');
+    if (headerCheck) {
+        headerCheck.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                selectAllItems();
+            } else {
+                deselectAllItems();
+            }
+        });
+    }
+
+    const bulkDeselectBtn = document.getElementById('bulk-deselect-btn');
+    if (bulkDeselectBtn) bulkDeselectBtn.addEventListener('click', deselectAllItems);
+
+    const bulkSelectAllBtn = document.getElementById('bulk-select-all-btn');
+    if (bulkSelectAllBtn) bulkSelectAllBtn.addEventListener('click', selectAllItems);
+
+    const bulkDownloadBtn = document.getElementById('bulk-download-btn');
+    if (bulkDownloadBtn) bulkDownloadBtn.addEventListener('click', bulkDownloadSelected);
+
+    const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+    if (bulkDeleteBtn) bulkDeleteBtn.addEventListener('click', bulkDeleteSelected);
 
     setupDragAndDrop();
     applyViewMode(CURRENT_VIEW_MODE);
     initSyncActivityManager();
 
-    // Initial Auth / Fetch
-    const initialPath = getCurrentPath();
-    if (initialPath.includes('/share_')) {
-        getCurrentDirectory();
-    } else {
-        if (getPassword() === null) {
-            const bg = document.getElementById('bg-blur');
-            const login = document.getElementById('get-password');
-            if (bg) { bg.style.zIndex = '100'; bg.style.opacity = '1'; }
-            if (login) { login.style.zIndex = '101'; login.style.opacity = '1'; }
-        } else {
-            getCurrentDirectory();
-        }
-    }
+    // Initial fetch — server enforces auth via session cookie; 401 triggers login modal
+    getCurrentDirectory();
 });
 
 // ==========================================
@@ -1100,14 +1541,18 @@ function initSyncActivityManager() {
     if (navTrash) navTrash.addEventListener('click', () => window.hideSyncActivityView());
 
     async function pollSyncStatus() {
+        if (!window.IS_AUTHENTICATED) return; // Only poll once authenticated
         try {
-            const pwd = getPassword();
-            if (!pwd) return;
             const res = await fetch('/api/getSyncStatus', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: pwd })
+                credentials: 'same-origin',
+                body: JSON.stringify({})
             });
+            if (res.status === 401) {
+                window.IS_AUTHENTICATED = false;
+                return;
+            }
             if (res.ok) {
                 const json = await res.json();
                 if (json.status === 'ok' && json.data) {

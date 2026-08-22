@@ -27,7 +27,26 @@ DATABASE_BACKUP_MSG_ID = int(
 )  # Message ID for database backup
 
 # Password used to access the website's admin panel
+# IMPORTANT: Change this to a strong random value in production.
+# This is ONLY used for password verification — it is NEVER stored in a
+# session or cookie. The old behavior (storing ADMIN_PASSWORD as the cookie
+# value) has been removed.
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")  # Default to "admin" if not set
+
+# Email address of the admin. OTP verification codes are sent to this address.
+# REQUIRED: Set this to your email before deploying.
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")  # e.g. you@example.com
+
+# SMTP settings for sending OTP emails (compatible with Gmail, Resend, Mailgun, etc.)
+# Gmail quick setup: use smtp.gmail.com:587, and create an App Password at
+# https://myaccount.google.com/apppasswords (requires 2FA enabled on Gmail)
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")          # e.g. your Gmail address
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")  # Gmail App Password (16 chars, no spaces)
+FROM_EMAIL = os.getenv("FROM_EMAIL", SMTP_USER)  # Sender address shown to recipients
+FROM_NAME = os.getenv("FROM_NAME", "TG Drive")   # Sender display name
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "false")  # "true" for port 465 (SMTPS), "false" for STARTTLS
 
 # Determine the maximum file size (in bytes) allowed for uploading to Telegram
 # 1.98 GB if no premium sessions are provided, otherwise 3.98 GB

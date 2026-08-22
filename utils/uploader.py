@@ -32,53 +32,56 @@ async def start_file_uploader(
 
     logger.info(f"Uploading file {file_path} {id}")
 
-    if file_size > 1.98 * 1024 * 1024 * 1024:
-        # Use premium client for files larger than 2 GB
-        client: Client = get_client(premium_required=True)
-    else:
-        client: Client = get_client()
-
-    PROGRESS_CACHE[id] = ("running", 0, file_size, filename)
-
-    message: Message = await client.send_document(
-        STORAGE_CHANNEL,
-        file_path,
-        progress=progress_callback,
-        progress_args=(id, client, file_path, filename),
-        disable_notification=True,
-    )
-    size = (
-        message.photo
-        or message.document
-        or message.video
-        or message.audio
-        or message.sticker
-    ).file_size
-
-    filename = unquote_plus(filename)
-
-    DRIVE_DATA.new_file(directory_path, filename, message.id, size)
-    PROGRESS_CACHE[id] = ("completed", size, size, filename)
-
-    # Pre-generate 10KB thumbnail for instant browser rendering
     try:
-        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]:
-            from PIL import Image
-            import io
-            thumb_cache_dir = os.path.join(".", "cache", "thumbs")
-            os.makedirs(thumb_cache_dir, exist_ok=True)
-            with Image.open(str(file_path)) as img:
-                img = img.convert("RGB")
-                img.thumbnail((320, 320), Image.Resampling.LANCZOS)
-                img.save(os.path.join(thumb_cache_dir, f"{message.id}.jpg"), format="JPEG", quality=75, optimize=True)
-    except Exception as e:
-        logger.warning(f"Failed to pre-generate upload thumbnail for {filename}: {e}")
+        if file_size > 1.98 * 1024 * 1024 * 1024:
+            # Use premium client for files larger than 2 GB
+            client: Client = get_client(premium_required=True)
+        else:
+            client: Client = get_client()
 
-    logger.info(f"Uploaded file {file_path} {id}")
+        PROGRESS_CACHE[id] = ("running", 0, file_size, filename)
 
-    if delete:
+        message: Message = await client.send_document(
+            STORAGE_CHANNEL,
+            file_path,
+            progress=progress_callback,
+            progress_args=(id, client, file_path, filename),
+            disable_notification=True,
+        )
+        size = (
+            message.photo
+            or message.document
+            or message.video
+            or message.audio
+            or message.sticker
+        ).file_size
+
+        filename = unquote_plus(filename)
+
+        DRIVE_DATA.new_file(directory_path, filename, message.id, size)
+        PROGRESS_CACHE[id] = ("completed", size, size, filename)
+
+        # Pre-generate 10KB thumbnail for instant browser rendering
         try:
-            os.remove(file_path)
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            if ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]:
+                from PIL import Image
+                thumb_cache_dir = os.path.join(".", "cache", "thumbs")
+                os.makedirs(thumb_cache_dir, exist_ok=True)
+                with Image.open(str(file_path)) as img:
+                    img = img.convert("RGB")
+                    img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                    img.save(os.path.join(thumb_cache_dir, f"{message.id}.jpg"), format="JPEG", quality=75, optimize=True)
         except Exception as e:
-            pass
+            logger.warning(f"Failed to pre-generate upload thumbnail for {filename}: {e}")
+
+        logger.info(f"Uploaded file {file_path} {id}")
+    except Exception as e:
+        logger.error(f"Failed to upload file {file_path} {id}: {e}")
+        PROGRESS_CACHE[id] = ("error", 0, file_size, filename)
+    finally:
+        if delete:
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass

@@ -5,13 +5,31 @@ from utils.downloader import (
 import asyncio
 import secrets
 import time
-from collections import defaultdict
 from pathlib import Path
 from contextlib import asynccontextmanager
 import aiofiles
-from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, File, UploadFile, Form, Response
 from fastapi.responses import FileResponse, JSONResponse
-from config import ADMIN_PASSWORD, MAX_FILE_SIZE, STORAGE_CHANNEL
+from config import ADMIN_PASSWORD, ADMIN_EMAIL, MAX_FILE_SIZE, STORAGE_CHANNEL
+from utils.auth import (
+    require_auth,
+    Session,
+    create_session,
+    invalidate_session,
+    invalidate_all_sessions,
+    create_pending_otp,
+    verify_otp,
+    get_otp_status,
+    rate_limit_login,
+    rate_limit_otp_request,
+    rate_limit_otp_verify,
+    start_cleanup_task,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_SECONDS,
+    get_client_ip,
+    is_admin_authenticated,
+)
+from utils.email_service import email_service, EmailDeliveryError
 from utils.clients import initialize_clients
 from utils.directoryHandler import getRandomID
 from utils.extra import auto_ping_website, convert_class_to_dict, reset_cache_dir
@@ -21,51 +39,6 @@ from utils.logger import Logger
 import urllib.parse
 
 
-# Brute-force protection: rate limit password verification attempts
-LOGIN_ATTEMPTS = defaultdict(list)
-MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_WINDOW_SECONDS = 60
-
-
-def check_rate_limit(ip: str) -> bool:
-    now = time.time()
-    LOGIN_ATTEMPTS[ip] = [t for t in LOGIN_ATTEMPTS[ip] if now - t < LOCKOUT_WINDOW_SECONDS]
-    return len(LOGIN_ATTEMPTS[ip]) < MAX_LOGIN_ATTEMPTS
-
-
-def record_failed_attempt(ip: str):
-    LOGIN_ATTEMPTS[ip].append(time.time())
-
-
-def clear_attempts(ip: str):
-    LOGIN_ATTEMPTS.pop(ip, None)
-
-
-def is_admin_authenticated(request: Request, data: dict = None, password: str = None) -> bool:
-    """Verifies admin access using timing-safe comparison against ADMIN_PASSWORD."""
-    if not ADMIN_PASSWORD:
-        return False
-
-    candidate = password
-    if not candidate and data:
-        candidate = data.get("password") or data.get("pass")
-
-    if not candidate:
-        candidate = (
-            request.query_params.get("password")
-            or request.query_params.get("token")
-            or request.cookies.get("tg_session")
-        )
-
-    if not candidate:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            candidate = auth_header[7:].strip()
-
-    if candidate and secrets.compare_digest(str(candidate), str(ADMIN_PASSWORD)):
-        return True
-
-    return False
 
 
 # Startup Event
@@ -80,11 +53,26 @@ async def lifespan(app: FastAPI):
             "Please update ADMIN_PASSWORD in your environment variables for security."
         )
 
+    if not ADMIN_EMAIL:
+        logger.warning(
+            "⚠️ SECURITY WARNING: ADMIN_EMAIL is not configured! "
+            "OTP emails cannot be sent. Set ADMIN_EMAIL in your .env file."
+        )
+
+    if not email_service.is_configured:
+        logger.warning(
+            "⚠️ SECURITY WARNING: SMTP is not fully configured. "
+            "OTP emails will fail. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD in .env."
+        )
+
     # Initialize Telegram clients in the background so server starts immediately (<100ms)
     asyncio.create_task(initialize_clients())
 
     # Start the website auto ping task
     asyncio.create_task(auto_ping_website())
+
+    # Start background session/OTP cleanup task
+    start_cleanup_task()
 
     yield
 
@@ -93,15 +81,42 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 logger = Logger(__name__)
 
 
-# Security Headers Middleware
-@app.middleware("http")
-async def add_security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "SAMEORIGIN"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    return response
+# Pure ASGI Security Headers Middleware (prevents BaseHTTPMiddleware stream buffering issues)
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Scope, Receive, Send
+
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["x-content-type-options"] = "nosniff"
+                headers["x-frame-options"] = "SAMEORIGIN"
+                headers["x-xss-protection"] = "1; mode=block"
+                headers["referrer-policy"] = "strict-origin-when-cross-origin"
+                headers["content-security-policy"] = (
+                    "default-src 'self'; "
+                    "script-src 'self' 'unsafe-inline'; "
+                    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                    "font-src 'self' https://fonts.gstatic.com; "
+                    "img-src 'self' data: blob: https://ssl.gstatic.com https://*.googleusercontent.com https://lh3.googleusercontent.com; "
+                    "media-src 'self' data: blob:; "
+                    "frame-src 'self' data: blob:; "
+                    "connect-src 'self'; "
+                    "frame-ancestors 'none';"
+                )
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.api_route("/", methods=["GET", "HEAD"])
@@ -401,55 +416,141 @@ async def get_thumbnail(request: Request):
 # Api Routes
 
 
-@app.post("/api/checkPassword")
-async def check_password(request: Request):
-    client_ip = request.client.host if request.client else "unknown"
-
-    if not check_rate_limit(client_ip):
-        logger.warning(f"Rate limit triggered for IP {client_ip} on /api/checkPassword")
-        return JSONResponse(
-            {"status": "Too many failed attempts. Please wait 1 minute before trying again."},
-            status_code=429,
-        )
+@app.post("/api/login")
+async def api_login(request: Request):
+    """
+    Step 1 of 2: Verify email + password. On success, generate and email an OTP.
+    Does NOT create a session — the session is only created after OTP verification.
+    """
+    rate_limit_login(request)
 
     try:
         data = await request.json()
     except Exception:
         return JSONResponse({"status": "Invalid payload"}, status_code=400)
 
-    password = data.get("password") or data.get("pass", "")
-    if password and secrets.compare_digest(str(password), str(ADMIN_PASSWORD)):
-        clear_attempts(client_ip)
-        resp = JSONResponse({"status": "ok"})
-        resp.set_cookie(
-            key="tg_session",
-            value=ADMIN_PASSWORD,
-            httponly=True,
-            samesite="lax",
-            max_age=30 * 86400,
-        )
-        return resp
+    submitted_email = (data.get("email") or "").strip().lower()
+    submitted_password = data.get("password") or data.get("pass") or ""
 
-    record_failed_attempt(client_ip)
-    return JSONResponse({"status": "Invalid password"}, status_code=401)
+    # Validate both fields together to avoid email enumeration
+    email_ok = bool(ADMIN_EMAIL) and secrets.compare_digest(
+        submitted_email.encode(), ADMIN_EMAIL.strip().lower().encode()
+    )
+    password_ok = bool(ADMIN_PASSWORD) and secrets.compare_digest(
+        str(submitted_password).encode(), str(ADMIN_PASSWORD).encode()
+    )
+
+    if not (email_ok and password_ok):
+        # Uniform delay to prevent timing-based enumeration
+        await asyncio.sleep(0.5)
+        return JSONResponse({"status": "Invalid email or password"}, status_code=401)
+
+    # Credentials correct — generate and email OTP
+    otp_state = get_otp_status()
+    if otp_state["pending"] and not otp_state.get("can_resend", True):
+        return JSONResponse(
+            {"status": "Please wait before requesting a new code."},
+            status_code=429,
+        )
+
+    otp = create_pending_otp()
+
+    if email_service.is_configured:
+        try:
+            await email_service.send_otp(ADMIN_EMAIL, otp)
+        except EmailDeliveryError as e:
+            logger.error(f"OTP email delivery failed: {e}")
+            return JSONResponse(
+                {"status": "Failed to send verification email. Check SMTP configuration."},
+                status_code=503,
+            )
+    else:
+        # SMTP not configured: print OTP to server console (dev/debug mode only)
+        logger.warning(f"[DEV MODE] OTP for {submitted_email}: {otp}")
+
+    return JSONResponse({"status": "otp_sent"})
+
+
+@app.post("/api/verifyOtp")
+async def api_verify_otp(request: Request):
+    """
+    Step 2 of 2: Verify the OTP submitted by the user.
+    On success, creates a session and sets the HttpOnly session cookie.
+    """
+    rate_limit_otp_verify(request)
+
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"status": "Invalid payload"}, status_code=400)
+
+    submitted_otp = str(data.get("otp") or "").strip()
+    if not submitted_otp:
+        return JSONResponse({"status": "OTP is required"}, status_code=400)
+
+    otp_state = get_otp_status()
+    if not otp_state["pending"]:
+        return JSONResponse({"status": "No pending verification. Please log in again."}, status_code=400)
+    if otp_state["expired"]:
+        return JSONResponse({"status": "Verification code has expired. Please log in again."}, status_code=400)
+    if otp_state["locked"]:
+        return JSONResponse({"status": "Too many incorrect attempts. Please log in again."}, status_code=429)
+
+    if not verify_otp(submitted_otp):
+        remaining = get_otp_status().get("remaining_attempts", 0)
+        if remaining == 0:
+            return JSONResponse(
+                {"status": "Too many incorrect attempts. Please log in again."},
+                status_code=429,
+            )
+        return JSONResponse(
+            {"status": f"Incorrect code. {remaining} attempt(s) remaining."},
+            status_code=401,
+        )
+
+    # OTP verified — create session bound to client IP
+    client_ip = get_client_ip(request)
+    token = create_session(ip=client_ip)
+    is_https = request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
+    
+    resp = JSONResponse({"status": "ok"})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=is_https,  # False on local HTTP (http://192.168.1.2:8000) so mobile browsers store the cookie; True on HTTPS
+        max_age=SESSION_TTL_SECONDS,
+    )
+    return resp
+
 
 
 @app.post("/api/logout")
-async def api_logout():
+async def api_logout(request: Request):
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        invalidate_session(token)
+    else:
+        invalidate_all_sessions()
+
+    is_https = request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
     resp = JSONResponse({"status": "ok"})
-    resp.delete_cookie(key="tg_session")
+    resp.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        httponly=True,
+        samesite="lax",
+        secure=is_https,
+    )
     return resp
 
 
 @app.post("/api/createNewFolder")
-async def api_new_folder(request: Request):
+async def api_new_folder(request: Request, _auth: Session = Depends(require_auth)):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"createNewFolder {data}")
     target_dir = drive.get_directory(data["path"])
@@ -469,38 +570,19 @@ async def api_new_folder(request: Request):
 
 
 @app.post("/api/getDirectory")
-async def api_get_directory(request: Request):
+async def api_get_directory(request: Request, _auth: Session = Depends(require_auth)):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
-    is_admin = is_admin_authenticated(request, data=data)
     auth = data.get("auth")
     path = data.get("path", "/")
 
-    logger.info(f"getFolder path={path} is_admin={is_admin}")
+    logger.info(f"getFolder path={path}")
 
     breadcrumbs = drive.get_breadcrumbs(path)
 
-    # Protected paths: trash & search & normal drive require admin authentication
-    if not is_admin:
-        if not path.startswith("/share_"):
-            return JSONResponse({"status": "Invalid password"}, status_code=401)
-
-        share_path = path.split("_", 1)[1]
-        res = drive.get_directory(share_path, is_admin=False, auth=auth)
-        if not res:
-            return JSONResponse({"status": "Unauthorized folder access"}, status_code=403)
-        if isinstance(res, tuple):
-            folder_data, auth_home_path = res
-        else:
-            folder_data, auth_home_path = res, None
-        auth_home_path = auth_home_path.replace("//", "/") if auth_home_path else None
-        folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
-        return JSONResponse(
-            {"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": auth_home_path}
-        )
-
+    # All requests here are authenticated (require_auth dependency enforces this)
     # Admin access paths
     if path == "/trash":
         trash_data = {"contents": drive.get_trashed_files_folders()}
@@ -535,7 +617,7 @@ async def api_get_directory(request: Request):
         folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
 
     total_files, total_bytes = drive.get_drive_stats()
-    resp = JSONResponse({
+    return JSONResponse({
         "status": "ok",
         "data": folder_data,
         "breadcrumbs": breadcrumbs,
@@ -545,26 +627,14 @@ async def api_get_directory(request: Request):
             "total_bytes": total_bytes
         }
     })
-    if is_admin and ADMIN_PASSWORD:
-        resp.set_cookie(
-            key="tg_session",
-            value=ADMIN_PASSWORD,
-            httponly=True,
-            samesite="lax",
-            max_age=30 * 86400,
-        )
-    return resp
 
 
 @app.post("/api/moveFileFolder")
-async def move_file_folder(request: Request):
+async def move_file_folder(request: Request, _auth: Session = Depends(require_auth)):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"moveFileFolder {data}")
     try:
@@ -576,14 +646,11 @@ async def move_file_folder(request: Request):
 
 
 @app.post("/api/copyFileFolder")
-async def copy_file_folder_api(request: Request):
+async def copy_file_folder_api(request: Request, _auth: Session = Depends(require_auth)):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"copyFileFolder {data}")
     try:
@@ -600,16 +667,14 @@ SAVE_PROGRESS = {}
 
 @app.post("/api/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     path: str = Form(...),
-    password: str = Form(...),
     id: str = Form(...),
     total_size: str = Form(...),
+    _auth: Session = Depends(require_auth),
 ):
     global SAVE_PROGRESS
-
-    if not is_admin_authenticated(None, password=password):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     total_size = int(total_size)
     SAVE_PROGRESS[id] = ("running", 0, total_size)
@@ -645,13 +710,10 @@ async def upload_file(
 
 
 @app.post("/api/getSaveProgress")
-async def get_save_progress(request: Request):
+async def get_save_progress(request: Request, _auth: Session = Depends(require_auth)):
     global SAVE_PROGRESS
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"getUploadProgress {data}")
     try:
@@ -662,13 +724,10 @@ async def get_save_progress(request: Request):
 
 
 @app.post("/api/getUploadProgress")
-async def get_upload_progress(request: Request):
+async def get_upload_progress(request: Request, _auth: Session = Depends(require_auth)):
     from utils.uploader import PROGRESS_CACHE
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"getUploadProgress {data}")
 
@@ -680,12 +739,8 @@ async def get_upload_progress(request: Request):
 
 
 @app.post("/api/getActiveUploads")
-async def get_active_uploads(request: Request):
+async def get_active_uploads(request: Request, _auth: Session = Depends(require_auth)):
     from utils.uploader import PROGRESS_CACHE
-
-    data = await request.json()
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     active = []
     for upload_id, prog in list(PROGRESS_CACHE.items()):
@@ -706,14 +761,11 @@ async def get_active_uploads(request: Request):
 
 
 @app.post("/api/cancelUpload")
-async def cancel_upload(request: Request):
+async def cancel_upload(request: Request, _auth: Session = Depends(require_auth)):
     from utils.uploader import STOP_TRANSMISSION
     from utils.downloader import STOP_DOWNLOAD
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"cancelUpload {data}")
     STOP_TRANSMISSION.append(data["id"])
@@ -722,14 +774,11 @@ async def cancel_upload(request: Request):
 
 
 @app.post("/api/renameFileFolder")
-async def rename_file_folder(request: Request):
+async def rename_file_folder(request: Request, _auth: Session = Depends(require_auth)):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"renameFileFolder {data}")
     drive.rename_file_folder(data["path"], data["name"])
@@ -737,14 +786,11 @@ async def rename_file_folder(request: Request):
 
 
 @app.post("/api/trashFileFolder")
-async def trash_file_folder(request: Request):
+async def trash_file_folder(request: Request, _auth: Session = Depends(require_auth)):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"trashFileFolder {data}")
     drive.trash_file_folder(data["path"], data["trash"])
@@ -752,26 +798,79 @@ async def trash_file_folder(request: Request):
 
 
 @app.post("/api/deleteFileFolder")
-async def delete_file_folder(request: Request):
-    from utils.directoryHandler import ensure_drive_data
+async def delete_file_folder(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
+    from utils.clients import get_client
     drive = ensure_drive_data()
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
-
     logger.info(f"deleteFileFolder {data}")
-    drive.delete_file_folder(data["path"])
-    return JSONResponse({"status": "ok"})
+    deleted_msg_ids = drive.delete_file_folder(data["path"])
+
+    # Delete message(s) from Telegram Storage Channel
+    if deleted_msg_ids:
+        try:
+            client = get_client()
+            await client.delete_messages(STORAGE_CHANNEL, message_ids=deleted_msg_ids)
+            logger.info(f"Deleted {len(deleted_msg_ids)} message(s) from Telegram Storage Channel.")
+        except Exception as e:
+            logger.warning(f"Failed to delete message(s) from Telegram Storage Channel: {e}")
+
+    # Immediately trigger asynchronous Telegram backup
+    asyncio.create_task(backup_drive_data(loop=False))
+    return JSONResponse({"status": "ok", "deleted_msg_count": len(deleted_msg_ids)})
+
+
+@app.post("/api/bulkDelete")
+async def bulk_delete_api(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
+    from utils.clients import get_client
+    drive = ensure_drive_data()
+
+    data = await request.json()
+    paths = data.get("paths", [])
+    logger.info(f"bulkDelete {len(paths)} path(s)")
+    if not paths:
+        return JSONResponse({"status": "ok", "deleted_count": 0})
+
+    deleted_msg_ids = drive.bulk_delete(paths)
+
+    # Delete message(s) from Telegram Storage Channel
+    if deleted_msg_ids:
+        try:
+            client = get_client()
+            # Delete in chunks of 100 to respect Telegram API limits
+            for i in range(0, len(deleted_msg_ids), 100):
+                chunk = deleted_msg_ids[i:i + 100]
+                await client.delete_messages(STORAGE_CHANNEL, message_ids=chunk)
+            logger.info(f"Bulk deleted {len(deleted_msg_ids)} message(s) from Telegram Storage Channel.")
+        except Exception as e:
+            logger.warning(f"Failed to bulk delete messages from Telegram Storage Channel: {e}")
+
+    asyncio.create_task(backup_drive_data(loop=False))
+    return JSONResponse({"status": "ok", "deleted_count": len(paths), "deleted_msg_count": len(deleted_msg_ids)})
+
+
+@app.post("/api/bulkTrash")
+async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
+    drive = ensure_drive_data()
+
+    data = await request.json()
+    paths = data.get("paths", [])
+    trash = bool(data.get("trash", True))
+    logger.info(f"bulkTrash {len(paths)} path(s) to trash={trash}")
+
+    for path in paths:
+        drive.trash_file_folder(path, trash)
+
+    asyncio.create_task(backup_drive_data(loop=False))
+    return JSONResponse({"status": "ok", "processed_count": len(paths)})
 
 
 @app.post("/api/getFileInfoFromUrl")
-async def getFileInfoFromUrl(request: Request):
+async def getFileInfoFromUrl(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"getFileInfoFromUrl {data}")
     try:
@@ -782,11 +881,8 @@ async def getFileInfoFromUrl(request: Request):
 
 
 @app.post("/api/startFileDownloadFromUrl")
-async def startFileDownloadFromUrl(request: Request):
+async def startFileDownloadFromUrl(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"startFileDownloadFromUrl {data}")
     try:
@@ -800,13 +896,10 @@ async def startFileDownloadFromUrl(request: Request):
 
 
 @app.post("/api/getFileDownloadProgress")
-async def getFileDownloadProgress(request: Request):
+async def getFileDownloadProgress(request: Request, _auth: Session = Depends(require_auth)):
     from utils.downloader import DOWNLOAD_PROGRESS
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"getFileDownloadProgress {data}")
 
@@ -818,14 +911,11 @@ async def getFileDownloadProgress(request: Request):
 
 
 @app.post("/api/getFolderShareAuth")
-async def getFolderShareAuth(request: Request):
+async def getFolderShareAuth(request: Request, _auth: Session = Depends(require_auth)):
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     logger.info(f"getFolderShareAuth {data}")
 
@@ -863,12 +953,7 @@ SYNC_ENGINE_STATUS = {
 
 
 @app.post("/api/getSyncStatus")
-async def getSyncStatus(request: Request):
-    data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
-
+async def getSyncStatus(request: Request, _auth: Session = Depends(require_auth)):
     # If completed_list is empty, reconstruct from existing logs
     if not SYNC_ENGINE_STATUS.get("completed_list") and SYNC_ENGINE_STATUS.get("logs"):
         reconstructed = []
@@ -904,11 +989,8 @@ async def getSyncStatus(request: Request):
 
 
 @app.post("/api/updateSyncStatus")
-async def updateSyncStatus(request: Request):
+async def updateSyncStatus(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
-
-    if not is_admin_authenticated(request, data=data):
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     status_update = data.get("sync_data", {})
     

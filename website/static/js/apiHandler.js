@@ -1,6 +1,7 @@
 // Api Functions
+// Auth is handled via HttpOnly session cookies (sent automatically by credentials: 'same-origin').
+// Never inject passwords into request bodies.
 async function postJson(url, data) {
-    data['password'] = getPassword()
     try {
         const response = await fetch(url, {
             method: 'POST',
@@ -10,39 +11,154 @@ async function postJson(url, data) {
             credentials: 'same-origin',
             body: JSON.stringify(data)
         })
+        if (response.status === 401) {
+            showLoginModal();
+            return { status: 'Unauthorized' };
+        }
         return await response.json()
     } catch (e) {
         return { status: 'Network error or service unavailable' }
     }
 }
 
-document.getElementById('pass-login').addEventListener('click', async () => {
-    const password = document.getElementById('auth-pass').value
-    if (!password) {
-        alert('Please enter your password')
-        return
-    }
-    const data = { 'pass': password }
-    const json = await postJson('/api/checkPassword', data)
-    if (json.status === 'ok') {
-        localStorage.setItem('password', password)
-        alert('Logged In Successfully')
-        window.location.reload()
-    }
-    else {
-        alert(json.status || 'Wrong Password')
-    }
-})
+window.IS_AUTHENTICATED = false;
 
-// Profile avatar logout / lock button
-document.addEventListener('DOMContentLoaded', () => {
+// ==========================================
+// Login Modal — Two-Step Auth (Email+Password → OTP)
+// ==========================================
+
+function showLoginModal() {
+    window.IS_AUTHENTICATED = false;
+    const bg = document.getElementById('bg-blur');
+    const modal = document.getElementById('get-password');
+    const step1 = document.getElementById('login-step-1');
+    const step2 = document.getElementById('login-step-2');
+    if (step1) step1.style.display = '';
+    if (step2) step2.style.display = 'none';
+    if (bg) { bg.style.zIndex = '100'; bg.style.opacity = '1'; }
+    if (modal) { modal.style.zIndex = '101'; modal.style.opacity = '1'; }
+}
+
+function hideLoginModal() {
+    window.IS_AUTHENTICATED = true;
+    const bg = document.getElementById('bg-blur');
+    const modal = document.getElementById('get-password');
+    if (bg) { bg.style.zIndex = '-1'; bg.style.opacity = '0'; }
+    if (modal) { modal.style.zIndex = '-1'; modal.style.opacity = '0'; }
+}
+
+// Initialize Auth Modal Event Listeners
+function initAuthListeners() {
+    // Step 1: Submit email + password → triggers OTP email
+    const loginBtn = document.getElementById('pass-login');
+    if (loginBtn && !loginBtn.dataset.bound) {
+        loginBtn.dataset.bound = 'true';
+        loginBtn.addEventListener('click', async () => {
+            const emailInput = document.getElementById('auth-email');
+            const passInput = document.getElementById('auth-pass');
+            const email = emailInput ? emailInput.value.trim() : '';
+            const password = passInput ? passInput.value : '';
+            const errEl = document.getElementById('login-error');
+            if (!email || !password) {
+                if (errEl) { errEl.textContent = 'Email and password are required.'; errEl.style.display = ''; }
+                return;
+            }
+            loginBtn.disabled = true;
+            loginBtn.textContent = 'Sending OTP...';
+            if (errEl) errEl.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ email, password })
+                });
+                const json = await resp.json();
+                if (json.status === 'otp_sent') {
+                    // Advance to OTP step
+                    document.getElementById('login-step-1').style.display = 'none';
+                    document.getElementById('login-step-2').style.display = '';
+                    const otpInput = document.getElementById('auth-otp');
+                    if (otpInput) { otpInput.value = ''; otpInput.focus(); }
+                } else {
+                    const msg = json.detail || json.status || 'Authentication failed.';
+                    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+                }
+            } catch (e) {
+                if (errEl) { errEl.textContent = 'Network error. Please try again.'; errEl.style.display = ''; }
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Continue';
+            }
+        });
+    }
+
+    // Step 2: Submit OTP
+    const otpBtn = document.getElementById('otp-verify');
+    if (otpBtn && !otpBtn.dataset.bound) {
+        otpBtn.dataset.bound = 'true';
+        otpBtn.addEventListener('click', async () => {
+            const otpInput = document.getElementById('auth-otp');
+            const otp = otpInput ? otpInput.value.trim() : '';
+            const errEl = document.getElementById('otp-error');
+            if (!otp || otp.length !== 6) {
+                if (errEl) { errEl.textContent = 'Enter the 6-digit code sent to your email.'; errEl.style.display = ''; }
+                return;
+            }
+            otpBtn.disabled = true;
+            otpBtn.textContent = 'Verifying...';
+            if (errEl) errEl.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/verifyOtp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ otp })
+                });
+                const json = await resp.json();
+                if (json.status === 'ok') {
+                    hideLoginModal();
+                    if (typeof getCurrentDirectory === 'function') {
+                        getCurrentDirectory();
+                    }
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 100);
+                } else {
+                    const msg = json.detail || json.status || 'Invalid or expired code.';
+                    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+                }
+            } catch (e) {
+                if (errEl) { errEl.textContent = 'Network error. Please try again.'; errEl.style.display = ''; }
+            } finally {
+                otpBtn.disabled = false;
+                otpBtn.textContent = 'Verify';
+            }
+        });
+    }
+
+    // OTP back button → return to step 1
+    const backBtn = document.getElementById('otp-back');
+    if (backBtn && !backBtn.dataset.bound) {
+        backBtn.dataset.bound = 'true';
+        backBtn.addEventListener('click', () => {
+            document.getElementById('login-step-1').style.display = '';
+            document.getElementById('login-step-2').style.display = 'none';
+            const errEl = document.getElementById('otp-error');
+            if (errEl) errEl.style.display = 'none';
+        });
+    }
+
+    // Profile avatar → Logout
     const avatar = document.getElementById('profile-avatar');
-    if (avatar) {
+    if (avatar && !avatar.dataset.bound) {
+        avatar.dataset.bound = 'true';
         avatar.style.cursor = 'pointer';
         avatar.title = 'Click to Logout / Lock Drive';
         avatar.addEventListener('click', async () => {
             if (confirm('Do you want to log out of your Admin session?')) {
-                localStorage.removeItem('password');
                 try {
                     await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
                 } catch (e) {}
@@ -50,12 +166,36 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-});
+
+    // Allow Enter key to submit OTP
+    const otpInput = document.getElementById('auth-otp');
+    if (otpInput && !otpInput.dataset.bound) {
+        otpInput.dataset.bound = 'true';
+        otpInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('otp-verify')?.click();
+        });
+    }
+
+    // Allow Enter key to submit credentials
+    const passInput = document.getElementById('auth-pass');
+    if (passInput && !passInput.dataset.bound) {
+        passInput.dataset.bound = 'true';
+        passInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('pass-login')?.click();
+        });
+    }
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAuthListeners);
+} else {
+    initAuthListeners();
+}
 
 // Background Active Upload Monitor
 let WAS_UPLOADING = false;
 setInterval(async () => {
-    if (!getPassword() || getCurrentPath().includes('/share_')) return;
+    if (!window.IS_AUTHENTICATED || getCurrentPath().includes('/share_')) return;
     try {
         const res = await postJson('/api/getActiveUploads', {});
         if (res.status === 'ok' && res.active && res.active.length > 0) {
@@ -106,6 +246,7 @@ async function getCurrentDirectory() {
         const json = await postJson('/api/getDirectory', data);
 
         if (json.status === 'ok') {
+            window.IS_AUTHENTICATED = true;
             if (path.startsWith('/share')) {
                 const navMyDrive = document.getElementById('nav-my-drive');
                 if (navMyDrive) {
@@ -122,12 +263,8 @@ async function getCurrentDirectory() {
                 updateSidebarStorageStats(json.stats);
             }
             showDirectory(json['data'], json['breadcrumbs'] || []);
-        } else if (json.status === 'Invalid password' || json.status === 'Unauthorized folder access') {
-            localStorage.removeItem('password');
-            const bg = document.getElementById('bg-blur');
-            const login = document.getElementById('get-password');
-            if (bg) { bg.style.zIndex = '100'; bg.style.opacity = '1'; }
-            if (login) { login.style.zIndex = '101'; login.style.opacity = '1'; }
+        } else if (json.status === 'Unauthorized' || json.status === 'Unauthorized folder access') {
+            showLoginModal();
         } else {
             showToast('Directory not accessible: ' + (json.status || 'Not Found'));
         }
@@ -294,7 +431,7 @@ async function processUploadQueue() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('path', path);
-    formData.append('password', getPassword());
+    // No password in form data — auth is via HttpOnly session cookie
     const id = getRandomId();
     formData.append('id', id);
     formData.append('total_size', file.size);

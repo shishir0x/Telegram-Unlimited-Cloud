@@ -307,7 +307,22 @@ class NewDriveData:
         traverse_directory(root_dir)
         return trash_data
 
-    def delete_file_folder(self, path: str) -> None:
+    @staticmethod
+    def _collect_file_ids(item) -> list[int]:
+        ids = []
+        if getattr(item, "type", None) == "file":
+            fid = getattr(item, "file_id", None)
+            if fid:
+                try:
+                    ids.append(int(fid))
+                except (ValueError, TypeError):
+                    pass
+        elif hasattr(item, "contents"):
+            for child in list(item.contents.values()):
+                ids.extend(NewDriveData._collect_file_ids(child))
+        return ids
+
+    def delete_file_folder(self, path: str) -> list[int]:
         clean = path.strip("/")
         if "/" in clean:
             folder_path = "/" + "/".join(clean.split("/")[:-1])
@@ -316,20 +331,23 @@ class NewDriveData:
             folder_path = "/"
             file_id = clean
 
+        deleted_msg_ids = []
         folder_data = self.get_directory(folder_path)
         if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
-            del folder_data.contents[file_id]
+            deleted_item = folder_data.contents.pop(file_id)
+            deleted_msg_ids.extend(self._collect_file_ids(deleted_item))
             self.save()
-            logger.info(f"Item at path '{path}' deleted successfully.")
-            return
+            logger.info(f"Item at path '{path}' deleted successfully. Collected {len(deleted_msg_ids)} Telegram msg IDs.")
+            return deleted_msg_ids
 
         # Fallback global search to permanently delete
         def search_and_delete(folder):
             if hasattr(folder, "contents"):
                 if file_id in folder.contents:
-                    del folder.contents[file_id]
+                    deleted_item = folder.contents.pop(file_id)
+                    deleted_msg_ids.extend(self._collect_file_ids(deleted_item))
                     return True
-                for child in folder.contents.values():
+                for child in list(folder.contents.values()):
                     if child.type == "folder":
                         if search_and_delete(child):
                             return True
@@ -337,7 +355,43 @@ class NewDriveData:
 
         if search_and_delete(self.contents.get("/")):
             self.save()
-            logger.info(f"Item with ID '{file_id}' deleted via fallback search.")
+            logger.info(f"Item with ID '{file_id}' deleted via fallback search. Collected {len(deleted_msg_ids)} Telegram msg IDs.")
+
+        return deleted_msg_ids
+
+    def bulk_delete(self, paths: list[str]) -> list[int]:
+        all_deleted_ids = []
+        for path in paths:
+            clean = path.strip("/")
+            if "/" in clean:
+                folder_path = "/" + "/".join(clean.split("/")[:-1])
+                file_id = clean.split("/")[-1]
+            else:
+                folder_path = "/"
+                file_id = clean
+
+            folder_data = self.get_directory(folder_path)
+            if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+                deleted_item = folder_data.contents.pop(file_id)
+                all_deleted_ids.extend(self._collect_file_ids(deleted_item))
+            else:
+                # Fallback search
+                def search_and_pop(folder):
+                    if hasattr(folder, "contents"):
+                        if file_id in folder.contents:
+                            deleted_item = folder.contents.pop(file_id)
+                            all_deleted_ids.extend(self._collect_file_ids(deleted_item))
+                            return True
+                        for child in list(folder.contents.values()):
+                            if child.type == "folder":
+                                if search_and_pop(child):
+                                    return True
+                    return False
+                search_and_pop(self.contents.get("/"))
+
+        self.save()
+        logger.info(f"Bulk deleted {len(paths)} item(s). Collected {len(all_deleted_ids)} Telegram msg IDs.")
+        return all_deleted_ids
 
     def _find_folder_by_id(self, folder_id: str):
         def traverse(folder):

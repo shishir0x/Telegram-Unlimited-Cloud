@@ -809,38 +809,64 @@ body {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 12px;
+    margin-bottom: 24px;
 }
 
 .gd-folder-chip {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: space-between;
     background-color: #f0f4f9;
-    padding: 12px 16px;
+    padding: 10px 14px;
     border-radius: var(--gd-radius-md);
     cursor: pointer;
     transition: all 0.15s ease;
     user-select: none;
+    min-height: 48px;
+    box-sizing: border-box;
+    gap: 8px;
+    border: 1px solid transparent;
 }
 
 .gd-folder-chip:hover {
     background-color: #e2eaf6;
+    box-shadow: var(--gd-shadow-sm);
+}
+
+.gd-folder-chip.is-selected {
+    background-color: var(--gd-primary-container) !important;
+    border-color: var(--gd-primary) !important;
+    box-shadow: 0 2px 8px rgba(11, 87, 208, 0.2) !important;
 }
 
 .gd-folder-chip-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
 }
 
+.gd-folder-chip-left img.item-icon-img {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    flex-shrink: 0;
+}
+
 .gd-folder-chip-name {
-    font-size: 0.88rem;
+    font-size: 0.92rem;
     font-weight: 500;
     color: var(--gd-text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+    display: block;
+    line-height: 1.3;
 }
 
 .gd-grid-files {
@@ -1294,7 +1320,8 @@ body {
 }
 
 .gd-modal-body input[type="text"],
-.gd-modal-body input[type="password"] {
+.gd-modal-body input[type="password"],
+.gd-modal-body input[type="email"] {
     width: 100%;
     padding: 12px 16px;
     font-size: 1rem;
@@ -1307,6 +1334,16 @@ body {
 .gd-modal-body input:focus {
     border-color: var(--gd-primary);
     box-shadow: 0 0 0 2px rgba(11, 87, 208, 0.2);
+}
+
+.gd-login-error {
+    font-size: 0.82rem;
+    color: #d93025;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: rgba(217, 48, 37, 0.08);
+    border-radius: var(--gd-radius-sm);
+    border-left: 3px solid #d93025;
 }
 
 .gd-checkbox-row {
@@ -3005,4 +3042,816 @@ body {
     text-align: center;
     color: var(--gd-text-tertiary);
     font-size: 0.85rem;
+}
+
+/* ========================================================= */
+/* Multi-File Selection & Bulk Actions Toolbar               */
+/* ========================================================= */
+
+.col-select, .col-select-td {
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    text-align: center;
+    padding: 0 8px !important;
+}
+
+.gd-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--gd-primary);
+    border-radius: 4px;
+    vertical-align: middle;
+    transition: transform 0.15s ease;
+}
+
+.gd-checkbox:hover {
+    transform: scale(1.15);
+}
+
+/* Row and Card Selected States */
+.body-tr.is-selected {
+    background-color: var(--gd-primary-container) !important;
+    border-left: 3px solid var(--gd-primary);
+}
+
+.gd-folder-chip.is-selected, .gd-file-card.is-selected {
+    background-color: var(--gd-primary-container) !important;
+    outline: 2px solid var(--gd-primary) !important;
+    box-shadow: 0 4px 16px rgba(11, 87, 208, 0.25) !important;
+}
+
+/* Grid Select Indicator / Button */
+.gd-card-select-btn {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(4px);
+    border: 1.5px solid rgba(255, 255, 255, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 5;
+    opacity: 0;
+    transition: all 0.2s ease;
+}
+
+/* Folder Chip Select Button (Inline, clean circle) */
+.gd-folder-chip .gd-card-select-btn {
+    position: static !important;
+    width: 20px !important;
+    height: 20px !important;
+    min-width: 20px !important;
+    border-radius: 50% !important;
+    border: 1.5px solid var(--gd-border, #c4c7c5) !important;
+    background: #ffffff !important;
+    opacity: 0.6 !important;
+    flex-shrink: 0 !important;
+    backdrop-filter: none !important;
+}
+
+.gd-file-card:hover .gd-card-select-btn,
+.gd-folder-chip:hover .gd-card-select-btn,
+.gd-file-card.is-selected .gd-card-select-btn,
+.gd-folder-chip.is-selected .gd-card-select-btn {
+    opacity: 1 !important;
+}
+
+.gd-card-select-btn.checked {
+    background: var(--gd-primary) !important;
+    border-color: var(--gd-primary) !important;
+    opacity: 1 !important;
+}
+
+.gd-card-select-btn svg {
+    width: 13px;
+    height: 13px;
+    fill: #ffffff;
+    display: none;
+}
+
+.gd-card-select-btn.checked svg {
+    display: block;
+}
+
+/* Floating Google Drive-Style Bulk Action Bar */
+.gd-bulk-bar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(120px);
+    background: #1e1f20;
+    color: #fff;
+    border-radius: 32px;
+    padding: 8px 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.gd-bulk-bar.active {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.gd-bulk-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-right: 12px;
+    border-right: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.gd-bulk-count {
+    font-size: 0.92rem;
+    font-weight: 500;
+    color: #e3e3e3;
+    white-space: nowrap;
+}
+
+.gd-bulk-icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.gd-bulk-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.gd-bulk-icon-btn svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+}
+
+.gd-bulk-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.gd-bulk-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+}
+
+.gd-bulk-action-btn:hover {
+    background: rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
+}
+
+.gd-bulk-action-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.gd-bulk-action-btn.gd-bulk-danger {
+    background: rgba(234, 67, 53, 0.15);
+    border-color: rgba(234, 67, 53, 0.3);
+    color: #f28b82;
+}
+
+.gd-bulk-action-btn.gd-bulk-danger:hover {
+    background: #ea4335;
+    color: #fff;
+}
+
+/* ========================================================= */
+/* Mobile Ergonomics & Large Touch Targets                   */
+/* ========================================================= */
+
+@media (max-width: 768px) {
+    /* Minimum 48px x 48px touch targets for close and icon buttons */
+    .gd-icon-btn,
+    .gd-bs-close,
+    #preview-close-btn,
+    #bs-close-btn,
+    #fab-sheet-close,
+    .gd-upload-close-btn {
+        min-width: 48px !important;
+        min-height: 48px !important;
+        width: 48px !important;
+        height: 48px !important;
+        padding: 12px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer;
+        -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+        touch-action: manipulation;
+    }
+
+    .gd-icon-btn:active,
+    .gd-bs-close:active,
+    #preview-close-btn:active {
+        transform: scale(0.92);
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Floating preview close button on mobile */
+    .gd-preview-topbar {
+        padding: 6px 12px;
+    }
+
+    .gd-preview-topbar #preview-close-btn {
+        background: rgba(255, 255, 255, 0.18);
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+
+    .gd-bulk-bar {
+        width: calc(100% - 24px);
+        bottom: 16px;
+        padding: 6px 12px;
+        gap: 8px;
+        justify-content: space-between;
+    }
+
+    .gd-bulk-left {
+        padding-right: 6px;
+        gap: 6px;
+    }
+
+    .gd-bulk-action-btn {
+        padding: 8px 10px;
+        font-size: 0.8rem;
+        gap: 4px;
+    }
+
+    .gd-bulk-action-btn span {
+        display: none;
+    }
+
+    .gd-card-select-btn {
+        opacity: 0.85; /* Always visible on mobile cards */
+        width: 28px;
+        height: 28px;
+    }
+}
+
+/* ========================================================= */
+/* Google Drive Sort Dropdown & Sortable Headers             */
+/* ========================================================= */
+
+.gd-sort-dropdown-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.gd-sort-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 210px;
+    background: var(--gd-surface);
+    border: 1px solid var(--gd-border);
+    border-radius: var(--gd-radius-md);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+    padding: 6px 0;
+    z-index: 800;
+    display: none;
+    flex-direction: column;
+}
+
+.gd-sort-menu.active {
+    display: flex;
+    animation: gd-dropdown-fade 0.15s ease-out;
+}
+
+.gd-sort-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    font-size: 0.86rem;
+    color: var(--gd-text-primary);
+    cursor: pointer;
+    transition: background-color 0.15s;
+    user-select: none;
+}
+
+.gd-sort-option:hover {
+    background-color: var(--gd-hover);
+}
+
+.gd-sort-option.active {
+    color: var(--gd-primary);
+    font-weight: 600;
+    background-color: var(--gd-primary-container);
+}
+
+.gd-sort-option.active::after {
+    content: "✓";
+    font-weight: bold;
+    color: var(--gd-primary);
+}
+
+.gd-sort-divider {
+    height: 1px;
+    background-color: var(--gd-border);
+    margin: 4px 0;
+}
+
+@keyframes gd-dropdown-fade {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Sortable Table Headers */
+.sortable-th {
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s;
+}
+
+.sortable-th:hover {
+    background-color: var(--gd-hover);
+    color: var(--gd-text-primary);
+}
+
+.th-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sort-indicator {
+    font-size: 0.72rem;
+    color: var(--gd-primary);
+    display: inline-block;
+    min-width: 12px;
+    font-weight: bold;
+}
+
+/* ========================================================= */
+/* Google Drive Search Filter Chips Bar                     */
+/* ========================================================= */
+
+.gd-filter-chips-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px 12px;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+
+.gd-filter-chips-bar::-webkit-scrollbar {
+    display: none;
+}
+
+.gd-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--gd-radius-pill);
+    border: 1px solid var(--gd-border);
+    background-color: var(--gd-surface);
+    color: var(--gd-text-secondary);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+}
+
+.gd-filter-chip:hover {
+    background-color: var(--gd-hover);
+    color: var(--gd-text-primary);
+    border-color: #dadce0;
+}
+
+.gd-filter-chip.active {
+    background-color: #e8f0fe;
+    color: #1a73e8;
+    border-color: #1a73e8;
+    font-weight: 600;
+}
+
+/* ========================================================= */
+/* Mobile Sidebar Drawer Header & Close Button              */
+/* ========================================================= */
+
+.gd-sidebar-mobile-header {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--gd-border);
+    margin-bottom: 8px;
+}
+
+.gd-sidebar-mobile-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--gd-text-primary);
+}
+
+.gd-sidebar-close-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--gd-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border-radius: 50%;
+}
+
+.gd-sidebar-close-btn:hover {
+    background-color: var(--gd-hover);
+}
+
+@media (max-width: 768px) {
+    .gd-sidebar-mobile-header {
+        display: flex;
+    }
+    .gd-sidebar {
+        padding-top: 0 !important;
+    }
+    .gd-filter-chips-bar {
+        padding: 4px 12px 8px;
+        gap: 6px;
+    }
+    .gd-filter-chip {
+        padding: 5px 10px;
+        font-size: 0.76rem;
+    }
+    body.drawer-open {
+        overflow: hidden !important;
+    }
+
+    /* Main Container Mobile Fitting */
+    .gd-main-content {
+        margin: 0 !important;
+        border-radius: 0 !important;
+    }
+    .gd-content-viewport {
+        padding: 4px 8px 80px !important;
+    }
+    .gd-action-bar {
+        padding: 0 12px !important;
+        height: 48px !important;
+    }
+    .gd-breadcrumbs-container {
+        font-size: 0.98rem !important;
+        max-width: 55vw;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* Table Column Sizing for Mobile (Hide secondary cols so Name is full width) */
+    .gd-drive-table {
+        table-layout: auto !important;
+    }
+    .gd-drive-table th.col-type,
+    .gd-drive-table th.col-owner,
+    .gd-drive-table th.col-date,
+    .gd-drive-table th.col-size,
+    .gd-drive-table td.col-type-td,
+    .gd-drive-table td.col-owner-td,
+    .gd-drive-table td.col-date-td,
+    .gd-drive-table td.col-size-td {
+        display: none !important;
+    }
+    .gd-drive-table th.col-select,
+    .gd-drive-table td.col-select-td {
+        width: 36px !important;
+        min-width: 36px !important;
+        max-width: 36px !important;
+        padding: 0 4px !important;
+    }
+    .gd-drive-table th.col-name,
+    .gd-drive-table td.col-name-td {
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 0 6px !important;
+    }
+    .gd-drive-table th.col-more,
+    .gd-drive-table td.col-more-td {
+        width: 40px !important;
+        min-width: 40px !important;
+        max-width: 40px !important;
+        padding: 0 4px !important;
+    }
+    .file-name-cell {
+        gap: 8px !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    .file-name-text {
+        max-width: calc(100vw - 120px) !important;
+        font-size: 0.92rem !important;
+        font-weight: 500 !important;
+        color: var(--gd-text-primary) !important;
+        display: inline-block !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    /* Grid Layout on Mobile */
+    .gd-grid-folders {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+    }
+    .gd-grid-files {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 10px !important;
+    }
+    .gd-folder-chip {
+        padding: 10px 12px !important;
+        min-height: 48px !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+    .gd-folder-chip-left {
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        flex: 1 !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+    }
+    .gd-folder-chip-name {
+        max-width: none !important;
+        font-size: 0.94rem !important;
+        font-weight: 500 !important;
+        color: var(--gd-text-primary) !important;
+        flex: 1 !important;
+        min-width: 0 !important;
+        display: block !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+    .gd-card-select-btn {
+        opacity: 0.85 !important;
+    }
+}
+
+/* ========================================================= */
+/* Google Drive Media Lightbox / File Preview Modal         */
+/* ========================================================= */
+
+.gd-preview-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(15, 15, 15, 0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    display: none;
+    flex-direction: column;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gd-preview-lightbox.active {
+    display: flex !important;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.gd-preview-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: rgba(25, 25, 25, 0.85);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    z-index: 10;
+    min-height: 56px;
+}
+
+.gd-preview-name {
+    font-size: 1.05rem;
+    font-weight: 500;
+    color: #ffffff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 65vw;
+    letter-spacing: 0.2px;
+}
+
+.gd-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.gd-preview-actions .gd-icon-btn {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.12);
+    border: none;
+    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    touch-action: manipulation;
+}
+
+.gd-preview-actions .gd-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.05);
+}
+
+.gd-preview-actions .gd-icon-btn:active {
+    transform: scale(0.95);
+}
+
+.gd-preview-actions .gd-icon-btn svg,
+.gd-preview-actions .gd-icon-btn .gd-svg-icon {
+    fill: #ffffff !important;
+    width: 22px;
+    height: 22px;
+}
+
+.gd-preview-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: 24px;
+    position: relative;
+}
+
+.gd-preview-content img,
+.gd-preview-content video {
+    border-radius: 8px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    outline: none;
+}
+
+.gd-preview-pdf-frame {
+    width: 90vw;
+    height: 85vh;
+    border: none;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.gd-preview-text-wrap {
+    width: 90vw;
+    max-width: 960px;
+    max-height: 82vh;
+    background: #1e1e1e;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.gd-preview-text-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #2d2d2d;
+    color: #e0e0e0;
+    font-family: monospace;
+    font-size: 0.88rem;
+    border-bottom: 1px solid #3d3d3d;
+}
+
+.gd-btn-copy-code {
+    background: #1a73e8;
+    color: #ffffff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.gd-btn-copy-code:hover {
+    background: #1557b0;
+}
+
+.gd-preview-code {
+    margin: 0;
+    padding: 18px;
+    overflow: auto;
+    color: #d4d4d4;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #1e1e1e;
+}
+
+.gd-preview-audio-wrap {
+    background: #202124;
+    padding: 32px 24px;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    width: 90vw;
+    max-width: 460px;
+    text-align: center;
+}
+
+.gd-preview-audio-icon {
+    font-size: 3.5rem;
+    line-height: 1;
+}
+
+.gd-preview-audio-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #ffffff;
+    max-width: 100%;
+    word-break: break-all;
+}
+
+.gd-preview-audio-size {
+    font-size: 0.85rem;
+    color: #9aa0a6;
+}
+
+@media (max-width: 768px) {
+    .gd-preview-topbar {
+        padding: 10px 14px;
+    }
+    .gd-preview-name {
+        max-width: 55vw;
+        font-size: 0.95rem;
+    }
+    .gd-preview-actions .gd-icon-btn {
+        width: 46px;
+        height: 46px;
+        min-width: 46px;
+        min-height: 46px;
+    }
+    .gd-preview-content {
+        padding: 12px;
+    }
+    .gd-preview-pdf-frame {
+        width: 96vw;
+        height: 80vh;
+    }
+    .gd-preview-text-wrap {
+        width: 96vw;
+        max-height: 78vh;
+    }
 }

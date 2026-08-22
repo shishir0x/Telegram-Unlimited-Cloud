@@ -130,7 +130,7 @@ def reset_cache_dir():
     # In cache directory, only remove temp chunks and files, preserve .session and drive.data files
     cache_dir.mkdir(parents=True, exist_ok=True)
     for item in cache_dir.iterdir():
-        if item.is_file() and not item.name.endswith(".session") and not item.name.endswith(".session-journal") and item.name != "drive.data":
+        if item.is_file() and not item.name.endswith(".session") and not item.name.endswith(".session-journal") and item.name != "drive.data" and item.name != "auth_sessions.json":
             try:
                 item.unlink(missing_ok=True)
             except Exception:

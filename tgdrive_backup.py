@@ -506,7 +506,11 @@ class TGDriveBackupClient:
                     return False
 
             # Poll for Telegram upload completion with real-time progress bar
-            for _ in range(240):
+            at_100_count = 0
+            max_poll_seconds = max(20, min(180, int(file_size / (100 * 1024)) + 15))
+            max_iterations = int(max_poll_seconds / 0.4)
+
+            for _ in range(max_iterations):
                 time.sleep(0.4)
                 try:
                     prog_res = self.session.post(
@@ -514,31 +518,45 @@ class TGDriveBackupClient:
                         json={"password": self.password, "id": upload_id},
                         timeout=10,
                     )
-                    prog_data = prog_res.json()
-                    if prog_data.get("status") == "ok":
-                        status = prog_data["data"][0]
-                        current_bytes = prog_data["data"][1]
-                        total_bytes = prog_data["data"][2] or file_size
+                    if prog_res.status_code == 200:
+                        prog_data = prog_res.json()
+                        if prog_data.get("status") == "ok":
+                            status = prog_data["data"][0]
+                            current_bytes = prog_data["data"][1]
+                            total_bytes = prog_data["data"][2] or file_size
 
-                        duration = max(time.time() - start_time, 0.1)
-                        speed = current_bytes / duration
-                        speed_str = f"{format_size(int(speed))}/s"
+                            duration = max(time.time() - start_time, 0.1)
+                            speed = current_bytes / duration
+                            speed_str = f"{format_size(int(speed))}/s"
 
-                        if status == "running":
-                            print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
-                            self.push_web_sync_status({
-                                "current_bytes": current_bytes,
-                                "speed_str": speed_str
-                            })
-                        elif status == "completed":
-                            print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
-                            fhash = compute_fast_file_hash(local_file_path)
-                            self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
-                            return True
+                            if status == "running":
+                                print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
+                                self.push_web_sync_status({
+                                    "current_bytes": current_bytes,
+                                    "speed_str": speed_str
+                                })
+                                if current_bytes >= total_bytes and total_bytes > 0:
+                                    at_100_count += 1
+                                    # If at 100% for 4 seconds (10 ticks), auto-advance to next file!
+                                    if at_100_count >= 10:
+                                        print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
+                                        fhash = compute_fast_file_hash(local_file_path)
+                                        self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
+                                        return True
+                            elif status == "completed":
+                                print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
+                                fhash = compute_fast_file_hash(local_file_path)
+                                self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
+                                return True
+                            elif status == "error":
+                                print(f"\n    ⚠️ Upload error reported. Skipping '{file_name}' to continue queue.")
+                                return False
                 except Exception:
                     pass
 
-            print("\r    ✅ Sync dispatched to Telegram cloud.")
+            print(f"\r    ⏭️ Upload timeout ({max_poll_seconds}s). Auto-advancing to next file...")
+            fhash = compute_fast_file_hash(local_file_path)
+            self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
             return True
 
         except Exception as e:
@@ -598,14 +616,18 @@ class TGDriveBackupClient:
                 print(f"    ❌ Upload failed: {data.get('status')}")
                 return False
 
-            # Poll for Telegram upload completion with real-time progress bar (up to 5 mins)
-            for _ in range(600):
-                time.sleep(0.5)
+            # Poll for Telegram upload completion with real-time progress bar
+            at_100_count = 0
+            max_poll_seconds = max(20, min(180, int(file_size / (100 * 1024)) + 15))
+            max_iterations = int(max_poll_seconds / 0.4)
+
+            for _ in range(max_iterations):
+                time.sleep(0.4)
                 try:
                     prog_res = self.session.post(
                         f"{self.base_url}/api/getUploadProgress",
                         json={"password": self.password, "id": upload_id},
-                        timeout=12,
+                        timeout=10,
                     )
                     if prog_res.status_code == 200:
                         prog_data = prog_res.json()
@@ -624,15 +646,28 @@ class TGDriveBackupClient:
                                     "current_bytes": current_bytes,
                                     "speed_str": speed_str
                                 })
+                                if current_bytes >= total_bytes and total_bytes > 0:
+                                    at_100_count += 1
+                                    # If at 100% for 4 seconds (10 ticks), auto-advance to next file!
+                                    if at_100_count >= 10:
+                                        print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
+                                        h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
+                                        self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
+                                        return True
                             elif status == "completed":
                                 print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                                 h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
                                 self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
                                 return True
+                            elif status == "error":
+                                print(f"\n    ⚠️ Upload error reported. Skipping '{file_name}' to continue queue.")
+                                return False
                 except Exception:
                     pass
 
-            print("\r    ✅ Sync dispatched to Telegram cloud.")
+            print(f"\r    ⏭️ Upload timeout ({max_poll_seconds}s). Auto-advancing to next file...")
+            h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
+            self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
             return True
 
         except Exception as e:
@@ -777,6 +812,16 @@ class TGDriveBackupClient:
 
     def sync_mtp_phone_folder(self, phone_name: str, storage_name: str, subfolder_rel: str = "", auto_confirm: bool = False):
         """Sync files from an MTP connected phone into TGDrive with full folder hierarchy & zero duplicates."""
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%tgdrive_phone_staging%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+                    capture_output=True,
+                    timeout=5
+                )
+            except Exception:
+                pass
+
         staging_dir = Path(tempfile.gettempdir()) / "tgdrive_phone_staging"
         if staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)

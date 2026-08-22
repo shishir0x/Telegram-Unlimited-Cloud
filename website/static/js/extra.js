@@ -16,7 +16,7 @@ function broadcastDriveChange(action = 'REFRESH', details = {}) {
 if (DRIVE_SYNC_CHANNEL) {
     DRIVE_SYNC_CHANNEL.onmessage = (event) => {
         if (event.data && (event.data.type === 'REFRESH' || event.data.type === 'MOVE' || event.data.type === 'UPLOAD')) {
-            if (typeof getCurrentDirectory === 'function' && getPassword()) {
+            if (typeof getCurrentDirectory === 'function') {
                 getCurrentDirectory();
             }
         }
@@ -24,7 +24,7 @@ if (DRIVE_SYNC_CHANNEL) {
 }
 window.addEventListener('storage', (event) => {
     if (event.key === 'tg_drive_last_sync') {
-        if (typeof getCurrentDirectory === 'function' && getPassword()) {
+        if (typeof getCurrentDirectory === 'function') {
             getCurrentDirectory();
         }
     }
@@ -224,8 +224,10 @@ function fallbackCopyTextToClipboard(text) {
     document.body.removeChild(textArea);
 }
 
+// getPassword: legacy stub — password is no longer stored in localStorage.
+// Auth is now handled via server-side HttpOnly session cookies.
 function getPassword() {
-    return localStorage.getItem('password')
+    return null;
 }
 
 function getRandomId() {
