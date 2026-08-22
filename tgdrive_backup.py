@@ -77,6 +77,7 @@ IGNORED_DIRS = {
     "your phone",
     "microsoft",
     "microsoftedgebackups",
+    "onedrive",
 
     # Heavy Dependency & Build Folders (Crucial for C: Drive!)
     "node_modules",
@@ -255,8 +256,11 @@ def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
     if any(ig in path_lower for ig in [
         "node_modules", "appdata", ".git", ".venv", "venv", "__pycache__",
         ".cache", ".npm", ".cargo", ".gradle", "site-packages", "pyinstaller",
-        "dist-info", "egg-info", "crossdevice", "microsoft"
+        "dist-info", "egg-info", "crossdevice", "microsoft", "onedrive"
     ]):
+        return True
+
+    if "onedrive" in name_lower:
         return True
 
     # Always skip hidden or system folders starting with '.' or '$'
