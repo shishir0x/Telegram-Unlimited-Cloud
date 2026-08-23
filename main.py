@@ -824,12 +824,6 @@ async def api_get_directory(request: Request):
         trash_data = {"contents": drive.get_trashed_files_folders()}
         folder_data = convert_class_to_dict(trash_data, isObject=False, showtrash=True)
 
-    elif path == "/starred":
-        if not is_admin:
-            raise HTTPException(status_code=401, detail="Unauthorized access to starred")
-        starred_data = {"contents": drive.get_starred_files_folders()}
-        folder_data = convert_class_to_dict(starred_data, isObject=False, showtrash=False)
-
     elif path == "/recent":
         if not is_admin:
             raise HTTPException(status_code=401, detail="Unauthorized access to recent")
@@ -1058,23 +1052,6 @@ async def rename_file_folder(request: Request, _auth: Session = Depends(require_
     logger.info(f"renameFileFolder path={data.get('path')} name={data.get('name')}")
     drive.rename_file_folder(data["path"], data["name"])
     return JSONResponse({"status": "ok"})
-
-
-@app.post("/api/starFileFolder")
-async def star_file_folder(request: Request, _auth: Session = Depends(require_auth)):
-    from utils.directoryHandler import ensure_drive_data, backup_drive_data
-    drive = ensure_drive_data()
-
-    data = await request.json()
-    path = data.get("path")
-    starred = data.get("starred")  # None to toggle, or boolean
-    if not path:
-        return JSONResponse({"status": "Path is required"}, status_code=400)
-
-    logger.info(f"starFileFolder path={path} starred={starred}")
-    new_status = drive.set_starred(path, starred)
-    asyncio.create_task(backup_drive_data(loop=False))
-    return JSONResponse({"status": "ok", "starred": new_status})
 
 
 @app.post("/api/tagFileFolder")

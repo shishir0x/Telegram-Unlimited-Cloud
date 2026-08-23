@@ -386,18 +386,6 @@ function openMoreButton(div) {
         const folderShareBtn = moreDiv.querySelector(`#folder-share-${id}`);
         if (folderShareBtn) folderShareBtn.onclick = (e) => { e.stopPropagation(); shareFolder.call(folderShareBtn); };
 
-        const starOpt = moreDiv.querySelector(`#star-opt-${id}`);
-        if (starOpt) {
-            starOpt.onclick = (e) => {
-                e.stopPropagation();
-                closeMoreMenu(moreDiv);
-                const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
-                if (!item) return;
-                const itemFullPath = (item.path + '/' + item.id).replaceAll('//', '/');
-                if (typeof toggleStarItem === 'function') toggleStarItem(id, itemFullPath);
-            };
-        }
-
         const tagsOpt = moreDiv.querySelector(`#tags-opt-${id}`);
         if (tagsOpt) {
             tagsOpt.onclick = (e) => {

@@ -324,31 +324,16 @@ def run_tests():
     assert r.status_code in (200, 404)  # 404 is expected if folder has no files yet, 200 if files present
 
     # -------------------------------------------------------------
-    # 14. Test Star & Tagging System + Virtual Views (/starred, /recent, /tags/<tag>)
+    # 14. Test Tagging System + Virtual Views (/recent, /tags/<tag>)
     # -------------------------------------------------------------
-    print("\n[14] Testing Star & Tagging Endpoints + Next-Gen Views:")
-    # A. Test Star File/Folder
-    r = session.post(f"{BASE_URL}/api/starFileFolder", json={"path": f"/{target_parent_id}", "starred": True})
-    print(f"  Star folder '/{target_parent_id}': {r.status_code} -> {r.json()}")
-    assert r.status_code == 200
-    assert r.json().get("starred") is True
-
-    # B. Test /starred directory view
-    r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/starred"})
-    print(f"  POST /api/getDirectory for '/starred': {r.status_code} -> {r.json().get('status')}")
-    assert r.status_code == 200
-    starred_contents = r.json()["data"]["contents"]
-    assert target_parent_id in starred_contents
-    assert starred_contents[target_parent_id].get("starred") is True
-    print(f"  Verified folder appears in Starred view ({len(starred_contents)} items).")
-
-    # C. Test Tag File/Folder (Add tag)
+    print("\n[14] Testing Tagging Endpoints + Next-Gen Views:")
+    # A. Test Tag File/Folder (Add tag)
     r = session.post(f"{BASE_URL}/api/tagFileFolder", json={"path": f"/{target_parent_id}", "action": "add", "tag": "Important"})
     print(f"  Add tag 'Important': {r.status_code} -> {r.json()}")
     assert r.status_code == 200
     assert "Important" in r.json().get("tags", [])
 
-    # D. Test /tags/Important view
+    # B. Test /tags/Important view
     r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/tags/Important"})
     print(f"  POST /api/getDirectory for '/tags/Important': {r.status_code} -> {r.json().get('status')}")
     assert r.status_code == 200
@@ -357,22 +342,18 @@ def run_tests():
     assert "Important" in tagged_contents[target_parent_id].get("tags", [])
     print(f"  Verified folder appears in /tags/Important view ({len(tagged_contents)} items).")
 
-    # E. Test /recent view
+    # C. Test /recent view
     r = session.post(f"{BASE_URL}/api/getDirectory", json={"path": "/recent"})
     print(f"  POST /api/getDirectory for '/recent': {r.status_code} -> {r.json().get('status')}")
     assert r.status_code == 200
     assert "contents" in r.json()["data"]
     print(f"  Verified /recent view loaded successfully.")
 
-    # F. Test Unstar & Remove Tag
-    r = session.post(f"{BASE_URL}/api/starFileFolder", json={"path": f"/{target_parent_id}", "starred": False})
-    assert r.status_code == 200
-    assert r.json().get("starred") is False
-
+    # D. Test Remove Tag
     r = session.post(f"{BASE_URL}/api/tagFileFolder", json={"path": f"/{target_parent_id}", "action": "remove", "tag": "Important"})
     assert r.status_code == 200
     assert "Important" not in r.json().get("tags", [])
-    print("  Verified star and tag removal.")
+    print("  Verified tag removal.")
 
     # -------------------------------------------------------------
     # 15. Test Cleanup & Bulk Deletion

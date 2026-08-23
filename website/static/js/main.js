@@ -481,7 +481,6 @@ function getItemProvenance(item) {
         const badge = getFileBadge(item);
         const dateStr = formatDate(item.upload_date);
         const owner = item.owner || 'Admin';
-        const isStarred = Boolean(item.starred);
         const tags = Array.isArray(item.tags) ? item.tags : [];
 
         const isSearch = getCurrentPath().startsWith('/search_');
@@ -498,9 +497,6 @@ function getItemProvenance(item) {
                 <td class="col-name-td">
                     <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
                         <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                            <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
-                                <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                            </button>
                             ${badge}
                             <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
                             ${tagsHtml}
@@ -536,9 +532,6 @@ function getItemProvenance(item) {
                 <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
             </div>
             <div class="gd-folder-chip-left">
-                <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
-                    <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                </button>
                 <img class="item-icon-img" src="static/assets/folder-solid-icon.svg">
                 <div style="min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden;flex:1;">
                     <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
@@ -557,7 +550,7 @@ function getItemProvenance(item) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-zip-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download as ZIP</div><hr><div id="star-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> ${isStarred ? 'Remove from Starred' : 'Add to Starred'}</div><hr><div id="tags-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></svg> Manage Tags</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-zip-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download as ZIP</div><hr><div id="tags-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></svg> Manage Tags</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="folder-share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -568,7 +561,6 @@ function getItemProvenance(item) {
         const dateStr = formatDate(item.upload_date);
         const category = item.category || 'File';
         const owner = item.owner || 'Admin';
-        const isStarred = Boolean(item.starred);
         const tags = Array.isArray(item.tags) ? item.tags : [];
 
         const isSearch = getCurrentPath().startsWith('/search_');
@@ -585,9 +577,6 @@ function getItemProvenance(item) {
                 <td class="col-name-td">
                     <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
                         <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                            <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
-                                <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                            </button>
                             ${badge}
                             <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
                             ${tagsHtml}
@@ -651,9 +640,6 @@ function getItemProvenance(item) {
                 <div class="gd-card-select-btn ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''}" data-id="${item.id}" title="Select">
                     <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                 </div>
-                <button class="gd-star-btn ${isStarred ? 'is-starred' : ''}" data-id="${item.id}" data-path="${item.path}" title="${isStarred ? 'Starred' : 'Not starred'}" style="position: absolute; top: 8px; right: 38px; z-index: 4;" onclick="event.stopPropagation(); toggleStarItem('${item.id}', '${item.path}');">
-                    <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                </button>
                 ${previewInnerHtml}
                 <a data-id="${item.id}" class="more-btn gd-file-card-more-btn" title="More actions" onclick="event.stopPropagation();"><img src="static/assets/more-icon.svg"></a>
             </div>
@@ -676,7 +662,7 @@ function getItemProvenance(item) {
         if (isTrash) {
             menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="restore-${item.id}" data-path="${item.path}"><img src="static/assets/load-icon.svg"> Restore</div><hr><div id="delete-${item.id}" data-path="${item.path}"><img src="static/assets/trash-icon.svg"> Delete permanently</div></div>`;
         } else {
-            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download</div><hr><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="star-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> ${isStarred ? 'Remove from Starred' : 'Add to Starred'}</div><hr><div id="tags-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></svg> Manage Tags</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
+            menusHtml += `<div data-path="${item.path}" id="more-option-${item.id}" data-name="${escapeHtml(item.name)}" class="more-options"><input class="more-options-focus" readonly="readonly" style="height:0;width:0;border:none;position:absolute"><div id="download-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg> Download</div><hr><div id="preview-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Preview / Open</div><hr><div id="tags-opt-${item.id}"><svg style="width:15px;height:15px;margin-right:8px;vertical-align:-2px;fill:currentColor;" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></svg> Manage Tags</div><hr><div id="details-opt-${item.id}"><img src="static/assets/info-icon-small.svg"> Details</div><hr><div id="rename-${item.id}"><img src="static/assets/pencil-icon.svg"> Rename</div><hr><div id="move-${item.id}"><img src="static/assets/folder-solid-icon.svg"> Move to...</div><hr><div id="copy-${item.id}"><img src="static/assets/copy-icon.svg"> Make a copy</div><hr><div id="trash-${item.id}"><img src="static/assets/trash-icon.svg"> Move to trash</div><hr><div id="share-${item.id}"><img src="static/assets/share-icon.svg"> Share link</div></div>`;
         }
     }
 
@@ -1641,31 +1627,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==========================================
-// Star, Tag Management & Global Shortcuts
+// Tag Management & Global Shortcuts
 // ==========================================
-
-window.toggleStarItem = async function(id, itemPath, explicitState = null) {
-    try {
-        const res = await postJson('/api/starFileFolder', {
-            path: itemPath,
-            starred: explicitState
-        });
-        if (res && res.status === 'ok') {
-            const isStarred = res.data && res.data.starred;
-            showToast(isStarred ? 'Added to Starred ⭐' : 'Removed from Starred');
-            if (typeof broadcastDriveChange === 'function') {
-                broadcastDriveChange('STAR', { path: itemPath, starred: isStarred });
-            }
-            if (typeof getCurrentDirectory === 'function') {
-                getCurrentDirectory();
-            }
-        } else {
-            showToast('Failed to update star status');
-        }
-    } catch (e) {
-        showToast('Error updating star status');
-    }
-};
 
 let CURRENT_TAG_ITEM_ID = null;
 
@@ -1824,7 +1787,6 @@ let CMD_PALETTE_ACTIVE_IDX = 0;
 function getStaticCommands() {
     return [
         { id: 'nav-my-drive', label: 'Go to My Drive', icon: '🏠', action: () => navigateToPath('/') },
-        { id: 'nav-starred', label: 'Go to Starred', icon: '⭐', action: () => navigateToPath('/starred') },
         { id: 'nav-recent', label: 'Go to Recent Files', icon: '🕒', action: () => navigateToPath('/recent') },
         { id: 'nav-trash', label: 'Go to Trash', icon: '🗑️', action: () => navigateToPath('/trash') },
         { id: 'nav-sync', label: 'View Live Sync Activity', icon: '⚡', action: () => window.showSyncActivityView() },

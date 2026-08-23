@@ -13,7 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Toggle Nav Menu selection via SPA routing
     const navMyDrive = document.getElementById('nav-my-drive');
     const navRecent = document.getElementById('nav-recent');
-    const navStarred = document.getElementById('nav-starred');
     const navTrash = document.getElementById('nav-trash');
 
     updateSidebarNavSelection(currentPath);
@@ -37,13 +36,6 @@ document.addEventListener('DOMContentLoaded', () => {
         navRecent.addEventListener('click', (e) => {
             e.preventDefault();
             navigateToPath('/recent');
-        });
-    }
-
-    if (navStarred) {
-        navStarred.addEventListener('click', (e) => {
-            e.preventDefault();
-            navigateToPath('/starred');
         });
     }
 
