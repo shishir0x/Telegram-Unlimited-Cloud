@@ -519,26 +519,60 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 20px;
+    padding: 0 16px;
+    height: 48px;
+    min-height: 48px;
     border-bottom: 1px solid var(--gd-border-light);
     user-select: none;
+    gap: 8px;
+    position: relative;
+}
+
+.gd-breadcrumbs-wrap {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
 }
 
 .gd-breadcrumbs-container {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 1.1rem;
+    gap: 3px;
+    font-size: 1.05rem;
     font-weight: 500;
     color: var(--gd-text-primary);
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex: 1;
+    min-width: 0;
+    padding: 2px 0;
+}
+
+.gd-breadcrumbs-container::-webkit-scrollbar {
+    display: none;
 }
 
 .gd-crumb {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     padding: 4px 8px;
-    border-radius: var(--gd-radius-sm);
+    border-radius: 8px;
     cursor: pointer;
     color: var(--gd-text-secondary);
-    transition: background-color 0.15s, color 0.15s;
+    font-size: 0.94rem;
+    font-weight: 500;
+    transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+    user-select: none;
 }
 
 .gd-crumb:hover {
@@ -546,14 +580,67 @@ body {
     color: var(--gd-text-primary);
 }
 
+.gd-crumb:active {
+    transform: scale(0.98);
+}
+
 .gd-crumb-active {
     color: var(--gd-text-primary);
     font-weight: 600;
+    background-color: rgba(26, 115, 232, 0.08);
+    border: 1px solid rgba(26, 115, 232, 0.15);
+}
+
+.gd-crumb-root-icon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--gd-primary, #1a73e8);
+}
+
+.gd-crumb-root-icon svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
 }
 
 .gd-crumb-sep {
     color: var(--gd-text-tertiary);
     font-size: 0.85rem;
+    padding: 0 1px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.65;
+}
+
+.gd-copy-path-btn {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 6px;
+    margin-left: 4px;
+    cursor: pointer;
+    color: var(--gd-text-tertiary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+
+.gd-copy-path-btn:hover {
+    background-color: var(--gd-hover);
+    color: var(--gd-primary, #1a73e8);
+}
+
+.gd-copy-path-btn:active {
+    transform: scale(0.92);
+}
+
+.gd-copy-path-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
 }
 
 .gd-view-toggles {
@@ -867,6 +954,16 @@ body {
     min-width: 0;
     display: block;
     line-height: 1.3;
+}
+
+.gd-folder-chip-size {
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--gd-text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
 }
 
 .gd-grid-files {
@@ -2007,40 +2104,42 @@ body {
     .gd-header-left {
         width: auto;
         min-width: unset;
-        gap: 4px;
+        gap: 0;
         flex-shrink: 0;
+        display: flex;
+        align-items: center;
     }
 
-    .gd-cloud-badge, .gd-status-pill {
+    /* Hide Google Drive Logo & Drive text in mobile top bar ONLY (stays in sidebar) */
+    .gd-header-left #gd-logo-link,
+    .gd-header-left .gd-logo-container,
+    .gd-cloud-badge, 
+    .gd-status-pill {
         display: none !important;
-    }
-
-    .gd-logo-img {
-        width: 28px;
-        height: 28px;
-    }
-
-    .gd-logo-text {
-        font-size: 1.05rem;
     }
 
     .gd-header-center {
         flex: 1;
         min-width: 0;
-        margin: 0 4px;
+        margin: 0 6px;
         padding: 0;
     }
 
     .gd-search-box {
         max-width: none;
-        height: 38px;
+        width: 100%;
+        height: 40px;
         background-color: #f1f3f4;
-        border-radius: 19px;
-        padding: 0 8px;
+        border-radius: 20px;
+        padding: 0 10px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
     }
 
     .gd-search-box input {
-        font-size: 0.85rem;
+        font-size: 0.9rem;
+        width: 100%;
     }
 
     #search-filter-btn {
@@ -2050,6 +2149,8 @@ body {
     .gd-header-right {
         gap: 4px;
         flex-shrink: 0;
+        display: flex;
+        align-items: center;
     }
 
     .gd-sync-pill {
@@ -2196,8 +2297,10 @@ body {
     }
 
     .gd-drive-table {
-        display: block;
-        width: 100%;
+        display: table !important;
+        table-layout: fixed !important;
+        width: 100% !important;
+        border-collapse: collapse;
     }
 
     .gd-drive-table thead {
@@ -2205,66 +2308,83 @@ body {
     }
 
     .gd-drive-table tbody {
-        display: block;
-        width: 100%;
+        display: table-row-group !important;
+        width: 100% !important;
     }
 
     .gd-drive-table tbody tr:not(.body-tr) {
-        display: block;
-        width: 100%;
+        display: table-row !important;
+        width: 100% !important;
     }
 
     .gd-drive-table tbody tr:not(.body-tr) td {
-        display: block;
-        width: 100%;
+        display: table-cell !important;
+        width: 100% !important;
         padding: 40px 10px !important;
     }
 
-    .file-tr, .folder-tr {
-        display: flex !important;
-        align-items: center;
-        justify-content: space-between;
-        padding: 10px 4px;
-        border-bottom: 1px solid #f1f3f4;
-        width: 100%;
-        box-sizing: border-box;
+    .body-tr.file-tr, .body-tr.folder-tr {
+        display: table-row !important;
+        border-bottom: 1px solid var(--gd-border) !important;
+        width: 100% !important;
+        height: 52px;
     }
 
-    .file-tr td:first-child, .folder-tr td:first-child {
-        flex: 1;
-        min-width: 0;
-        padding: 0;
+    .gd-drive-table td.col-select-td {
+        display: table-cell !important;
+        width: 36px !important;
+        min-width: 36px !important;
+        max-width: 36px !important;
+        padding: 0 4px !important;
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    .gd-drive-table td.col-name-td {
+        display: table-cell !important;
+        width: auto !important;
+        padding: 0 8px !important;
+        vertical-align: middle;
+        overflow: hidden;
+    }
+
+    .gd-drive-table td.col-more-td {
+        display: table-cell !important;
+        width: 40px !important;
+        min-width: 40px !important;
+        max-width: 40px !important;
+        padding: 0 4px !important;
+        text-align: center;
+        vertical-align: middle;
     }
 
     /* Hide desktop extra columns on phone */
-    .file-tr td:nth-child(2), .folder-tr td:nth-child(2),
-    .file-tr td:nth-child(3), .folder-tr td:nth-child(3),
-    .file-tr td:nth-child(4), .folder-tr td:nth-child(4),
-    .file-tr td:nth-child(5), .folder-tr td:nth-child(5) {
+    .gd-drive-table td.col-type-td,
+    .gd-drive-table td.col-owner-td,
+    .gd-drive-table td.col-date-td,
+    .gd-drive-table td.col-size-td {
         display: none !important;
     }
 
-    .file-tr td:last-child, .folder-tr td:last-child {
-        padding: 0;
-        flex-shrink: 0;
-    }
-
     .file-name-cell {
-        display: flex;
+        display: flex !important;
         align-items: center;
         gap: 10px;
         width: 100%;
         min-width: 0;
+        overflow: hidden;
     }
 
     .file-name-text {
-        font-size: 0.88rem;
+        font-size: 0.92rem;
         font-weight: 500;
+        color: var(--gd-text-primary);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
         min-width: 0;
         flex: 1;
+        display: block;
     }
 
     .more-btn {
@@ -3530,15 +3650,33 @@ body {
         padding: 4px 8px 80px !important;
     }
     .gd-action-bar {
-        padding: 0 12px !important;
+        padding: 0 8px !important;
         height: 48px !important;
+        gap: 6px !important;
+    }
+    .gd-breadcrumbs-wrap {
+        flex: 1 !important;
+        min-width: 0 !important;
+        max-width: calc(100vw - 110px) !important;
+        overflow: hidden !important;
     }
     .gd-breadcrumbs-container {
-        font-size: 0.98rem !important;
-        max-width: 55vw;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        font-size: 0.88rem !important;
+        max-width: 100% !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        text-overflow: clip !important;
+        white-space: nowrap !important;
+        -webkit-overflow-scrolling: touch !important;
+        scrollbar-width: none !important;
+    }
+    .gd-crumb {
+        padding: 3px 6px !important;
+        font-size: 0.86rem !important;
+        max-width: 140px;
+    }
+    .gd-crumb-active {
+        max-width: none;
     }
 
     /* Table Column Sizing for Mobile (Hide secondary cols so Name is full width) */

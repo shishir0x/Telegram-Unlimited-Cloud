@@ -142,7 +142,7 @@ function clearDraggedItem() {
     } catch {}
 }
 
-// Build Interactive Breadcrumbs with Proper Folder Names (Google Drive style)
+// Build Interactive Breadcrumbs with Proper Folder Names & Smooth Scrollable Navigation
 function updateBreadcrumbs(breadcrumbs) {
     const container = document.getElementById('breadcrumbs-container');
     if (!container) return;
@@ -152,7 +152,7 @@ function updateBreadcrumbs(breadcrumbs) {
     const isSearch = rawPath.startsWith('/search');
 
     if (isTrash) {
-        container.innerHTML = `<span class="gd-crumb gd-crumb-active" data-path="/trash">Trash</span>`;
+        container.innerHTML = `<span class="gd-crumb gd-crumb-active" data-path="/trash"><span class="gd-crumb-root-icon"><svg viewBox="0 0 24 24"><path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zm2 15H7V6h10v13z"/></svg></span>Trash</span>`;
         document.title = 'Trash - Google Drive';
         return;
     }
@@ -161,7 +161,9 @@ function updateBreadcrumbs(breadcrumbs) {
         const q = rawPath.replace('/search_', '').replace('/search', '');
         const queryDecoded = decodeURIComponent(q);
         container.innerHTML = `
-            <span class="gd-crumb gd-crumb-target" data-path="/" onclick="navigateToPath('/')">My Drive</span>
+            <span class="gd-crumb gd-crumb-target" data-path="/" onclick="navigateToPath('/')">
+                <span class="gd-crumb-root-icon"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg></span>My Drive
+            </span>
             <span class="gd-crumb-sep">›</span>
             <span class="gd-crumb gd-crumb-active">Search: "${escapeHtml(queryDecoded)}"</span>
         `;
@@ -185,21 +187,62 @@ function updateBreadcrumbs(breadcrumbs) {
         const item = breadcrumbs[i];
         const isLast = i === breadcrumbs.length - 1;
         const displayName = item.name || (i === 0 ? 'My Drive' : item.id);
+        const iconHtml = i === 0 ? `<span class="gd-crumb-root-icon"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg></span>` : '';
 
         if (i > 0) {
             html += `<span class="gd-crumb-sep">›</span>`;
         }
 
         if (isLast) {
-            html += `<span class="gd-crumb gd-crumb-active gd-crumb-target" data-path="${item.path}" data-id="${item.id}" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>`;
+            html += `<span class="gd-crumb gd-crumb-active gd-crumb-target" data-path="${item.path}" data-id="${item.id}" title="${escapeHtml(displayName)} (Current)">${iconHtml}${escapeHtml(displayName)}</span>`;
         } else {
-            html += `<span class="gd-crumb gd-crumb-target" data-path="${item.path}" data-id="${item.id}" onclick="navigateToPath('${item.path}')" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>`;
+            html += `<span class="gd-crumb gd-crumb-target" data-path="${item.path}" data-id="${item.id}" onclick="navigateToPath('${item.path}')" title="Jump to ${escapeHtml(displayName)}">${iconHtml}${escapeHtml(displayName)}</span>`;
         }
     }
 
     container.innerHTML = html;
 
-    // Attach Drag & Drop to each breadcrumb item (so user can drop onto ancestor folders)
+    // Smoothly auto-scroll to the end so the deepest child node is always visible immediately
+    setTimeout(() => {
+        if (container.scrollWidth > container.clientWidth) {
+            container.scrollTo({ left: container.scrollWidth, behavior: 'smooth' });
+        }
+    }, 40);
+
+    // Mouse Wheel Horizontal Scroll Support (for desktop users with standard vertical mouse wheels)
+    if (!container._wheelBound) {
+        container._wheelBound = true;
+        container.addEventListener('wheel', (e) => {
+            if (e.deltaY !== 0) {
+                e.preventDefault();
+                container.scrollLeft += e.deltaY;
+            }
+        }, { passive: false });
+
+        // Drag to scroll gestures
+        let isDown = false;
+        let startX;
+        let scrollLeft;
+
+        container.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.gd-crumb')) return; // Allow clicking crumbs directly
+            isDown = true;
+            startX = e.pageX - container.offsetLeft;
+            scrollLeft = container.scrollLeft;
+        });
+
+        container.addEventListener('mouseleave', () => { isDown = false; });
+        container.addEventListener('mouseup', () => { isDown = false; });
+        container.addEventListener('mousemove', (e) => {
+            if (!isDown) return;
+            e.preventDefault();
+            const x = e.pageX - container.offsetLeft;
+            const walk = (x - startX) * 1.5;
+            container.scrollLeft = scrollLeft - walk;
+        });
+    }
+
+    // Attach Drag & Drop to each breadcrumb item (so user can drop files onto ancestor folders)
     container.querySelectorAll('.gd-crumb-target').forEach(crumbEl => {
         const targetPath = crumbEl.getAttribute('data-path');
         const targetId = crumbEl.getAttribute('data-id');
@@ -228,6 +271,43 @@ function updateBreadcrumbs(breadcrumbs) {
         });
     });
 }
+
+// Copy Current Folder Path to Clipboard
+window.copyCurrentFolderPath = function() {
+    let displayPath = '/';
+    if (window.CURRENT_BREADCRUMBS && window.CURRENT_BREADCRUMBS.length > 0) {
+        displayPath = '/' + window.CURRENT_BREADCRUMBS.filter(b => b.path !== '/').map(b => b.name || b.id).join('/');
+    } else {
+        const raw = getCurrentPath();
+        displayPath = raw || '/';
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(displayPath).then(() => {
+            showToast(`📋 Copied path: ${displayPath}`);
+        }).catch(() => {
+            fallbackCopy(displayPath);
+        });
+    } else {
+        fallbackCopy(displayPath);
+    }
+
+    function fallbackCopy(text) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            showToast(`📋 Copied path: ${text}`);
+        } catch (err) {
+            showToast(`Path: ${text}`);
+        }
+        document.body.removeChild(ta);
+    }
+};
 
 // Drag & Drop Helpers for Items (Supports cross-window / browser-to-browser drag & drop)
 function handleItemDragStart(e) {
@@ -482,6 +562,14 @@ function getItemProvenance(item) {
         const dateStr = formatDate(item.upload_date);
         const owner = item.owner || 'Admin';
         const tags = Array.isArray(item.tags) ? item.tags : [];
+        const folderHasSize = typeof item.size === 'number' && item.size > 0;
+        const folderItemCount = (item.file_count || 0);
+        const folderSize = folderHasSize 
+            ? convertBytes(item.size) 
+            : (folderItemCount > 0 ? `${folderItemCount} item${folderItemCount === 1 ? '' : 's'}` : '0 B');
+        const folderTooltip = folderHasSize
+            ? `${(item.size || 0).toLocaleString()} bytes (${folderItemCount} file${folderItemCount === 1 ? '' : 's'})`
+            : `${folderItemCount} file${folderItemCount === 1 ? '' : 's'}`;
 
         const isSearch = getCurrentPath().startsWith('/search_');
         const prov = getItemProvenance(item);
@@ -511,7 +599,7 @@ function getItemProvenance(item) {
                 <td class="col-type-td"><div class="td-align"><span class="type-pill pill-folder">Folder</span></div></td>
                 <td class="col-owner-td"><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
                 <td class="col-date-td"><div class="td-align date-text">${dateStr}</div></td>
-                <td class="col-size-td"><div class="td-align size-text">--</div></td>
+                <td class="col-size-td"><div class="td-align size-text" title="${folderTooltip}">${folderSize}</div></td>
                 <td class="col-more-td">
                     <div class="td-align td-actions">
                         <a data-id="${item.id}" class="more-btn" title="More actions"><img src="static/assets/more-icon.svg"></a>
@@ -535,6 +623,7 @@ function getItemProvenance(item) {
                 <img class="item-icon-img" src="static/assets/folder-solid-icon.svg">
                 <div style="min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden;flex:1;">
                     <span class="gd-folder-chip-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                    <span class="gd-folder-chip-size" title="${folderTooltip}">${folderSize}</span>
                     ${isSearch ? `
                     <div class="gd-search-path-subline" style="margin-top:0;">
                         ${prov.badge}
@@ -557,6 +646,7 @@ function getItemProvenance(item) {
     // 2. Render Files
     for (const [key, item] of files) {
         const size = convertBytes(item.size);
+        const sizeTooltip = `${(item.size || 0).toLocaleString()} bytes`;
         const badge = getFileBadge(item);
         const dateStr = formatDate(item.upload_date);
         const category = item.category || 'File';
@@ -591,7 +681,7 @@ function getItemProvenance(item) {
                 <td class="col-type-td"><div class="td-align"><span class="type-pill">${category}</span></div></td>
                 <td class="col-owner-td"><div class="td-align"><span class="owner-pill">${escapeHtml(owner)}</span></div></td>
                 <td class="col-date-td"><div class="td-align date-text">${dateStr}</div></td>
-                <td class="col-size-td"><div class="td-align size-text">${size}</div></td>
+                <td class="col-size-td"><div class="td-align size-text" title="${sizeTooltip}">${size}</div></td>
                 <td class="col-more-td">
                     <div class="td-align td-actions">
                         <a data-id="${item.id}" class="more-btn" title="More actions"><img src="static/assets/more-icon.svg"></a>
@@ -803,9 +893,21 @@ function selectItem(id) {
     const propTypeEl = document.getElementById('insp-prop-type');
     if (propTypeEl) propTypeEl.innerText = item.category || (isFolder ? 'Folder' : 'File');
     const propSizeEl = document.getElementById('insp-prop-size');
-    if (propSizeEl) propSizeEl.innerText = isFolder ? '--' : `${convertBytes(item.size)} (${(item.size || 0).toLocaleString()} bytes)`;
+    if (propSizeEl) {
+        if (isFolder) {
+            const fSize = item.size || 0;
+            const fCount = item.file_count || 0;
+            propSizeEl.innerText = `${convertBytes(fSize)} (${fSize.toLocaleString()} bytes • ${fCount} file${fCount === 1 ? '' : 's'})`;
+        } else {
+            propSizeEl.innerText = `${convertBytes(item.size)} (${(item.size || 0).toLocaleString()} bytes)`;
+        }
+    }
     const propStorageEl = document.getElementById('insp-prop-storage');
-    if (propStorageEl) propStorageEl.innerText = isFolder ? '0 bytes (virtual)' : convertBytes(item.size);
+    if (propStorageEl) {
+        propStorageEl.innerText = isFolder 
+            ? ((item.size || 0) > 0 ? convertBytes(item.size) : '0 bytes (virtual)') 
+            : convertBytes(item.size);
+    }
     const propLocationEl = document.getElementById('insp-prop-location');
     if (propLocationEl) propLocationEl.innerText = readableLocation;
     const propOwnerEl = document.getElementById('insp-prop-owner');
@@ -869,7 +971,7 @@ function copyPreviewText() {
 // Multi-Select & Bulk Actions State Management
 window.SELECTED_ITEMS = new Map();
 window.LAST_SELECTED_ID = null;
-window.CURRENT_SORT = { key: 'date', order: 'desc' };
+window.CURRENT_SORT = { key: 'name', order: 'asc' };
 window.CURRENT_FILTER = 'all';
 
 function setDirectorySort(key, order) {
@@ -2074,7 +2176,7 @@ function renderCommandPaletteResults(query) {
                     id: `item-${id}`,
                     label: item.name,
                     icon: item.type === 'folder' ? '📁' : '📄',
-                    subtext: item.type === 'folder' ? 'Folder' : convertBytes(item.size),
+                    subtext: item.type === 'folder' ? ((item.size && item.size > 0) ? `Folder • ${convertBytes(item.size)}` : 'Folder') : convertBytes(item.size),
                     action: () => {
                         if (item.type === 'folder') {
                             navigateToPath((item.path + '/' + item.id).replaceAll('//', '/'));

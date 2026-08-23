@@ -44,6 +44,36 @@ def get_file_details(file_name: str):
     return mime_type, category, ext, icon
 
 
+def compute_folder_stats(folder):
+    """Recursively computes total size (bytes), file count, and subfolder count for a folder."""
+    total_size = 0
+    file_count = 0
+    folder_count = 0
+    contents = getattr(folder, "contents", None)
+    if contents is None and isinstance(folder, dict):
+        contents = folder.get("contents")
+    if isinstance(contents, dict):
+        for child in contents.values():
+            is_trash = getattr(child, "trash", False) if not isinstance(child, dict) else child.get("trash", False)
+            if is_trash:
+                continue
+            ctype = getattr(child, "type", "") if not isinstance(child, dict) else child.get("type", "")
+            if ctype == "file":
+                csize = getattr(child, "size", 0) if not isinstance(child, dict) else child.get("size", 0)
+                try:
+                    total_size += int(csize or 0)
+                except (ValueError, TypeError):
+                    pass
+                file_count += 1
+            elif ctype == "folder":
+                folder_count += 1
+                sub_size, sub_files, sub_folders = compute_folder_stats(child)
+                total_size += sub_size
+                file_count += sub_files
+                folder_count += sub_folders
+    return total_size, file_count, folder_count
+
+
 def convert_class_to_dict(data, isObject, showtrash=False):
     if isObject == True:
         data = data.__dict__.copy()
@@ -54,10 +84,14 @@ def convert_class_to_dict(data, isObject, showtrash=False):
         if item.trash == showtrash:
             if item.type == "folder":
                 folder = item
+                f_size, f_files, f_folders = compute_folder_stats(folder)
                 new_data["contents"][key] = {
                     "name": folder.name,
                     "type": folder.type,
                     "id": folder.id,
+                    "size": f_size,
+                    "file_count": f_files,
+                    "folder_count": f_folders,
                     "path": folder.path,
                     "display_path": getattr(folder, "display_path", folder.path),
                     "human_path": getattr(folder, "human_path", getattr(folder, "display_path", folder.path)),

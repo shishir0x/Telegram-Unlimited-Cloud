@@ -54,9 +54,13 @@ function openMobileBottomSheet(id) {
     if (bsIcon) bsIcon.innerText = (typeof getBigIconEmoji === 'function') ? getBigIconEmoji(item) : (isFolder ? '📁' : '📄');
     if (bsTitle) bsTitle.innerText = item.name;
     if (bsSubtitle) {
-        bsSubtitle.innerText = isFolder 
-            ? 'Folder' 
-            : `${(typeof convertBytes === 'function') ? convertBytes(item.size) : ''} • ${item.upload_date || ''}`;
+        if (isFolder) {
+            const fSize = (typeof convertBytes === 'function' && typeof item.size === 'number' && item.size > 0) ? convertBytes(item.size) : 'Folder';
+            const fCount = item.file_count ? ` • ${item.file_count} item${item.file_count === 1 ? '' : 's'}` : '';
+            bsSubtitle.innerText = `${fSize}${fCount}`;
+        } else {
+            bsSubtitle.innerText = `${(typeof convertBytes === 'function') ? convertBytes(item.size) : ''} • ${item.upload_date || ''}`;
+        }
     }
 
     let actionsHtml = '';
