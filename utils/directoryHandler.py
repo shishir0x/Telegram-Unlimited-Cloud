@@ -1311,9 +1311,13 @@ async def auto_sync_telegram_loop():
             await asyncio.sleep(15)
 
 
+# Track which client authored the Telegram backup message to prevent MESSAGE_AUTHOR_REQUIRED errors
+_BACKUP_AUTHOR_CLIENT_ID = None
+
+
 # Function to backup the drive data to telegram
 async def backup_drive_data(loop=True):
-    global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID
+    global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID, _BACKUP_AUTHOR_CLIENT_ID
     logger.info("Starting backup drive data task.")
 
     while True:
@@ -1333,14 +1337,22 @@ async def backup_drive_data(loop=True):
                 continue
 
             logger.info("Backing up drive data to Telegram.")
-            from utils.clients import get_client
+            from utils.clients import multi_clients, premium_clients
 
-            client = get_client()
-            if not client:
+            # Build candidate list: prioritize known author client, otherwise test all active clients
+            all_active = {**multi_clients, **premium_clients}
+            if not all_active:
                 if not loop:
                     break
                 await asyncio.sleep(5)
                 continue
+
+            client_candidates = []
+            if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
+                client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
+            for cid, cl in all_active.items():
+                if cid != _BACKUP_AUTHOR_CLIENT_ID:
+                    client_candidates.append((cid, cl))
 
             time_text = f"📅 **Last Updated :** {get_current_utc_time()} (UTC +00:00)"
             caption = (
@@ -1350,11 +1362,28 @@ async def backup_drive_data(loop=True):
             )
 
             media_doc = InputMediaDocument(str(drive_cache_path.resolve()), caption=caption)
-            msg = await client.edit_message_media(
-                config.STORAGE_CHANNEL,
-                config.DATABASE_BACKUP_MSG_ID,
-                media=media_doc,
-            )
+            msg = None
+            last_author_err = None
+
+            for cid, candidate_client in client_candidates:
+                try:
+                    msg = await candidate_client.edit_message_media(
+                        config.STORAGE_CHANNEL,
+                        config.DATABASE_BACKUP_MSG_ID,
+                        media=media_doc,
+                    )
+                    _BACKUP_AUTHOR_CLIENT_ID = cid
+                    break
+                except Exception as edit_err:
+                    if "MESSAGE_AUTHOR_REQUIRED" in str(edit_err):
+                        last_author_err = edit_err
+                        continue
+                    raise edit_err
+
+            if not msg:
+                if last_author_err:
+                    raise last_author_err
+                raise RuntimeError("Failed to edit Telegram backup message with any connected client.")
 
             if msg and msg.document:
                 LAST_REMOTE_BACKUP_FILE_ID = msg.document.file_id

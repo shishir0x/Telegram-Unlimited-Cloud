@@ -46,13 +46,19 @@ async def initialize_clients():
                 )
                 client.loop = asyncio.get_running_loop()
                 await client.start()
-                try:
-                    await client.send_message(
-                        config.STORAGE_CHANNEL,
-                        f"Started - {client_type.title()} Client {client_id}",
-                    )
-                except Exception:
-                    pass
+
+                # Verify storage channel access and admin status
+                if config.STORAGE_CHANNEL:
+                    try:
+                        me = await client.get_me()
+                        chat = await client.get_chat(config.STORAGE_CHANNEL)
+                        logger.info(f"✅ Bot Client {client_id} (@{me.username or me.id}) has access to storage channel '{chat.title or config.STORAGE_CHANNEL}'.")
+                    except Exception as ch_err:
+                        logger.warning(
+                            f"⚠️ Bot Client {client_id} cannot access STORAGE_CHANNEL ({config.STORAGE_CHANNEL}): {ch_err}. "
+                            f"Ensure this bot is added to the channel as an Administrator with 'Post Messages' permission."
+                        )
+
                 multi_clients[client_id] = client
                 work_loads[client_id] = 0
             elif client_type == "user":
@@ -67,13 +73,14 @@ async def initialize_clients():
                     workers=16,
                     no_updates=True,
                 ).start()
-                try:
-                    await client.send_message(
-                        config.STORAGE_CHANNEL,
-                        f"Started - {client_type.title()} Client {client_id}",
-                    )
-                except Exception:
-                    pass
+
+                if config.STORAGE_CHANNEL:
+                    try:
+                        chat = await client.get_chat(config.STORAGE_CHANNEL)
+                        logger.info(f"✅ User Client {client_id} has access to storage channel '{chat.title or config.STORAGE_CHANNEL}'.")
+                    except Exception as ch_err:
+                        logger.warning(f"⚠️ User Client {client_id} cannot access STORAGE_CHANNEL ({config.STORAGE_CHANNEL}): {ch_err}.")
+
                 premium_clients[client_id] = client
                 premium_work_loads[client_id] = 0
 
