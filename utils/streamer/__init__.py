@@ -18,15 +18,38 @@ async def media_streamer(channel: int, message_id: int, file_name: str, request)
 
     range_header = request.headers.get("Range", 0)
 
-    faster_client = get_client()
+    from utils.clients import multi_clients, premium_clients
 
-    if faster_client in class_cache:
-        tg_connect = class_cache[faster_client]
-    else:
-        tg_connect = ByteStreamer(faster_client)
-        class_cache[faster_client] = tg_connect
+    # Try preferred client, falling back across all connected clients
+    primary_client = get_client()
+    client_candidates = [primary_client]
+    for c in list(multi_clients.values()) + list(premium_clients.values()):
+        if c not in client_candidates:
+            client_candidates.append(c)
 
-    file_id = await tg_connect.get_file_properties(channel, message_id)
+    file_id = None
+    tg_connect = None
+    last_err = None
+
+    for client in client_candidates:
+        try:
+            if client in class_cache:
+                current_streamer = class_cache[client]
+            else:
+                current_streamer = ByteStreamer(client)
+                class_cache[client] = current_streamer
+
+            file_id = await current_streamer.get_file_properties(channel, message_id)
+            tg_connect = current_streamer
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if not tg_connect or not file_id:
+        logger.error(f"Failed to retrieve file properties for message {message_id} in channel {channel}: {last_err}")
+        raise Exception("FileNotFound")
+
     file_size = file_id.file_size
 
     if range_header:
