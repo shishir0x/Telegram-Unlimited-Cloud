@@ -285,10 +285,26 @@ def create_pending_otp() -> str:
     return otp
 
 
+SECURE_COOKIES_ENV: str = os.getenv("SECURE_COOKIES", "").strip().lower()
+
+
+def is_secure_cookie(request: Request) -> bool:
+    """
+    Determines if session cookies should have the Secure attribute.
+    Respects explicit SECURE_COOKIES environment variable, request.url.is_secure,
+    and X-Forwarded-Proto header from reverse proxies.
+    """
+    if SECURE_COOKIES_ENV in ("true", "1", "yes"):
+        return True
+    if SECURE_COOKIES_ENV in ("false", "0", "no"):
+        return False
+    return request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
+
+
 def verify_otp(submitted_otp: str) -> bool:
     """
     Validates the submitted OTP against the stored hash.
-    Increments attempt counter. Deletes OTP on success (single-use).
+    Increments attempt counter. Deletes OTP on success (single-use) or on lockout.
     Returns True on success, False on failure.
     """
     pending = _PENDING_OTPS.get("admin")
@@ -296,19 +312,22 @@ def verify_otp(submitted_otp: str) -> bool:
         return False
 
     if pending.is_expired:
-        del _PENDING_OTPS["admin"]
+        _PENDING_OTPS.pop("admin", None)
         return False
 
     if pending.is_locked:
+        _PENDING_OTPS.pop("admin", None)
         return False
 
     pending.attempts += 1
 
     if not secrets.compare_digest(pending.otp_hash, _hash_otp(submitted_otp)):
+        if pending.is_locked:
+            _PENDING_OTPS.pop("admin", None)
         return False
 
     # OTP correct — consume it (single-use)
-    del _PENDING_OTPS["admin"]
+    _PENDING_OTPS.pop("admin", None)
     return True
 
 
@@ -362,12 +381,17 @@ def _load_sessions_from_disk() -> None:
 _load_sessions_from_disk()
 
 
-def create_session(ip: str = "unknown") -> str:
+def create_session(ip: str = "unknown", previous_token: Optional[str] = None) -> str:
     """
     Create a new session bound to client IP.
+    Rotates session by invalidating previous_token if provided.
     Prunes expired sessions, persists to disk and returns the new session token.
     Allows multi-device logins (e.g. PC + Mobile) simultaneously.
     """
+    # Invalidate previous session token on re-login / rotation
+    if previous_token and previous_token in _SESSIONS:
+        _SESSIONS.pop(previous_token, None)
+
     # Evict expired sessions first
     expired = [tok for tok, s in _SESSIONS.items() if s.is_expired]
     for tok in expired:

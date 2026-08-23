@@ -868,8 +868,7 @@ function getItemProvenance(item) {
         const isMedia = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic', 'tiff', 'mp4', 'mkv', 'webm', 'mov', 'avi', '3gp'].includes(ext);
         const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
         const authParam = new URLSearchParams(window.location.search).get('auth');
-        const pwd = localStorage.getItem('password') || '';
-        const thumbUrl = `/thumbnail?path=${encodeURIComponent(filePath)}${authParam ? `&auth=${encodeURIComponent(authParam)}` : ''}${pwd ? `&password=${encodeURIComponent(pwd)}` : ''}`;
+        const thumbUrl = `/thumbnail?path=${encodeURIComponent(filePath)}${authParam ? `&auth=${encodeURIComponent(authParam)}` : ''}`;
 
         let previewInnerHtml = '';
         if (isMedia) {

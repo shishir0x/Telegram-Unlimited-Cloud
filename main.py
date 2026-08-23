@@ -604,8 +604,10 @@ async def api_check_password(request: Request):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     client_ip = get_client_ip(request)
-    token = create_session(ip=client_ip)
-    is_https = request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
+    old_token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = create_session(ip=client_ip, previous_token=old_token)
+    from utils.auth import is_secure_cookie
+    is_https = is_secure_cookie(request)
 
     resp = JSONResponse({"status": "ok", "token": token})
     resp.set_cookie(
@@ -615,6 +617,7 @@ async def api_check_password(request: Request):
         max_age=SESSION_TTL_SECONDS,
         secure=is_https,
         samesite="lax",
+        path="/",
     )
     return resp
 
@@ -689,7 +692,7 @@ async def api_login(request: Request):
         return JSONResponse({"status": "otp_sent", "message": msg_text})
 
     # Dev/fallback mode: log code to console
-    logger.warning(f"[CONSOLE OTP] Verification code for {submitted_email}: {otp}")
+    logger.warning(f"[CONSOLE OTP] Verification code generated for {submitted_email}")
     return JSONResponse({"status": "otp_sent", "message": "Verification code generated."})
 
 
@@ -730,10 +733,12 @@ async def api_verify_otp(request: Request):
             status_code=401,
         )
 
-    # OTP verified — create session bound to client IP
+    # OTP verified — create session bound to client IP with rotation
     client_ip = get_client_ip(request)
-    token = create_session(ip=client_ip)
-    is_https = request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
+    old_token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = create_session(ip=client_ip, previous_token=old_token)
+    from utils.auth import is_secure_cookie
+    is_https = is_secure_cookie(request)
     
     resp = JSONResponse({"status": "ok"})
     resp.set_cookie(
@@ -741,11 +746,11 @@ async def api_verify_otp(request: Request):
         value=token,
         httponly=True,
         samesite="lax",
-        secure=is_https,  # False on local HTTP (http://192.168.1.2:8000) so mobile browsers store the cookie; True on HTTPS
+        secure=is_https,
         max_age=SESSION_TTL_SECONDS,
+        path="/",
     )
     return resp
-
 
 
 @app.post("/api/logout")
@@ -756,10 +761,12 @@ async def api_logout(request: Request):
     else:
         invalidate_all_sessions()
 
-    is_https = request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
+    from utils.auth import is_secure_cookie
+    is_https = is_secure_cookie(request)
     resp = JSONResponse({"status": "ok"})
     resp.delete_cookie(
         key=SESSION_COOKIE_NAME,
+        path="/",
         httponly=True,
         samesite="lax",
         secure=is_https,

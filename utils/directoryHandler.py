@@ -5,6 +5,7 @@ import config, dill
 import shutil
 import hashlib
 import json
+import secrets
 from pyrogram.types import InputMediaDocument, Message
 import os, random, string, asyncio
 from utils.logger import Logger
@@ -308,11 +309,13 @@ class NewDriveData:
                         logger.warning(f"Folder '{p}' not found in '{clean_path}'.")
                         return None
 
-                if auth and hasattr(folder_data, "auth_hashes") and auth in folder_data.auth_hashes:
-                    auth_success = True
-                    auth_home_path = (
-                        "/" + folder_data.path.strip("/") + "/" + folder_data.id
-                    ).replace("//", "/")
+                if auth and hasattr(folder_data, "auth_hashes") and folder_data.auth_hashes:
+                    auth_str = str(auth)
+                    if any(secrets.compare_digest(auth_str, str(h)) for h in folder_data.auth_hashes):
+                        auth_success = True
+                        auth_home_path = (
+                            "/" + folder_data.path.strip("/") + "/" + folder_data.id
+                        ).replace("//", "/")
 
         if not is_admin and not auth_success:
             logger.warning(f"Unauthorized access attempt to path '{clean_path}'.")
