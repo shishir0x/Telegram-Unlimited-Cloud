@@ -195,19 +195,6 @@ function convertBytes(bytes) {
     }
 }
 
-const INPUTS = {}
-
-function validateInput(event) {
-    console.log('Validating Input')
-    const pattern = /^[a-zA-Z0-9 \-_\\[\]()@#!$%*+={}:;<>,.?/|\\~`]*$/;;
-    const input = event.target;
-    if (!pattern.test(input.value)) {
-        input.value = INPUTS[input.id]
-    } else {
-        INPUTS[input.id] = input.value
-    }
-}
-
 function getRootUrl() {
     const url = new URL(window.location.href);
     const protocol = url.protocol; // Get the protocol, e.g., "https:"
@@ -251,12 +238,6 @@ function fallbackCopyTextToClipboard(text) {
     }
 
     document.body.removeChild(textArea);
-}
-
-// getPassword: legacy stub — password is no longer stored in localStorage.
-// Auth is now handled via server-side HttpOnly session cookies.
-function getPassword() {
-    return null;
 }
 
 function getRandomId() {

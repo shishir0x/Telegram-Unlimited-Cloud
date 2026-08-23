@@ -17,7 +17,7 @@ from utils.auth import (
     Session,
     create_session,
     invalidate_session,
-    invalidate_all_sessions,
+    validate_session,
     create_pending_otp,
     verify_otp,
     get_otp_status,
@@ -181,13 +181,25 @@ async def static_files(file_path):
             content = f.read()
             content = content.replace("MAX_FILE_SIZE__SDGJDG", str(MAX_FILE_SIZE))
         return Response(content=content, media_type="application/javascript")
-    return FileResponse(f"website/static/{file_path}")
+
+    # Path traversal shield: resolved target must remain inside website/static
+    webroot = Path("website/static").resolve()
+    try:
+        target = (webroot / file_path).resolve()
+        if not str(target).startswith(str(webroot)):
+            raise HTTPException(status_code=404, detail="Not found")
+    except (ValueError, OSError):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return FileResponse(target)
 
 
 
 @app.get("/file")
 async def dl_file(request: Request):
     from utils.directoryHandler import ensure_drive_data
+    from utils.auth import rate_limit_public_media
+    rate_limit_public_media(request, "public_file", 120, 60)
     drive = ensure_drive_data()
 
     path = request.query_params.get("path")
@@ -237,6 +249,9 @@ async def download_zip(request: Request):
     is_admin = is_admin_authenticated(request)
     auth = request.query_params.get("auth")
 
+    from utils.auth import rate_limit_public_media
+    rate_limit_public_media(request, "public_zip", 60, 60)
+
     raw_path = request.query_params.get("path")
     raw_paths = request.query_params.get("paths")
 
@@ -251,6 +266,19 @@ async def download_zip(request: Request):
 
     if not is_admin and not auth:
         raise HTTPException(status_code=401, detail="Unauthorized access")
+
+    # Non-admin share visitors may only zip paths inside the shared scope:
+    # every target must resolve either as an authorized folder or live in one.
+    if not is_admin:
+        for target in target_paths:
+            clean_target = sanitize_path(str(target).replace("/share_", "").replace("share_", "").strip("/"))
+            res = drive.get_directory(clean_target, is_admin=False, auth=auth)
+            if res:
+                continue
+            segments = [s for s in clean_target.strip("/").split("/") if s]
+            parent_path = "/" + "/".join(segments[:-1]) if len(segments) > 1 else "/"
+            if not drive.get_directory(parent_path, is_admin=False, auth=auth):
+                raise HTTPException(status_code=401, detail="Unauthorized access")
 
     custom_name = request.query_params.get("name")
     default_name, items = drive.collect_items_for_zip(target_paths)
@@ -310,47 +338,6 @@ async def api_download_zip(request: Request, _auth: Session = Depends(require_au
     })
 
 
-@app.post("/api/search")
-async def api_search(request: Request, _auth: Session = Depends(require_auth)):
-    """
-    Deep search across all directories or scoped to current folder.
-    """
-    from utils.directoryHandler import ensure_drive_data
-    drive = ensure_drive_data()
-
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-
-    query = str(data.get("query", "")).strip()
-    search_root = str(data.get("path", "/")).strip() or "/"
-
-    if not query:
-        return JSONResponse({"status": "ok", "data": {"contents": {}}, "query": ""})
-
-    search_raw = drive.search_file_folder(query, search_root)
-    search_data = {"contents": search_raw}
-    folder_data = convert_class_to_dict(search_data, isObject=False, showtrash=False)
-
-    total_files, total_bytes = drive.get_drive_stats()
-    breadcrumbs = [
-        {"name": "My Drive", "path": "/", "id": "root"},
-        {"name": f'Search: "{query}"', "path": f"/search_{urllib.parse.quote(query)}", "id": "search"}
-    ]
-
-    return JSONResponse({
-        "status": "ok",
-        "query": query,
-        "data": folder_data,
-        "breadcrumbs": breadcrumbs,
-        "stats": {
-            "total_files": total_files,
-            "total_bytes": total_bytes
-        }
-    })
-
-
 # =========================================================
 # Google-Grade Thumbnail & Media Optimization Service
 # =========================================================
@@ -363,29 +350,6 @@ try:
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
-
-def generate_pillow_thumbnail(input_data: str | Path | io.BytesIO | bytes, output_path: str | Path, max_size=(320, 320)) -> bytes | None:
-    """Safely converts any image format to a lightweight ~10KB JPEG thumbnail."""
-    if not PIL_AVAILABLE:
-        return None
-    try:
-        if isinstance(input_data, bytes):
-            stream = io.BytesIO(input_data)
-        elif isinstance(input_data, io.BytesIO):
-            stream = input_data
-        else:
-            stream = str(input_data)
-        with Image.open(stream) as img:
-            img = img.convert("RGB")
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=75, optimize=True)
-            data = buf.getvalue()
-            Path(output_path).write_bytes(data)
-            return data
-    except Exception as e:
-        logger.warning(f"Pillow thumbnail conversion failed: {e}")
-        return None
 
 
 class ThumbnailService:
@@ -531,6 +495,8 @@ THUMB_SERVICE = ThumbnailService(max_ram_items=300, max_disk_mb=50)
 @app.get("/thumbnail")
 async def get_thumbnail(request: Request):
     from utils.directoryHandler import ensure_drive_data
+    from utils.auth import rate_limit_public_media
+    rate_limit_public_media(request, "public_thumbnail", 600, 60)
     drive = ensure_drive_data()
 
     path = request.query_params.get("path")
@@ -625,8 +591,13 @@ async def api_check_password(request: Request):
 @app.post("/api/login")
 async def api_login(request: Request):
     """
-    Step 1 of 2: Verify email + password. On success, generate and email an OTP.
-    Does NOT create a session — the session is only created after OTP verification.
+    Step 1 of web authentication.
+
+    - ADMIN_EMAIL configured (recommended): verify email + password, then send a
+      single-use OTP via Email/Telegram. Session is created only at /api/verifyOtp.
+    - ADMIN_EMAIL not configured: fall back to password-only login and create the
+      session immediately. This matches the trust level of /api/checkPassword
+      (used by the CLI) and prevents permanent lockout on fresh deployments.
     """
     rate_limit_login(request)
 
@@ -638,62 +609,89 @@ async def api_login(request: Request):
     submitted_email = (data.get("email") or "").strip().lower()
     submitted_password = data.get("password") or data.get("pass") or ""
 
-    # Validate both fields together to avoid email enumeration
-    email_ok = bool(ADMIN_EMAIL) and secrets.compare_digest(
-        submitted_email.encode(), ADMIN_EMAIL.strip().lower().encode()
-    )
-    password_ok = bool(ADMIN_PASSWORD) and verify_password(str(submitted_password), str(ADMIN_PASSWORD))
+    if bool(ADMIN_EMAIL):
+        # ---- Two-factor mode: email + password -> OTP ----
+        # Validate both fields together to avoid email enumeration
+        email_ok = secrets.compare_digest(
+            submitted_email.encode(), ADMIN_EMAIL.strip().lower().encode()
+        )
+        password_ok = bool(ADMIN_PASSWORD) and verify_password(str(submitted_password), str(ADMIN_PASSWORD))
 
-    if not (email_ok and password_ok):
-        # Uniform delay to prevent timing-based enumeration
+        if not (email_ok and password_ok):
+            # Uniform delay to prevent timing-based enumeration
+            await asyncio.sleep(0.5)
+            return JSONResponse({"status": "Invalid email or password"}, status_code=401)
+
+        # Credentials correct — generate and send OTP
+        otp_state = get_otp_status()
+        if otp_state["pending"] and not otp_state.get("can_resend", True):
+            return JSONResponse(
+                {"status": "Please wait before requesting a new code."},
+                status_code=429,
+            )
+
+        otp = create_pending_otp()
+        delivery_channels = []
+
+        # 1. Deliver OTP via Telegram Bot directly to STORAGE_CHANNEL
+        try:
+            from utils.clients import multi_clients
+            bot_client = multi_clients.get(1) or (list(multi_clients.values())[0] if multi_clients else None)
+            if bot_client and STORAGE_CHANNEL:
+                otp_msg = (
+                    f"🔐 **TG Drive Verification Code**\n\n"
+                    f"Your 6-digit login code is:\n`{otp}`\n\n"
+                    f"⏱️ Expires in **5 minutes** (single-use).\n"
+                    f"Requested for: `{submitted_email}`"
+                )
+                await bot_client.send_message(int(STORAGE_CHANNEL), otp_msg)
+                delivery_channels.append("Telegram Channel")
+                logger.info(f"OTP verification code sent to Telegram Storage Channel ({STORAGE_CHANNEL})")
+        except Exception as te:
+            logger.warning(f"Telegram Bot OTP send failed: {te}")
+
+        # 2. Deliver OTP via Email (SMTP)
+        if email_service.is_configured:
+            try:
+                await email_service.send_otp(ADMIN_EMAIL, otp)
+                delivery_channels.append("Email")
+                logger.info("OTP verification code sent via Email")
+            except Exception as ee:
+                logger.warning(f"SMTP OTP delivery skipped/failed: {ee}")
+
+        # If at least one channel delivered the OTP:
+        if delivery_channels:
+            msg_text = f"Verification code sent to {' & '.join(delivery_channels)}."
+            return JSONResponse({"status": "otp_sent", "message": msg_text})
+
+        # Dev/fallback mode: log code to console
+        logger.warning("[CONSOLE OTP] Verification code generated (check server logs)")
+        return JSONResponse({"status": "otp_sent", "message": "Verification code generated."})
+
+    # ---- Single-factor mode: no ADMIN_EMAIL configured ----
+    password_ok = bool(ADMIN_PASSWORD) and verify_password(str(submitted_password), str(ADMIN_PASSWORD))
+    if not password_ok:
         await asyncio.sleep(0.5)
         return JSONResponse({"status": "Invalid email or password"}, status_code=401)
 
-    # Credentials correct — generate and send OTP
-    otp_state = get_otp_status()
-    if otp_state["pending"] and not otp_state.get("can_resend", True):
-        return JSONResponse(
-            {"status": "Please wait before requesting a new code."},
-            status_code=429,
-        )
+    logger.warning("ADMIN_EMAIL is not configured — issuing session from password alone. Set ADMIN_EMAIL to enable OTP two-factor login.")
 
-    otp = create_pending_otp()
-    delivery_channels = []
+    client_ip = get_client_ip(request)
+    old_token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = create_session(ip=client_ip, previous_token=old_token)
+    from utils.auth import is_secure_cookie
 
-    # 1. Deliver OTP via Telegram Bot directly to STORAGE_CHANNEL
-    try:
-        from utils.clients import multi_clients
-        bot_client = multi_clients.get(1) or (list(multi_clients.values())[0] if multi_clients else None)
-        if bot_client and STORAGE_CHANNEL:
-            otp_msg = (
-                f"🔐 **TG Drive Verification Code**\n\n"
-                f"Your 6-digit login code is:\n`{otp}`\n\n"
-                f"⏱️ Expires in **5 minutes** (single-use).\n"
-                f"Requested for: `{submitted_email}`"
-            )
-            await bot_client.send_message(int(STORAGE_CHANNEL), otp_msg)
-            delivery_channels.append("Telegram Channel")
-            logger.info(f"OTP verification code sent to Telegram Storage Channel ({STORAGE_CHANNEL})")
-    except Exception as te:
-        logger.warning(f"Telegram Bot OTP send failed: {te}")
-
-    # 2. Deliver OTP via Email (SMTP)
-    if email_service.is_configured:
-        try:
-            await email_service.send_otp(ADMIN_EMAIL, otp)
-            delivery_channels.append("Email")
-            logger.info("OTP verification code sent via Email")
-        except Exception as ee:
-            logger.warning(f"SMTP OTP delivery skipped/failed: {ee}")
-
-    # If at least one channel delivered the OTP:
-    if delivery_channels:
-        msg_text = f"Verification code sent to {' & '.join(delivery_channels)}."
-        return JSONResponse({"status": "otp_sent", "message": msg_text})
-
-    # Dev/fallback mode: log code to console
-    logger.warning(f"[CONSOLE OTP] Verification code generated for {submitted_email}")
-    return JSONResponse({"status": "otp_sent", "message": "Verification code generated."})
+    resp = JSONResponse({"status": "ok", "mode": "password_only"})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        max_age=SESSION_TTL_SECONDS,
+        secure=is_secure_cookie(request),
+        samesite="lax",
+        path="/",
+    )
+    return resp
 
 
 @app.post("/api/verifyOtp")
@@ -756,10 +754,14 @@ async def api_verify_otp(request: Request):
 @app.post("/api/logout")
 async def api_logout(request: Request):
     token = request.cookies.get(SESSION_COOKIE_NAME)
-    if token:
+    if token and validate_session(token, ip=get_client_ip(request)) is not None:
+        # Valid session presented -> destroy it
         invalidate_session(token)
-    else:
-        invalidate_all_sessions()
+    elif not token:
+        # No cookie at all: clear the browser cookie but do NOT destroy server-side
+        # sessions. This prevents cross-site "logout CSRF" from killing the admin's
+        # active sessions via a cookieless forged POST.
+        pass
 
     from utils.auth import is_secure_cookie
     is_https = is_secure_cookie(request)
@@ -1015,18 +1017,26 @@ async def upload_file(
 
     file_size = 0
 
-    async with aiofiles.open(file_location, "wb") as buffer:
-        while chunk := await file.read(1024 * 1024):  # Read file in chunks of 1MB
-            SAVE_PROGRESS[safe_id] = ("running", file_size, total_size)
-            file_size += len(chunk)
-            if file_size > MAX_FILE_SIZE:
-                await buffer.close()
-                file_location.unlink(missing_ok=True)  # Delete partially written file
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"File size exceeds {MAX_FILE_SIZE} bytes limit",
-                )
-            await buffer.write(chunk)
+    try:
+        async with aiofiles.open(file_location, "wb") as buffer:
+            while chunk := await file.read(1024 * 1024):  # Read file in chunks of 1MB
+                SAVE_PROGRESS[safe_id] = ("running", file_size, total_size)
+                file_size += len(chunk)
+                if file_size > MAX_FILE_SIZE:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"File size exceeds {MAX_FILE_SIZE} bytes limit",
+                    )
+                await buffer.write(chunk)
+    except HTTPException:
+        SAVE_PROGRESS[safe_id] = ("error", file_size, total_size)
+        file_location.unlink(missing_ok=True)  # Delete partially written file
+        raise
+    except Exception as write_err:
+        SAVE_PROGRESS[safe_id] = ("error", file_size, total_size)
+        file_location.unlink(missing_ok=True)
+        logger.error(f"Upload {safe_id} failed while streaming to disk: {write_err}")
+        raise HTTPException(status_code=500, detail="Failed to store uploaded file")
 
     SAVE_PROGRESS[safe_id] = ("completed", file_size, file_size)
 
@@ -1076,7 +1086,7 @@ async def get_active_uploads(request: Request, _auth: Session = Depends(require_
         current = prog[1]
         total = prog[2]
         filename = prog[3] if len(prog) > 3 else "File"
-        if status == "running":
+        if status in ("running", "waiting"):
             active.append({
                 "id": upload_id,
                 "status": status,
@@ -1095,9 +1105,13 @@ async def cancel_upload(request: Request, _auth: Session = Depends(require_auth)
 
     data = await request.json()
 
-    logger.info(f"cancelUpload id={data.get('id')}")
-    STOP_TRANSMISSION.append(data["id"])
-    STOP_DOWNLOAD.append(data["id"])
+    upload_id = str(data.get("id") or "").strip()
+    if not upload_id:
+        return JSONResponse({"status": "Upload id is required"}, status_code=400)
+
+    logger.info(f"cancelUpload id={upload_id}")
+    STOP_TRANSMISSION.append(upload_id)
+    STOP_DOWNLOAD.append(upload_id)
     return JSONResponse({"status": "ok"})
 
 
@@ -1189,8 +1203,12 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
 
 @app.post("/api/search")
 async def api_search_drive(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Deep drive-wide search with multi-criteria filtering.
+    Accepts both frontend key aliases (type/location/date_range) and
+    engine-native keys (item_type/search_root/date_filter) for compatibility.
+    """
     from utils.directoryHandler import ensure_drive_data
-    from utils.extra import convert_class_to_dict
     drive = ensure_drive_data()
 
     try:
@@ -1199,11 +1217,13 @@ async def api_search_drive(request: Request, _auth: Session = Depends(require_au
         data = {}
 
     query = str(data.get("query", "")).strip()
-    search_root = data.get("search_root", "/") or "/"
-    item_type = data.get("item_type", "all") or "all"
+
+    # Resolve key aliases (frontend style takes precedence)
+    item_type = data.get("type") or data.get("item_type") or "all"
+    search_root = data.get("location") or data.get("search_root") or "/"
+    date_filter = data.get("date_range") or data.get("date_filter")
     min_size = data.get("min_size")
     max_size = data.get("max_size")
-    date_filter = data.get("date_filter")
     date_after = data.get("date_after")
     date_before = data.get("date_before")
     extension = data.get("extension")
@@ -1220,8 +1240,8 @@ async def api_search_drive(request: Request, _auth: Session = Depends(require_au
 
     raw_results = drive.search_file_folder(
         query=query,
-        search_root=search_root,
-        item_type=item_type,
+        search_root=str(search_root),
+        item_type=str(item_type),
         min_size=min_size,
         max_size=max_size,
         date_filter=date_filter,
@@ -1231,7 +1251,9 @@ async def api_search_drive(request: Request, _auth: Session = Depends(require_au
     )
 
     converted = convert_class_to_dict({"contents": raw_results}, isObject=False, showtrash=False)
-    breadcrumbs = [{"name": "Search Results", "path": f"/search_{urllib.parse.quote(query)}" if query else "/search"}]
+    breadcrumbs = [{"name": "My Drive", "path": "/", "id": "root"},
+                   {"name": "Search Results", "path": f"/search_{urllib.parse.quote(query)}" if query else "/search"}]
+    total_files, total_bytes = drive.get_drive_stats()
 
     return JSONResponse({
         "status": "ok",
@@ -1248,7 +1270,11 @@ async def api_search_drive(request: Request, _auth: Session = Depends(require_au
         },
         "count": len(converted.get("contents", {})),
         "data": converted,
-        "breadcrumbs": breadcrumbs
+        "breadcrumbs": breadcrumbs,
+        "stats": {
+            "total_files": total_files,
+            "total_bytes": total_bytes
+        }
     })
 
 
@@ -1304,30 +1330,38 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
 @app.post("/api/getFileInfoFromUrl")
 async def getFileInfoFromUrl(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
+    url = str(data.get("url") or "").strip()
+    if not url:
+        return JSONResponse({"status": "URL is required"}, status_code=400)
 
-    logger.info(f"getFileInfoFromUrl url={data.get('url')}")
+    logger.info(f"getFileInfoFromUrl url={url}")
     try:
-        file_info = await get_file_info_from_url(data["url"])
+        file_info = await get_file_info_from_url(url)
         return JSONResponse({"status": "ok", "data": file_info})
     except Exception as e:
-        return JSONResponse({"status": str(e)})
+        return JSONResponse({"status": str(e)}, status_code=400)
 
 
 @app.post("/api/startFileDownloadFromUrl")
 async def startFileDownloadFromUrl(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
+    url = str(data.get("url") or "").strip()
+    if not url:
+        return JSONResponse({"status": "URL is required"}, status_code=400)
+
     safe_path = sanitize_path(data.get("path", "/"))
     safe_name = sanitize_path(data.get("filename", "downloaded_file")).strip("/")
+    single_threaded = bool(data.get("singleThreaded", False))
 
     logger.info(f"startFileDownloadFromUrl filename={safe_name} path={safe_path}")
     try:
         id = getRandomID()
         asyncio.create_task(
-            download_file(data["url"], id, safe_path, safe_name, data["singleThreaded"])
+            download_file(url, id, safe_path, safe_name, single_threaded)
         )
         return JSONResponse({"status": "ok", "id": id})
     except Exception as e:
-        return JSONResponse({"status": str(e)})
+        return JSONResponse({"status": str(e)}, status_code=400)
 
 
 @app.post("/api/getFileDownloadProgress")
@@ -1403,7 +1437,7 @@ async def getSyncStatus(request: Request, _auth: Session = Depends(require_auth)
                     fsize = fpart.rsplit(" (", 1)[1].rstrip(")").strip()
                     reconstructed.append({
                         "name": fname,
-                        "path": SYNC_ENGINE_STATUS.get("current_path") or "/OnePlus_Nord_CE4/",
+                        "path": SYNC_ENGINE_STATUS.get("current_path") or "/",
                         "size": fsize,
                         "time": log.get("time", "")
                     })
@@ -1439,7 +1473,10 @@ async def updateSyncStatus(request: Request, _auth: Session = Depends(require_au
 
     # Handle pending queue update or item popping
     if "pending_queue" in status_update:
-        SYNC_ENGINE_STATUS["pending_queue"] = status_update.pop("pending_queue")
+        queue = status_update.pop("pending_queue")
+        if isinstance(queue, list):
+            # Cap memory: telemetry queues never need more than a rolling window
+            SYNC_ENGINE_STATUS["pending_queue"] = queue[:200]
     elif "current_item" in status_update and SYNC_ENGINE_STATUS["pending_queue"]:
         cur = status_update["current_item"]
         SYNC_ENGINE_STATUS["pending_queue"] = [
@@ -1469,7 +1506,7 @@ async def updateSyncStatus(request: Request, _auth: Session = Depends(require_au
                 if not SYNC_ENGINE_STATUS["completed_list"] or SYNC_ENGINE_STATUS["completed_list"][0].get("name") != fname:
                     SYNC_ENGINE_STATUS["completed_list"].insert(0, {
                         "name": fname,
-                        "path": SYNC_ENGINE_STATUS.get("current_path") or "/OnePlus_Nord_CE4/",
+                        "path": SYNC_ENGINE_STATUS.get("current_path") or "/",
                         "size": fsize,
                         "time": log_time
                     })

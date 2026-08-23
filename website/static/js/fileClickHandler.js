@@ -13,14 +13,6 @@ function openFolder() {
     navigateToPath(targetPath);
 }
 
-function openFile() {
-    const fileName = (this.getAttribute('data-name') || '').toLowerCase();
-    let filePath = (this.getAttribute('data-path') + '/' + this.getAttribute('data-id')).replaceAll('//', '/');
-    const isMedia = fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv');
-    const targetUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath, isMedia) : ('/file?path=' + encodeURIComponent(filePath));
-    window.open(targetUrl, '_blank');
-}
-
 // File More Button Handler Start
 function closeMobileBottomSheet() {
     const bs = document.getElementById('gd-bottom-sheet');
@@ -415,10 +407,6 @@ function closeMoreMenu(moreDiv) {
     }, 200);
 }
 
-function closeMoreBtnFocus() {
-    closeMoreMenu(this.parentElement);
-}
-
 // Rename File Folder Start
 function renameFileFolder() {
     const id = this.getAttribute('id').split('-')[1];
@@ -501,6 +489,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // Global Escape fallback: close the rename modal even when the input
+    // itself is not focused (previously it could stay stuck open).
+    // Uses the inline opacity flag (not computed style) because the CSS
+    // transition makes computed opacity unreliable during animation.
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && renameModal && renameModal.style.opacity === '1') {
+            e.stopPropagation();
+            closeRenameModal();
+        }
+    });
 });
 
 // Trash & Restore
@@ -719,6 +718,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const moveConfirm = document.getElementById('move-modal-confirm');
 
     if (moveCancel) moveCancel.onclick = closeMoveModal;
+
+    // Global Escape fallback: close the move modal even when no control inside
+    // it is focused (matches rename-modal behaviour).
+    document.addEventListener('keydown', (e) => {
+        const modal = document.getElementById('move-item-modal');
+        if (e.key === 'Escape' && modal && modal.style.opacity === '1') {
+            e.stopPropagation();
+            closeMoveModal();
+        }
+    });
 
     if (moveConfirm) {
         moveConfirm.onclick = async () => {

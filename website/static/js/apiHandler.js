@@ -85,6 +85,11 @@ function initAuthListeners() {
                     }
                     const otpInput = document.getElementById('auth-otp');
                     if (otpInput) { otpInput.value = ''; otpInput.focus(); }
+                } else if (json.status === 'ok') {
+                    // Single-factor mode (no ADMIN_EMAIL configured): session cookie
+                    // was already set by this response — enter the drive directly.
+                    hideLoginModal();
+                    getCurrentDirectory();
                 } else {
                     const msg = json.detail || json.status || 'Authentication failed.';
                     if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
@@ -624,11 +629,13 @@ async function updateSaveProgress(id, onComplete) {
     const statusEl = document.getElementById('upload-status');
     if (statusEl) statusEl.innerText = 'Status: Processing on server...';
 
+    let missedPolls = 0;
     const interval = setInterval(async () => {
         const response = await postJson('/api/getSaveProgress', { 'id': id });
         const data = response['data'];
 
         if (data && data[0] === 'running') {
+            missedPolls = 0;
             const current = data[1];
             const total = data[2];
             const sizeEl = document.getElementById('upload-filesize');
@@ -644,6 +651,15 @@ async function updateSaveProgress(id, onComplete) {
             if (progressBar) progressBar.style.width = '100%';
             await handleUpload2(id, onComplete);
         }
+        else {
+            // Terminal failure ('error') or progress entry lost server-side
+            missedPolls++;
+            if ((data && data[0] === 'error') || missedPolls > 10) {
+                clearInterval(interval);
+                showToast('❌ Server processing failed for the current upload');
+                if (typeof processUploadQueue === 'function') processUploadQueue();
+            }
+        }
     }, 2000);
 }
 
@@ -653,11 +669,13 @@ async function handleUpload2(id, onComplete) {
     if (progressBar) progressBar.style.width = '0%';
     if (uploadPercent) uploadPercent.innerText = 'Progress: 0%';
 
+    let missedPolls = 0;
     const interval = setInterval(async () => {
         const response = await postJson('/api/getUploadProgress', { 'id': id });
         const data = response['data'];
 
-        if (data && data[0] === 'running') {
+        if (data && (data[0] === 'running' || data[0] === 'waiting')) {
+            missedPolls = 0;
             const current = data[1];
             const total = data[2];
             const sizeEl = document.getElementById('upload-filesize');
@@ -666,6 +684,13 @@ async function handleUpload2(id, onComplete) {
             let percentComplete = total > 0 ? (current / total) * 100 : 0;
             if (progressBar) progressBar.style.width = percentComplete + '%';
             if (uploadPercent) uploadPercent.innerText = 'Progress: ' + percentComplete.toFixed(0) + '%';
+
+            // Telegram rate-limit pause: keep the card alive and informative
+            if (statusEl) {
+                statusEl.innerText = (data[0] === 'waiting')
+                    ? 'Status: Telegram rate-limit pause — upload will resume automatically...'
+                    : 'Status: Storing to Telegram Cloud...';
+            }
         }
         else if (data && data[0] === 'completed') {
             clearInterval(interval);
@@ -674,6 +699,16 @@ async function handleUpload2(id, onComplete) {
             } else {
                 showToast('✅ Upload completed!');
                 getCurrentDirectory();
+            }
+        }
+        else {
+            // Terminal failure ('error') or progress entry lost server-side
+            missedPolls++;
+            if ((data && data[0] === 'error') || missedPolls > 10) {
+                clearInterval(interval);
+                showToast(`❌ Upload failed for "${data && data[3] ? data[3] : 'file'}"`);
+                if (typeof processUploadQueue === 'function') processUploadQueue();
+                else getCurrentDirectory();
             }
         }
     }, 2000);
@@ -708,6 +743,7 @@ async function start_file_download_from_url(url, filename, singleThreaded) {
 async function download_progress_updater(id, file_name, file_size) {
     uploadID = id;
     uploadStep = 2
+    let missedPolls = 0;
     // Showing file uploader
     document.getElementById('bg-blur').style.zIndex = '2';
     document.getElementById('bg-blur').style.opacity = '0.1';
@@ -721,7 +757,18 @@ async function download_progress_updater(id, file_name, file_size) {
         const response = await postJson('/api/getFileDownloadProgress', { 'id': id })
         const data = response['data']
 
-        if (data[0] === 'error') {
+        if (!data) {
+            // Progress entry not created yet or evicted — keep waiting briefly, then abort
+            missedPolls = (missedPolls || 0) + 1;
+            if (missedPolls > 10) {
+                clearInterval(interval);
+                alert('Lost track of the server-side download. Please try again.')
+                window.location.reload()
+            }
+            return;
+        }
+
+        if (data[0] === 'error' || data[0] === 'cancelled') {
             clearInterval(interval);
             alert('Failed To Download File From URL To Backend Server')
             window.location.reload()

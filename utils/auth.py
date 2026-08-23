@@ -123,13 +123,23 @@ def sanitize_path(raw_path: Optional[str]) -> str:
 
 
 def get_client_ip(request: Request) -> str:
-    """Extracts client IP address respecting reverse proxies."""
+    """
+    Extracts the client IP address, safe for reverse-proxied deployments (Render, etc.).
+
+    Uses the RIGHTMOST entry of X-Forwarded-For: that is the value appended by the
+    trusted platform proxy after receiving the request, so client-supplied fake
+    entries earlier in the chain cannot be used to spoof identity or rotate
+    rate-limit buckets.
+    """
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        # Cap input size defensively, then take the last (most-trusted) hop
+        hops = [h.strip() for h in forwarded[:512].split(",") if h.strip()]
+        if hops:
+            return hops[-1][:64]
     real_ip = request.headers.get("X-Real-IP")
     if real_ip:
-        return real_ip.strip()
+        return real_ip.strip()[:64]
     return request.client.host if request.client else "unknown"
 
 
@@ -254,12 +264,19 @@ def rate_limit_otp_verify(request: Request) -> None:
     _check_rate_limit("otp_verify", ip, *OTP_VERIFY_RATE_LIMIT)
 
 
+def rate_limit_public_media(request: Request, category: str, limit: int, window_seconds: int = 60) -> None:
+    """
+    Rate limiter for unauthenticated public endpoints (/file, /thumbnail, /downloadZip)
+    that accept share tokens. Prevents brute-force enumeration of short share tokens
+    while allowing generous budgets for legitimate gallery browsing.
+    """
+    ip = get_client_ip(request)
+    _check_rate_limit(category, ip, limit, window_seconds)
+
+
 # ---------------------------------------------------------------------------
 # OTP management
 # ---------------------------------------------------------------------------
-
-import hashlib
-
 
 def _hash_otp(otp: str) -> str:
     """One-way hash of the OTP code so we never store raw values."""

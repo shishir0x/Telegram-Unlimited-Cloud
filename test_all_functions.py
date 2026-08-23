@@ -42,7 +42,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_URL = os.getenv("TEST_URL", "http://127.0.0.1:8001")
-PASSWORD = os.getenv("ADMIN_PASSWORD", "Ccrpandey@085")
+# The admin password must be supplied via the environment (.env or shell).
+# Never hardcode credentials in source control.
+PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 class UnifiedClient:
     def __init__(self, base_url, use_test_client=False, app=None):
@@ -96,6 +98,10 @@ else:
     unauth_session = UnifiedClient(BASE_URL, use_test_client=True, app=app)
 
 def run_tests():
+    if not PASSWORD:
+        print("[!] ADMIN_PASSWORD is not set. Provide it via .env or the environment to run authentication tests.")
+        sys.exit(1)
+
     print("=" * 70)
     print("[+] TG DRIVE FULL COMPREHENSIVE AUTOMATED TEST SUITE")
     print("=" * 70)

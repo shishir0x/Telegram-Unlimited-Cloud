@@ -47,7 +47,13 @@ async def download_file(url, id, path, filename, singleThreaded):
         while downloader.is_running:
             if id in STOP_DOWNLOAD:
                 logger.info(f"Stopping download {id}")
+                # Consume the flag so stale entries don't cancel future downloads
+                try:
+                    STOP_DOWNLOAD.remove(id)
+                except ValueError:
+                    pass
                 await downloader.stop()
+                DOWNLOAD_PROGRESS[id] = ("cancelled", 0, 0)
                 return
             await asyncio.sleep(1)
 

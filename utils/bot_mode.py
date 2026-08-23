@@ -25,7 +25,7 @@ DRIVE_DATA = None
 BOT_MODE = None
 
 session_cache_path = Path(f"./cache")
-session_cache_path.parent.mkdir(parents=True, exist_ok=True)
+session_cache_path.mkdir(parents=True, exist_ok=True)
 
 main_bot = Client(
     name="main_bot",

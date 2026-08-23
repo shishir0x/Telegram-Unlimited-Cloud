@@ -397,10 +397,10 @@ class TGDriveBackupClient:
             return False
 
     def push_web_sync_status(self, sync_data: dict, log_msg: Optional[str] = None):
-        """Broadcasts real-time telemetry to the TGDrive Web UI (/api/updateSyncStatus)."""
+        """Broadcasts real-time telemetry to the TGDrive Web UI (/api/updateSyncStatus).
+        Authentication rides on the session cookie captured during verify_auth()."""
         try:
             payload = {
-                "password": self.password,
                 "sync_data": sync_data,
             }
             if log_msg:
@@ -637,6 +637,13 @@ class TGDriveBackupClient:
                             speed = current_bytes / duration
                             speed_str = f"{format_size(int(speed))}/s"
 
+                            if status == "waiting":
+                                # Telegram rate-limit pause: server will resume
+                                # automatically. Extend patience instead of timing out.
+                                max_poll_seconds += 5
+                                print(f"\r    ⏳ Telegram rate-limit pause — server resuming automatically... ", end="")
+                                continue
+
                             if status == "running":
                                 print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
                                 self.push_web_sync_status({
@@ -746,6 +753,12 @@ class TGDriveBackupClient:
                             duration = max(time.time() - start_time, 0.1)
                             speed = current_bytes / duration
                             speed_str = f"{format_size(int(speed))}/s"
+
+                            if status == "waiting":
+                                # Telegram rate-limit pause: extend patience.
+                                max_poll_seconds += 5
+                                print(f"\r    ⏳ Telegram rate-limit pause — server resuming automatically... ", end="")
+                                continue
 
                             if status == "running":
                                 print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
@@ -1454,7 +1467,7 @@ def show_clean_menu() -> Tuple[str, Path, Optional[str], Optional[Dict]]:
 
 
 def main():
-    default_pwd = os.getenv("ADMIN_PASSWORD", "admin")
+    default_pwd = os.getenv("ADMIN_PASSWORD", "")
     default_url = os.getenv("WEBSITE_URL") or "http://127.0.0.1:8000"
 
     parser = argparse.ArgumentParser(
@@ -1489,6 +1502,10 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if not default_pwd:
+        print("[!] ADMIN_PASSWORD is not set in .env — pass it explicitly with --password.")
+        sys.exit(1)
 
     if args.source:
         mode = "local"

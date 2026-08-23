@@ -196,7 +196,7 @@ function updateBreadcrumbs(breadcrumbs) {
         if (isLast) {
             html += `<span class="gd-crumb gd-crumb-active gd-crumb-target" data-path="${item.path}" data-id="${item.id}" title="${escapeHtml(displayName)} (Current)">${iconHtml}${escapeHtml(displayName)}</span>`;
         } else {
-            html += `<span class="gd-crumb gd-crumb-target" data-path="${item.path}" data-id="${item.id}" onclick="navigateToPath('${item.path}')" title="Jump to ${escapeHtml(displayName)}">${iconHtml}${escapeHtml(displayName)}</span>`;
+            html += `<span class="gd-crumb gd-crumb-target" data-path="${item.path}" data-id="${item.id}" title="Jump to ${escapeHtml(displayName)}">${iconHtml}${escapeHtml(displayName)}</span>`;
         }
     }
 
@@ -740,7 +740,7 @@ function getItemProvenance(item) {
         const isSearch = getCurrentPath().startsWith('/search_');
         const prov = getItemProvenance(item);
 
-        const tagsHtml = tags.length ? tags.map(t => `<span class="gd-tag-badge" onclick="event.stopPropagation(); navigateToPath('/tags/${encodeURIComponent(t)}');">🏷️ ${escapeHtml(t)}</span>`).join('') : '';
+        const tagsHtml = tags.length ? tags.map(t => `<span class="gd-tag-badge" data-tag="${escapeHtml(t)}">🏷️ ${escapeHtml(t)}</span>`).join('') : '';
 
         // Table Row
         tableHtml += `
@@ -758,7 +758,7 @@ function getItemProvenance(item) {
                         ${isSearch ? `
                         <div class="gd-search-path-subline" style="margin-left: 58px;">
                             ${prov.badge}
-                            <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
+                            <span class="gd-search-path-text" style="cursor: pointer;" data-goto-path="${escapeHtml(item.path)}" title="Jump to folder: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
                         </div>` : ''}
                     </div>
                 </td>
@@ -793,7 +793,7 @@ function getItemProvenance(item) {
                     ${isSearch ? `
                     <div class="gd-search-path-subline" style="margin-top:0;">
                         ${prov.badge}
-                        <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
+                        <span class="gd-search-path-text" style="cursor: pointer;" data-goto-path="${escapeHtml(item.path)}" title="Jump to folder: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
                     </div>` : ''}
                 </div>
             </div>
@@ -822,7 +822,7 @@ function getItemProvenance(item) {
         const isSearch = getCurrentPath().startsWith('/search_');
         const prov = getItemProvenance(item);
 
-        const tagsHtml = tags.length ? tags.map(t => `<span class="gd-tag-badge" onclick="event.stopPropagation(); navigateToPath('/tags/${encodeURIComponent(t)}');">🏷️ ${escapeHtml(t)}</span>`).join('') : '';
+        const tagsHtml = tags.length ? tags.map(t => `<span class="gd-tag-badge" data-tag="${escapeHtml(t)}">🏷️ ${escapeHtml(t)}</span>`).join('') : '';
 
         // Table Row
         tableHtml += `
@@ -840,7 +840,7 @@ function getItemProvenance(item) {
                         ${isSearch ? `
                         <div class="gd-search-path-subline" style="margin-left: 58px;">
                             ${prov.badge}
-                            <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
+                            <span class="gd-search-path-text" style="cursor: pointer;" data-goto-path="${escapeHtml(item.path)}" title="Jump to folder: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
                         </div>` : ''}
                     </div>
                 </td>
@@ -907,7 +907,7 @@ function getItemProvenance(item) {
                 ${isSearch ? `
                 <div class="gd-search-path-subline" style="margin-top: 4px;">
                     ${prov.badge}
-                    <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
+                    <span class="gd-search-path-text" style="cursor: pointer;" data-goto-path="${escapeHtml(item.path)}" title="Jump to folder: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
                 </div>` : ''}
             </div>
         `;
@@ -2019,7 +2019,7 @@ function showSearchError(message, query) {
                 <div class="gd-error-title">Search Error</div>
                 <div class="gd-error-desc">${escapeHtml(message || 'An error occurred while searching your drive.')}</div>
                 <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-                    <button class="gd-retry-btn" onclick="executeDriveSearch('${escapeHtml(query || '')}', window.CURRENT_SEARCH_FILTERS || {});">
+                    <button class="gd-retry-btn gd-search-retry-btn" data-retry-query="${escapeHtml(query || '')}">
                         <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
                         <span>Retry Search</span>
                     </button>
@@ -2029,12 +2029,50 @@ function showSearchError(message, query) {
                 </div>
             </div>
         `;
+        const retryBtn = errorState.querySelector('.gd-search-retry-btn');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', () => {
+                executeDriveSearch(retryBtn.getAttribute('data-retry-query') || '', window.CURRENT_SEARCH_FILTERS || {});
+            });
+        }
     }
 }
 
 // App Initialization
 document.addEventListener('DOMContentLoaded', () => {
     initDriveSearch();
+
+    // Delegated click handling for dynamically rendered elements.
+    // Uses data attributes instead of inline JS-string interpolation so that
+    // names containing quotes can never break out of the handler context.
+    document.addEventListener('click', (e) => {
+        const removeBtn = e.target.closest('.gd-tag-remove');
+        if (removeBtn) {
+            e.stopPropagation();
+            const tag = removeBtn.getAttribute('data-remove-tag');
+            if (tag) removeTagFromCurrentItem(tag);
+            return;
+        }
+
+        const tagChip = e.target.closest('.gd-tag-badge');
+        if (tagChip && tagChip.getAttribute('data-tag')) {
+            e.stopPropagation();
+            navigateToPath('/tags/' + encodeURIComponent(tagChip.getAttribute('data-tag')));
+            return;
+        }
+
+        const gotoEl = e.target.closest('[data-goto-path]');
+        if (gotoEl) {
+            e.stopPropagation();
+            navigateToPath(gotoEl.getAttribute('data-goto-path'));
+            return;
+        }
+
+        const crumb = e.target.closest('.gd-crumb-target[data-path]');
+        if (crumb) {
+            navigateToPath(crumb.getAttribute('data-path'));
+        }
+    });
 
     // View Toggles
     const listBtn = document.getElementById('toggle-list-view');
@@ -2218,7 +2256,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (newFolderBtn) newFolderBtn.click();
         } else if (e.shiftKey && e.key.toLowerCase() === 'u') {
             e.preventDefault();
-            const fileInput = document.getElementById('file-input');
+            const fileInput = document.getElementById('fileInput');
             if (fileInput) fileInput.click();
         }
     });
@@ -2382,7 +2420,7 @@ function renderModalTags() {
     tagsListEl.innerHTML = tags.map(tag => `
         <span class="gd-tag-chip" style="margin-right: 6px; margin-bottom: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: rgba(66, 133, 244, 0.12); color: #4285f4; border-radius: 12px; font-size: 0.82rem; font-weight: 500;">
             <span>#${escapeHtml(tag)}</span>
-            <button onclick="removeTagFromCurrentItem('${escapeHtml(tag)}')" style="background: none; border: none; cursor: pointer; color: inherit; font-size: 1rem; line-height: 1; padding: 0 2px;">&times;</button>
+            <button class="gd-tag-remove" data-remove-tag="${escapeHtml(tag)}" style="background: none; border: none; cursor: pointer; color: inherit; font-size: 1rem; line-height: 1; padding: 0 2px;">&times;</button>
         </span>
     `).join('');
 }
@@ -2600,7 +2638,7 @@ function getStaticCommands() {
         { id: 'nav-sync', label: 'View Live Sync Activity', icon: '⚡', action: () => window.showSyncActivityView() },
         { id: 'nav-storage', label: 'View Cloud Storage Breakdown', icon: '📊', action: () => window.openStorageBreakdownModal() },
         { id: 'act-new-folder', label: 'Create New Folder', icon: '📁', action: () => { const b = document.getElementById('new-folder-btn'); if (b) b.click(); } },
-        { id: 'act-upload-file', label: 'Upload Local File', icon: '⬆️', action: () => { const b = document.getElementById('file-input'); if (b) b.click(); } },
+        { id: 'act-upload-file', label: 'Upload Local File', icon: '⬆️', action: () => { const b = document.getElementById('fileInput'); if (b) b.click(); } },
         { id: 'act-upload-url', label: 'Upload from URL', icon: '🌐', action: () => { const b = document.getElementById('url-upload'); if (b) b.click(); } },
         { id: 'act-toggle-view', label: 'Toggle List / Grid View', icon: '🔲', action: () => applyViewMode(CURRENT_VIEW_MODE === 'grid' ? 'list' : 'grid') },
         { id: 'act-toggle-insp', label: 'Toggle Details Inspector', icon: 'ℹ️', action: () => { const b = document.getElementById('toggle-info-pane'); if (b) b.click(); } },
@@ -2800,12 +2838,13 @@ window.showSyncActivityView = function() {
             rootCrumb.addEventListener('click', (e) => {
                 e.preventDefault();
                 window.hideSyncActivityView();
-                if (typeof updateDirectoryData === 'function') updateDirectoryData('/');
+                if (typeof getCurrentDirectory === 'function') getCurrentDirectory();
             });
         }
     }
 
-    if (typeof pollSyncStatus === 'function') pollSyncStatus();
+    // Trigger an immediate status poll instead of waiting for the next interval tick
+    if (typeof window.syncPollHook === 'function') window.syncPollHook();
 };
 
 window.hideSyncActivityView = function() {
@@ -3061,6 +3100,8 @@ function initSyncActivityManager() {
         }
     }
 
+    // Expose the polling hook so the sync view can request an immediate refresh
+    window.syncPollHook = pollSyncStatus;
     setInterval(pollSyncStatus, 2000);
 }
 
@@ -3075,8 +3116,14 @@ window.addEventListener('keydown', (e) => {
     const activeModal = document.querySelector('.gd-modal[style*="opacity: 1"], .gd-dialog[style*="opacity: 1"], #bg-blur[style*="opacity: 1"]');
     if (activeModal && activeModal.style.opacity !== '0' && activeModal.style.zIndex !== '-1') return;
 
-    // 1. Backspace / Alt+Left: Navigate to Parent Folder
-    if (e.key === 'Backspace' || (e.altKey && e.key === 'ArrowLeft')) {
+    // Ownership rules (single handler per key to avoid double actions):
+    //   - Delete / Backspace WITH selection -> owned by the shortcuts handler (bulk delete)
+    //   - Backspace WITHOUT selection       -> navigate to parent folder
+    //   - Alt+Left                          -> always navigate to parent folder
+    const hasSelection = window.SELECTED_ITEMS && window.SELECTED_ITEMS.size > 0;
+
+    // 1. Navigate to Parent Folder
+    if ((e.key === 'Backspace' && !hasSelection) || (e.altKey && e.key === 'ArrowLeft')) {
         const curPath = typeof getCurrentPath === 'function' ? getCurrentPath() : '/';
         if (curPath && curPath !== '/' && !curPath.startsWith('/trash') && !curPath.startsWith('/recent')) {
             e.preventDefault();
@@ -3095,19 +3142,8 @@ window.addEventListener('keydown', (e) => {
         }
     }
 
-    // 3. Ctrl+A / Cmd+A: Select All Directory Items
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
-        e.preventDefault();
-        if (typeof selectAllItems === 'function') {
-            selectAllItems();
-        }
-    }
-
-    // 4. Escape: Deselect all / close inspector
+    // 3. Escape: close inspector (deselection & modal closing are owned by the shortcuts handler)
     if (e.key === 'Escape') {
-        if (typeof deselectAllItems === 'function') {
-            deselectAllItems();
-        }
         const inspector = document.getElementById('gd-inspector');
         if (inspector && !inspector.classList.contains('hidden')) {
             inspector.classList.add('hidden');

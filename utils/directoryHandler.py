@@ -1,6 +1,5 @@
 from pathlib import Path
 from typing import Union, Optional, Dict, Any, List, Tuple
-import sys
 import config, dill
 import shutil
 import hashlib
@@ -11,7 +10,6 @@ from pyrogram.errors import FloodWait
 import os, random, string, asyncio
 from utils.logger import Logger
 from datetime import datetime, timezone
-import signal
 
 logger = Logger(__name__)
 
@@ -74,6 +72,16 @@ def ensure_drive_data():
                     DRIVE_DATA = dill.load(f)
                     loaded = True
                     logger.info("Successfully loaded primary drive.data.")
+                    # Verify recorded SHA256 checksum; warn only (a stale checksum
+                    # must never cause discarding readable data)
+                    if drive_checksum_path.exists():
+                        try:
+                            expected = drive_checksum_path.read_text(encoding="utf-8").strip()
+                            actual = calculate_file_sha256(drive_cache_path)
+                            if expected.lower() != actual.lower():
+                                logger.warning("drive.data SHA256 checksum mismatch (possible unclean shutdown). Metadata loaded but should be verified via /api/admin/integrityReport.")
+                        except Exception as chk_e:
+                            logger.debug(f"Checksum verification skipped: {chk_e}")
             except Exception as e:
                 logger.warning(f"Primary drive.data corrupted or failed to load ({e}). Attempting backup restore...")
 
@@ -808,7 +816,7 @@ class NewDriveData:
 
             update_children_paths(item, dest_folder_path)
         else:
-            item.path = dest_folder_path if dest_folder_path == "/" else dest_folder_path
+            item.path = dest_folder_path
 
         dest_folder.contents[item.id] = item
         self.save()
@@ -862,6 +870,10 @@ class NewDriveData:
         new_item.id = getRandomID()
         new_item.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Copies must NOT inherit live share tokens from the original
+        if hasattr(new_item, "auth_hashes"):
+            new_item.auth_hashes = []
+
         # Rename copy
         if new_item.type == "file":
             if "." in new_item.name:
@@ -879,6 +891,8 @@ class NewDriveData:
                     child = folder.contents.pop(cid)
                     child.id = getRandomID()
                     child.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if hasattr(child, "auth_hashes"):
+                        child.auth_hashes = []
                     if child.type == "folder":
                         child.path = ("/" + parent_p.strip("/") + "/" + folder.id + "/").replace("//", "/")
                         regenerate_ids(child, ("/" + parent_p.strip("/") + "/" + folder.id).replace("//", "/"))
@@ -1385,6 +1399,12 @@ async def _execute_backup() -> bool:
         except FloodWait as fw:
             wait_time = fw.value + 1
             logger.warning(f"Backup FloodWait: sleeping {wait_time}s before next candidate.")
+            # Share the cooldown with all other Telegram senders (uploads, etc.)
+            try:
+                from utils import tg_gate
+                tg_gate.note_flood(cid, float(fw.value))
+            except Exception:
+                pass
             await asyncio.sleep(wait_time)
             # Try a different client after flood wait
             continue
