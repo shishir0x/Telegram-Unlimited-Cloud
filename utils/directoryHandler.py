@@ -7,6 +7,7 @@ import hashlib
 import json
 import secrets
 from pyrogram.types import InputMediaDocument, Message
+from pyrogram.errors import FloodWait
 import os, random, string, asyncio
 from utils.logger import Logger
 from datetime import datetime, timezone
@@ -1220,6 +1221,10 @@ BOT_MODE: NewBotMode = None
 LAST_REMOTE_BACKUP_FILE_ID: Optional[str] = None
 LAST_REMOTE_SYNC_TIME: float = 0.0
 _METADATA_SYNC_LOCK = asyncio.Lock()
+_BACKUP_LOCK = asyncio.Lock()  # Prevents concurrent backup_drive_data executions
+# Debounce: when loop=False triggers pile up, coalesce into a single delayed flush
+_BACKUP_FLUSH_SCHEDULED: bool = False
+_BACKUP_FLUSH_DELAY: float = 10.0  # seconds to coalesce rapid backup requests
 # Track which client authored/can access the Telegram backup message
 _BACKUP_AUTHOR_CLIENT_ID = None
 
@@ -1329,95 +1334,144 @@ async def auto_sync_telegram_loop():
             await asyncio.sleep(15)
 
 
-# Function to backup the drive data to telegram
-async def backup_drive_data(loop=True):
+async def _execute_backup() -> bool:
+    """Core Telegram backup logic. Returns True on success.
+    Protected by _BACKUP_LOCK to prevent concurrent executions."""
     global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID, _BACKUP_AUTHOR_CLIENT_ID
-    logger.info("Starting backup drive data task.")
 
+    drive = ensure_drive_data()
+    if not drive or not getattr(drive, "isUpdated", False):
+        return False
+
+    if not config.STORAGE_CHANNEL or not config.DATABASE_BACKUP_MSG_ID:
+        logger.warning("Telegram backup skipped: STORAGE_CHANNEL or DATABASE_BACKUP_MSG_ID not configured.")
+        return False
+
+    logger.info("Backing up drive data to Telegram.")
+    from utils.clients import multi_clients, premium_clients
+
+    # Build candidate list: prioritize known author client, otherwise test all active clients
+    all_active = {**multi_clients, **premium_clients}
+    if not all_active:
+        return False
+
+    client_candidates = []
+    if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
+        client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
+    for cid, cl in all_active.items():
+        if cid != _BACKUP_AUTHOR_CLIENT_ID:
+            client_candidates.append((cid, cl))
+
+    time_text = f"📅 **Last Updated :** {get_current_utc_time()} (UTC +00:00)"
+    caption = (
+        f"🔐 **TG Drive Data Backup File**\n\n"
+        "Do not edit or delete this message. This is a backup file for the tg drive data.\n\n"
+        f"{time_text}"
+    )
+
+    media_doc = InputMediaDocument(str(drive_cache_path.resolve()), caption=caption)
+    msg = None
+    last_author_err = None
+
+    for cid, candidate_client in client_candidates:
+        try:
+            msg = await candidate_client.edit_message_media(
+                config.STORAGE_CHANNEL,
+                config.DATABASE_BACKUP_MSG_ID,
+                media=media_doc,
+            )
+            _BACKUP_AUTHOR_CLIENT_ID = cid
+            break
+        except FloodWait as fw:
+            wait_time = fw.value + 1
+            logger.warning(f"Backup FloodWait: sleeping {wait_time}s before next candidate.")
+            await asyncio.sleep(wait_time)
+            # Try a different client after flood wait
+            continue
+        except Exception as edit_err:
+            if "MESSAGE_AUTHOR_REQUIRED" in str(edit_err):
+                last_author_err = edit_err
+                continue
+            raise edit_err
+
+    if not msg:
+        if last_author_err:
+            raise last_author_err
+        raise RuntimeError("Failed to edit Telegram backup message with any connected client.")
+
+    if msg and msg.document:
+        LAST_REMOTE_BACKUP_FILE_ID = msg.document.file_id
+
+    DRIVE_DATA.isUpdated = False
+    logger.info("Drive data backed up to Telegram successfully.")
+    return True
+
+
+async def _flush_backup_coalesced():
+    """Delayed flush handler: waits _BACKUP_FLUSH_DELAY then executes a single backup.
+    Multiple rapid calls are coalesced into one execution."""
+    global _BACKUP_FLUSH_SCHEDULED
+    await asyncio.sleep(_BACKUP_FLUSH_DELAY)
+    _BACKUP_FLUSH_SCHEDULED = False
+    async with _BACKUP_LOCK:
+        try:
+            success = await _execute_backup()
+            if success:
+                # Pin only during debounced flush (covers batch uploads)
+                try:
+                    from utils.clients import multi_clients, premium_clients
+                    all_active = {**multi_clients, **premium_clients}
+                    if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
+                        client = all_active[_BACKUP_AUTHOR_CLIENT_ID]
+                        msg = await client.get_messages(config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID)
+                        if msg:
+                            await msg.pin()
+                except Exception as pin_e:
+                    logger.debug(f"Pinning backup message note: {pin_e}")
+        except Exception as e:
+            logger.error(f"Coalesced backup error: {e}")
+
+
+async def backup_drive_data(loop=True):
+    """Backup drive data to Telegram.
+
+    When loop=True (periodic background task), runs in a continuous loop.
+    When loop=False (triggered by uploads), debounces rapid calls:
+    multiple calls within _BACKUP_FLUSH_DELAY seconds are coalesced into one."""
+    global _BACKUP_FLUSH_SCHEDULED
+
+    if not loop:
+        # Debounce: schedule a flush if one isn't already pending
+        if not _BACKUP_FLUSH_SCHEDULED:
+            _BACKUP_FLUSH_SCHEDULED = True
+            asyncio.create_task(_flush_backup_coalesced())
+            logger.info("Scheduled coalesced backup flush (debounced).")
+        return
+
+    # Continuous loop mode for periodic background backups
+    logger.info("Starting periodic backup drive data task.")
     while True:
         try:
-            drive = ensure_drive_data()
-            if not drive or not getattr(drive, "isUpdated", False):
-                if not loop:
-                    break
-                await asyncio.sleep(config.DATABASE_BACKUP_TIME)
-                continue
-
-            if not config.STORAGE_CHANNEL or not config.DATABASE_BACKUP_MSG_ID:
-                logger.warning("Telegram backup skipped: STORAGE_CHANNEL or DATABASE_BACKUP_MSG_ID not configured.")
-                if not loop:
-                    break
-                await asyncio.sleep(config.DATABASE_BACKUP_TIME)
-                continue
-
-            logger.info("Backing up drive data to Telegram.")
-            from utils.clients import multi_clients, premium_clients
-
-            # Build candidate list: prioritize known author client, otherwise test all active clients
-            all_active = {**multi_clients, **premium_clients}
-            if not all_active:
-                if not loop:
-                    break
-                await asyncio.sleep(5)
-                continue
-
-            client_candidates = []
-            if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
-                client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
-            for cid, cl in all_active.items():
-                if cid != _BACKUP_AUTHOR_CLIENT_ID:
-                    client_candidates.append((cid, cl))
-
-            time_text = f"📅 **Last Updated :** {get_current_utc_time()} (UTC +00:00)"
-            caption = (
-                f"🔐 **TG Drive Data Backup File**\n\n"
-                "Do not edit or delete this message. This is a backup file for the tg drive data.\n\n"
-                f"{time_text}"
-            )
-
-            media_doc = InputMediaDocument(str(drive_cache_path.resolve()), caption=caption)
-            msg = None
-            last_author_err = None
-
-            for cid, candidate_client in client_candidates:
-                try:
-                    msg = await candidate_client.edit_message_media(
-                        config.STORAGE_CHANNEL,
-                        config.DATABASE_BACKUP_MSG_ID,
-                        media=media_doc,
-                    )
-                    _BACKUP_AUTHOR_CLIENT_ID = cid
-                    break
-                except Exception as edit_err:
-                    if "MESSAGE_AUTHOR_REQUIRED" in str(edit_err):
-                        last_author_err = edit_err
-                        continue
-                    raise edit_err
-
-            if not msg:
-                if last_author_err:
-                    raise last_author_err
-                raise RuntimeError("Failed to edit Telegram backup message with any connected client.")
-
-            if msg and msg.document:
-                LAST_REMOTE_BACKUP_FILE_ID = msg.document.file_id
-
-            DRIVE_DATA.isUpdated = False
-            logger.info("Drive data backed up to Telegram successfully.")
-
-            try:
-                await msg.pin()
-            except Exception as pin_e:
-                logger.debug(f"Pinning backup message note: {pin_e}")
-
-            if not loop:
-                break
-
             await asyncio.sleep(config.DATABASE_BACKUP_TIME)
+            async with _BACKUP_LOCK:
+                try:
+                    await _execute_backup()
+                    # Pin on periodic loop backup
+                    try:
+                        from utils.clients import multi_clients, premium_clients
+                        all_active = {**multi_clients, **premium_clients}
+                        if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
+                            client = all_active[_BACKUP_AUTHOR_CLIENT_ID]
+                            msg = await client.get_messages(config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID)
+                            if msg:
+                                await msg.pin()
+                    except Exception as pin_e:
+                        logger.debug(f"Pinning backup message note: {pin_e}")
+                except Exception as e:
+                    logger.error(f"Backup Error: {e}")
+                    await asyncio.sleep(10)
         except Exception as e:
-            logger.error(f"Backup Error: {e}")
-            if not loop:
-                break
+            logger.error(f"Backup loop error: {e}")
             await asyncio.sleep(10)
 
 
