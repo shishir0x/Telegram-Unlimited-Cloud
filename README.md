@@ -6,14 +6,18 @@ A modern, fast, and feature-rich Google Drive alternative that uses Telegram as 
 
 ## ✨ Features
 
-- **📂 Folder & File Organization**: Create, rename, move, and organize folders and files with ease.
+- **📂 Folder & File Organization**: Create, rename, move, copy, tag, and organize folders and files with ease.
 - **👁️ In-Tab Media & Document Previews**: Preview images, stream videos/audio, read PDFs, and view syntax-highlighted code files directly in your browser tab without force-downloading.
+- **🖼️ Lazy-Loaded Thumbnails**: Server-side generated JPEG thumbnails (via Pillow) for instant grid browsing, with ETag-based immutable caching.
+- **🔎 Deep Search**: Search across the entire drive or scope results to the current folder, with file/folder type, location, and size filtering.
 - **📦 Folder ZIP Downloads**: OneDrive-style multi-folder and file selection zipped and downloaded directly in one click.
 - **🔗 Shareable Links**: Generate instant share links for files and folders with secure token authorization.
 - **🗑️ Trash & Recovery**: Full bin/trash support with restore and permanent deletion capabilities.
+- **✅ Bulk Operations**: Multi-select support for batch trash, restore, and permanent deletion.
 - **🖱️ Drag & Drop**: Move files between folders or upload files directly by dragging them onto the browser.
 - **⚡ High-Speed Streaming**: Powered by Pyrogram and `tgcrypto` for high-throughput downloads and smooth media playback.
-- **💾 Automated Telegram Backups**: Keeps your file tree and metadata continuously backed up in your Telegram storage channel.
+- **💾 Automated Telegram Backups**: Keeps your file tree and metadata continuously backed up (debounced) in your Telegram storage channel, with atomic local cache and emergency fallback.
+- **🧪 Data Integrity Diagnostics**: Admin-only integrity report scans the metadata tree for cyclic references and missing Telegram message mappings.
 - **🤖 Telegram Bot Integration**: Upload files directly from Telegram by sending them to your bot.
 - **🔄 Auto Keep-Alive**: Built-in pinger keeps free cloud hosting instances awake.
 
@@ -21,7 +25,7 @@ A modern, fast, and feature-rich Google Drive alternative that uses Telegram as 
 
 ## 🛠️ Tech Stack
 
-- **Backend**: Python 3.10+, FastAPI, Uvicorn, Pyrogram, `tgcrypto`
+- **Backend**: Python 3.10+, FastAPI, Uvicorn, Pyrogram, `tgcrypto`, Pillow (thumbnails)
 - **Frontend**: HTML5, Vanilla CSS3 (Material Design 3 / Glassmorphism), Vanilla JavaScript SPA
 - **Storage**: Telegram Cloud Channels via Telegram MTProto API
 
@@ -116,11 +120,31 @@ curl http://localhost:8000/health/ready
 
 ---
 
+## 🧰 Extra Tools
+
+- **`tgdrive_backup.py`**: CLI utility for backing up your drive data remotely via the `/api/checkPassword` endpoint.
+- **`CAPACITOR_ANDROID_GUIDE.md`**: Step-by-step guide for packaging the web app as an Android app using Capacitor.
+
+---
+
+## 🧪 Development & Testing
+
+Run the included test suites:
+
+```bash
+python test_all_functions.py     # End-to-end functional tests
+python test_hardening.py         # Security hardening checks
+python test_security_audit.py    # Security audit
+```
+
+---
+
 ## 🔧 Troubleshooting
 
 - **Telegram FloodWait:** Multiple parallel uploads might hit Telegram rate limits. The application handles this automatically with backoff retries.
 - **401 Unauthorized on API:** Verify your `ADMIN_PASSWORD` or ensure your session cookie `tg_session` is active.
-- **Missing file previews:** Ensure your bot is still an active Administrator in the `STORAGE_CHANNEL`.
+- **Missing file previews or thumbnails:** Ensure your bot is still an active Administrator in the `STORAGE_CHANNEL`.
+- **Drive health check:** Authenticated admins can inspect `/api/admin/integrityReport` to verify metadata tree validity and backup sync status.
 
 ---
 
