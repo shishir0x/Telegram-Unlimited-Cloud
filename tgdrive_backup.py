@@ -75,9 +75,8 @@ IGNORED_DIRS = {
     "phonelink",
     "phone link",
     "your phone",
-    "microsoft",
-    "microsoftedgebackups",
     "onedrive",
+    "portfolio",
 
     # Heavy Dependency & Build Folders (Crucial for C: Drive!)
     "node_modules",
@@ -256,7 +255,7 @@ def should_skip_directory(dir_name: str, full_rel_path: str = "") -> bool:
     if any(ig in path_lower for ig in [
         "node_modules", "appdata", ".git", ".venv", "venv", "__pycache__",
         ".cache", ".npm", ".cargo", ".gradle", "site-packages", "pyinstaller",
-        "dist-info", "egg-info", "crossdevice", "microsoft", "onedrive"
+        "dist-info", "egg-info", "crossdevice", "microsoft", "onedrive", "portfolio"
     ]):
         return True
 
