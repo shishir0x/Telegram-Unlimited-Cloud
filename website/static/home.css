@@ -4163,3 +4163,230 @@ body {
     font-weight: 600;
     color: var(--gd-text-primary);
 }
+
+/* =========================================================
+   Conflict Resolution Modal Styles
+   ========================================================= */
+.gd-conflict-subtext {
+    font-size: 0.9rem;
+    color: var(--gd-text-secondary);
+    margin-bottom: 14px;
+    line-height: 1.4;
+}
+
+.gd-conflict-file-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #f8fafd;
+    border: 1px solid var(--gd-border-light);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+}
+
+.gd-conflict-file-icon {
+    font-size: 1.8rem;
+    flex-shrink: 0;
+}
+
+.gd-conflict-file-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.gd-conflict-filename {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--gd-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.gd-conflict-meta {
+    font-size: 0.78rem;
+    color: var(--gd-text-tertiary);
+    margin-top: 2px;
+}
+
+.gd-conflict-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* =========================================================
+   Storage Breakdown Modal Styles
+   ========================================================= */
+.gd-storage-breakdown-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.gd-storage-stat-banner {
+    background: linear-gradient(135deg, #f8faff 0%, #edf2fc 100%);
+    border: 1px solid #d2e3fc;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+}
+
+.gd-stat-big-val {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #1a73e8;
+}
+
+.gd-stat-sub {
+    font-size: 0.82rem;
+    color: var(--gd-text-secondary);
+    margin-top: 4px;
+}
+
+.gd-storage-progress-stacked {
+    display: flex;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #e8eaed;
+    width: 100%;
+}
+
+.gd-sb-bar {
+    height: 100%;
+    transition: width 0.4s ease;
+}
+
+.gd-sb-bar.bar-video { background: #ea4335; }
+.gd-sb-bar.bar-image { background: #fbbc05; }
+.gd-sb-bar.bar-audio { background: #34a853; }
+.gd-sb-bar.bar-doc { background: #4285f4; }
+.gd-sb-bar.bar-code { background: #a142f4; }
+.gd-sb-bar.bar-archive { background: #ff6d01; }
+.gd-sb-bar.bar-other { background: #5f6368; }
+
+.gd-storage-categories {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.gd-sb-cat-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: #ffffff;
+    border: 1px solid var(--gd-border-light);
+    border-radius: 8px;
+}
+
+.gd-sb-cat-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.gd-sb-cat-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.gd-sb-cat-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.gd-sb-cat-name {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--gd-text-primary);
+}
+
+.gd-sb-cat-size {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--gd-text-primary);
+}
+
+.gd-sb-cat-subtext {
+    font-size: 0.74rem;
+    color: var(--gd-text-tertiary);
+    margin-top: 1px;
+}
+
+/* =========================================================
+   Enhanced Preview Toolbars & Controls
+   ========================================================= */
+.gd-preview-image-container,
+.gd-preview-video-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+
+.gd-preview-controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(32, 33, 36, 0.85);
+    backdrop-filter: blur(8px);
+    border-radius: 20px;
+    padding: 4px 10px;
+    color: #fff;
+    z-index: 10;
+}
+
+.gd-preview-bar-label {
+    font-size: 0.76rem;
+    color: #dadce0;
+    margin-right: 2px;
+}
+
+.gd-preview-tool-btn,
+.gd-preview-speed-btn {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 0.76rem;
+    font-weight: 500;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.gd-preview-tool-btn:hover,
+.gd-preview-speed-btn:hover,
+.gd-preview-speed-btn.active {
+    background: rgba(255, 255, 255, 0.25);
+    border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* Safe Area Inset Hardening for Mobile / Notch devices */
+@supports (padding-top: env(safe-area-inset-top)) {
+    .gd-header {
+        padding-top: env(safe-area-inset-top);
+    }
+    .gd-bulk-bar {
+        bottom: calc(24px + env(safe-area-inset-bottom));
+    }
+    .gd-mobile-fab {
+        bottom: calc(20px + env(safe-area-inset-bottom));
+    }
+    .gd-bottom-sheet {
+        padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    }
+}

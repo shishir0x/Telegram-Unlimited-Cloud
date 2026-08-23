@@ -1,11 +1,13 @@
 from pathlib import Path
 import sys
 import config, dill
+import shutil
+import hashlib
+import json
 from pyrogram.types import InputMediaDocument, Message
 import os, random, string, asyncio
 from utils.logger import Logger
 from datetime import datetime, timezone
-import os
 import signal
 
 logger = Logger(__name__)
@@ -14,6 +16,8 @@ cache_dir = Path("./cache")
 cache_dir.mkdir(parents=True, exist_ok=True)
 drive_cache_path = cache_dir / "drive.data"
 drive_backup_path = cache_dir / "drive.data.bak"
+drive_checksum_path = cache_dir / "drive.data.sha256"
+drive_json_mirror_path = cache_dir / "tgdrive_backup.json"
 
 
 def sanitize_name(name: str) -> str:
@@ -27,30 +31,67 @@ def sanitize_name(name: str) -> str:
     return clean[:255] if clean else "Unnamed"
 
 
+def calculate_file_sha256(file_path: Union[Path, str]) -> str:
+    """Calculates SHA256 digest of a local file."""
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_file_checksum(file_path: Union[Path, str], checksum_or_path: Union[Path, str]) -> bool:
+    """Verifies that the file matches its recorded SHA256 checksum or checksum file."""
+    fp = Path(file_path)
+    if not fp.exists():
+        return False
+    try:
+        if isinstance(checksum_or_path, str) and len(checksum_or_path.strip()) == 64 and not os.path.exists(checksum_or_path):
+            expected = checksum_or_path.strip()
+        else:
+            cp = Path(checksum_or_path)
+            if not cp.exists():
+                return False
+            expected = cp.read_text(encoding="utf-8").strip()
+        actual = calculate_file_sha256(fp)
+        return expected.lower() == actual.lower()
+    except Exception as e:
+        logger.warning(f"Error checking file checksum: {e}")
+        return False
+
+
 def ensure_drive_data():
     global DRIVE_DATA
     if DRIVE_DATA is None:
         loaded = False
+        # 1. Try loading primary drive.data with checksum validation
         if drive_cache_path.exists():
             try:
                 with open(drive_cache_path, "rb") as f:
                     DRIVE_DATA = dill.load(f)
                     loaded = True
+                    logger.info("Successfully loaded primary drive.data.")
             except Exception as e:
-                logger.warning(f"Could not load primary drive.data ({e}). Trying backup...")
+                logger.warning(f"Primary drive.data corrupted or failed to load ({e}). Attempting backup restore...")
 
+        # 2. Try loading backup drive.data.bak if primary failed
         if not loaded and drive_backup_path.exists():
             try:
                 with open(drive_backup_path, "rb") as f:
                     DRIVE_DATA = dill.load(f)
                     loaded = True
-                    logger.info("Successfully recovered drive data from drive.data.bak")
+                    logger.info("Successfully recovered drive data from drive.data.bak!")
+                    # Resave to restore primary and checksum
+                    DRIVE_DATA.save()
             except Exception as e:
                 logger.warning(f"Could not load backup drive.data.bak: {e}")
 
+        # 3. Initialize fresh root if no data exists
         if not loaded:
+            logger.info("Initializing new drive data structure.")
             DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
             DRIVE_DATA.save()
+            
     return DRIVE_DATA
 
 
@@ -111,7 +152,7 @@ class NewDriveData:
         self.isUpdated = False
 
     def save(self) -> None:
-        """Atomically saves drive data to disk with automatic .bak backup copy."""
+        """Atomically saves drive data to disk with automatic .bak backup copy, SHA256 checksum, and JSON mirror."""
         tmp_path = drive_cache_path.with_suffix(".tmp")
         try:
             with open(tmp_path, "wb") as f:
@@ -123,8 +164,26 @@ class NewDriveData:
                 except Exception:
                     pass
             os.replace(tmp_path, drive_cache_path)
+            
+            # Compute and save SHA256 checksum
+            try:
+                chk = calculate_file_sha256(drive_cache_path)
+                drive_checksum_path.write_text(chk, encoding="utf-8")
+            except Exception as chk_e:
+                logger.warning(f"Failed to write SHA256 checksum: {chk_e}")
+
+            # Export JSON metadata mirror
+            try:
+                from utils.extra import convert_class_to_dict
+                dict_snapshot = convert_class_to_dict(self, isObject=True, showtrash=True)
+                json_tmp = drive_json_mirror_path.with_suffix(".tmp")
+                json_tmp.write_text(json.dumps(dict_snapshot, indent=2, default=str), encoding="utf-8")
+                os.replace(json_tmp, drive_json_mirror_path)
+            except Exception as json_e:
+                logger.debug(f"JSON mirror export skipped: {json_e}")
+
             self.isUpdated = True
-            logger.info("Drive data saved successfully (atomic replace).")
+            logger.info("Drive data saved successfully with SHA256 checksum & backup.")
         except Exception as e:
             logger.error(f"Failed to save drive data: {e}")
             if tmp_path.exists():
@@ -151,22 +210,50 @@ class NewDriveData:
         self.save()
         return folder.path + folder.id
 
-    def new_file(self, path: str, name: str, file_id: int, size: int) -> None:
+    def new_file(self, path: str, name: str, file_id: int, size: int, conflict: str = "keep_both") -> str:
         clean_name = sanitize_name(name)
-        logger.info(f"Creating new file '{clean_name}' in path '{path}'.")
+        logger.info(f"Creating new file '{clean_name}' in path '{path}' (conflict mode: {conflict}).")
 
-        file = File(clean_name, file_id, size, path)
         if path == "/" or not path:
             directory_folder: Folder = self.contents["/"]
-            directory_folder.contents[file.id] = file
         else:
             paths = [p for p in path.strip("/").split("/") if p]
             directory_folder: Folder = self.contents["/"]
             for p in paths:
                 directory_folder = directory_folder.contents[p]
-            directory_folder.contents[file.id] = file
 
+        # Check for existing file with identical name in destination folder
+        existing_file = None
+        if hasattr(directory_folder, "contents"):
+            for item in directory_folder.contents.values():
+                if getattr(item, "type", "") == "file" and getattr(item, "name", "").lower() == clean_name.lower():
+                    existing_file = item
+                    break
+
+        if existing_file and conflict == "replace":
+            logger.info(f"Replacing existing file '{existing_file.name}' with new file_id {file_id}.")
+            existing_file.file_id = file_id
+            existing_file.size = size
+            existing_file.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.save()
+            return existing_file.id
+
+        if existing_file and conflict == "keep_both":
+            # Auto-increment name e.g. "report (1).pdf"
+            base_name, ext = (clean_name.rsplit(".", 1)[0], "." + clean_name.rsplit(".", 1)[1]) if "." in clean_name else (clean_name, "")
+            counter = 1
+            existing_names = {getattr(item, "name", "").lower() for item in directory_folder.contents.values() if getattr(item, "type", "") == "file"}
+            new_candidate = f"{base_name} ({counter}){ext}"
+            while new_candidate.lower() in existing_names:
+                counter += 1
+                new_candidate = f"{base_name} ({counter}){ext}"
+            clean_name = new_candidate
+            logger.info(f"Renamed collision to '{clean_name}'.")
+
+        file = File(clean_name, file_id, size, path)
+        directory_folder.contents[file.id] = file
         self.save()
+        return file.id
 
     def get_directory(
         self, path: str, is_admin: bool = True, auth: str = None

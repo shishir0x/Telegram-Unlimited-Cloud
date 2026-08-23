@@ -19,6 +19,7 @@ operations on the stores are effectively atomic for the async use case.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -53,6 +54,74 @@ OTP_VERIFY_RATE_LIMIT = (10, 60)          # 10 verify attempts per 60 seconds pe
 _SESSION_FILE = Path("./cache/auth_sessions.json")
 
 
+def hash_password(plaintext: str, iterations: int = 100_000) -> str:
+    """
+    Hash a plaintext password using PBKDF2-HMAC-SHA256 with a cryptographically secure random salt.
+    Format: pbkdf2:sha256:{iterations}${salt_hex}${hash_hex}
+    """
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", plaintext.encode("utf-8"), salt, iterations)
+    return f"pbkdf2:sha256:{iterations}${salt.hex()}${dk.hex()}"
+
+
+def verify_password(plaintext: str, stored_hash_or_plaintext: str) -> bool:
+    """
+    Constant-time password verification supporting PBKDF2-HMAC-SHA256 hashes,
+    SHA-256 hashes, and plaintext passwords (from .env) with timing-attack immunity.
+    """
+    if not plaintext or not stored_hash_or_plaintext:
+        return False
+
+    # Check for PBKDF2 format: pbkdf2:sha256:100000$salt$hash
+    if stored_hash_or_plaintext.startswith("pbkdf2:sha256:"):
+        try:
+            parts = stored_hash_or_plaintext.split("$")
+            header = parts[0]
+            iterations = int(header.split(":")[2])
+            salt = bytes.fromhex(parts[1])
+            expected_hash = parts[2]
+            computed_dk = hashlib.pbkdf2_hmac("sha256", plaintext.encode("utf-8"), salt, iterations)
+            return secrets.compare_digest(computed_dk.hex(), expected_hash)
+        except Exception as e:
+            logger.warning(f"Error parsing PBKDF2 password format: {e}")
+            return False
+
+    # Check for raw SHA-256 hash (64 hex characters)
+    if len(stored_hash_or_plaintext) == 64 and all(c in "0123456789abcdefABCDEF" for c in stored_hash_or_plaintext):
+        computed_sha = hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+        if secrets.compare_digest(computed_sha.lower(), stored_hash_or_plaintext.lower()):
+            return True
+
+    # Fallback to direct constant-time plaintext comparison (e.g. from .env ADMIN_PASSWORD)
+    return secrets.compare_digest(plaintext.encode("utf-8"), stored_hash_or_plaintext.encode("utf-8"))
+
+
+def sanitize_path(raw_path: Optional[str]) -> str:
+    """
+    Strict path traversal shield. Normalizes slashes, eliminates null bytes, 
+    resolves relative path sequences (../, ..\\), and ensures clean root formatting.
+    """
+    if not raw_path:
+        return "/"
+    
+    import posixpath
+    # Strip null bytes and control chars
+    clean = str(raw_path).replace("\x00", "").replace("\r", "").replace("\n", "").strip()
+    # Normalize backslashes
+    clean = clean.replace("\\", "/")
+    if not clean.startswith("/"):
+        clean = "/" + clean
+
+    # Resolve canonical POSIX path
+    norm = posixpath.normpath(clean)
+    # Collapse any multiple leading slashes into single /
+    import re
+    norm = re.sub(r"^/+", "/", norm)
+    if not norm:
+        norm = "/"
+    return norm
+
+
 def get_client_ip(request: Request) -> str:
     """Extracts client IP address respecting reverse proxies."""
     forwarded = request.headers.get("X-Forwarded-For")
@@ -72,6 +141,7 @@ def get_client_ip(request: Request) -> str:
 class Session:
     token: str
     ip: str = "unknown"
+    csrf_token: str = field(default_factory=lambda: secrets.token_hex(16))
     created_at: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
 
@@ -86,6 +156,7 @@ class Session:
         return {
             "token": self.token,
             "ip": self.ip,
+            "csrf_token": self.csrf_token,
             "created_at": self.created_at,
             "last_seen": self.last_seen,
         }
@@ -95,6 +166,7 @@ class Session:
         return cls(
             token=d["token"],
             ip=d.get("ip", "unknown"),
+            csrf_token=d.get("csrf_token", secrets.token_hex(16)),
             created_at=d.get("created_at", time.time()),
             last_seen=d.get("last_seen", time.time()),
         )

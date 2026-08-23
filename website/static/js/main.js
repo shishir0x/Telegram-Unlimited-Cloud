@@ -1151,28 +1151,121 @@ function openFilePreview() {
             holder.innerHTML = '';
             if (isImage) {
                 holder.innerHTML = `
-                    <img src="${directUrl}" alt="${escapeHtml(item.name)}" 
-                        style="max-width:90vw; max-height:80vh; object-fit:contain;"
-                        onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                    <div class="gd-preview-image-container">
+                        <div class="gd-preview-controls-bar">
+                            <button class="gd-preview-tool-btn" id="img-zoom-out" title="Zoom Out">🔍−</button>
+                            <button class="gd-preview-tool-btn" id="img-zoom-reset" title="Reset Zoom">100%</button>
+                            <button class="gd-preview-tool-btn" id="img-zoom-in" title="Zoom In">🔍+</button>
+                            <button class="gd-preview-tool-btn" id="img-rotate" title="Rotate 90°">🔄 Rotate</button>
+                        </div>
+                        <div class="gd-preview-img-wrapper" id="img-preview-wrapper">
+                            <img id="preview-active-img" src="${directUrl}" alt="${escapeHtml(item.name)}" 
+                                style="max-width:88vw; max-height:76vh; object-fit:contain; transition: transform 0.2s ease;"
+                                onerror="this.style.display='none'; this.parentElement.nextElementSibling.style.display='block';" />
+                        </div>
+                    </div>
                     <div style="display:none; text-align:center; color:#fff; padding:30px;">
                         <div style="font-size:2.5rem; margin-bottom:10px;">⚠️</div>
                         <p>Image preview unavailable. Click below to download directly.</p>
                         <a href="${directUrl}" download="${escapeHtml(item.name)}" class="gd-primary-btn" style="margin-top:12px; display:inline-block;">Download Image</a>
                     </div>`;
+
+                let currentZoom = 1.0;
+                let currentRot = 0;
+                const activeImg = document.getElementById('preview-active-img');
+                const btnZoomIn = document.getElementById('img-zoom-in');
+                const btnZoomOut = document.getElementById('img-zoom-out');
+                const btnZoomReset = document.getElementById('img-zoom-reset');
+                const btnRotate = document.getElementById('img-rotate');
+
+                function updateTransform() {
+                    if (activeImg) {
+                        activeImg.style.transform = `scale(${currentZoom}) rotate(${currentRot}deg)`;
+                    }
+                }
+
+                if (btnZoomIn) btnZoomIn.onclick = () => { currentZoom = Math.min(3.0, currentZoom + 0.25); updateTransform(); };
+                if (btnZoomOut) btnZoomOut.onclick = () => { currentZoom = Math.max(0.4, currentZoom - 0.25); updateTransform(); };
+                if (btnZoomReset) btnZoomReset.onclick = () => { currentZoom = 1.0; currentRot = 0; updateTransform(); };
+                if (btnRotate) btnRotate.onclick = () => { currentRot = (currentRot + 90) % 360; updateTransform(); };
+
             } else if (isVideo) {
                 holder.innerHTML = `
-                    <video controls autoplay playsinline style="max-width:90vw; max-height:80vh;">
-                        <source src="${directUrl}">
-                        Your browser does not support video playback.
-                    </video>`;
+                    <div class="gd-preview-video-container">
+                        <div class="gd-preview-controls-bar">
+                            <span class="gd-preview-bar-label">Speed:</span>
+                            <button class="gd-preview-speed-btn" data-speed="0.75">0.75x</button>
+                            <button class="gd-preview-speed-btn active" data-speed="1.0">1.0x</button>
+                            <button class="gd-preview-speed-btn" data-speed="1.25">1.25x</button>
+                            <button class="gd-preview-speed-btn" data-speed="1.5">1.5x</button>
+                            <button class="gd-preview-speed-btn" data-speed="2.0">2.0x</button>
+                            <button class="gd-preview-tool-btn" id="video-pip-btn" title="Picture in Picture">📺 PiP</button>
+                        </div>
+                        <video id="preview-active-video" controls autoplay playsinline style="max-width:88vw; max-height:76vh; border-radius: 8px;">
+                            <source src="${directUrl}">
+                            Your browser does not support video playback.
+                        </video>
+                    </div>`;
+
+                const videoEl = document.getElementById('preview-active-video');
+                const savedVol = localStorage.getItem('tgdrive_video_vol');
+                if (videoEl && savedVol !== null) {
+                    videoEl.volume = parseFloat(savedVol);
+                }
+
+                if (videoEl) {
+                    videoEl.onvolumechange = () => {
+                        localStorage.setItem('tgdrive_video_vol', videoEl.volume);
+                    };
+                }
+
+                document.querySelectorAll('.gd-preview-speed-btn').forEach(btn => {
+                    btn.onclick = () => {
+                        const spd = parseFloat(btn.getAttribute('data-speed'));
+                        if (videoEl) videoEl.playbackRate = spd;
+                        document.querySelectorAll('.gd-preview-speed-btn').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                    };
+                });
+
+                const pipBtn = document.getElementById('video-pip-btn');
+                if (pipBtn && videoEl) {
+                    if (document.pictureInPictureEnabled) {
+                        pipBtn.onclick = async () => {
+                            try {
+                                if (document.pictureInPictureElement) {
+                                    await document.exitPictureInPicture();
+                                } else {
+                                    await videoEl.requestPictureInPicture();
+                                }
+                            } catch (e) {
+                                console.warn('PiP error:', e);
+                            }
+                        };
+                    } else {
+                        pipBtn.style.display = 'none';
+                    }
+                }
+
             } else if (isAudio) {
                 holder.innerHTML = `
                     <div class="gd-preview-audio-wrap">
                         <div class="gd-preview-audio-icon">🎵</div>
                         <div class="gd-preview-audio-title">${escapeHtml(item.name)}</div>
                         <div class="gd-preview-audio-size">${convertBytes(item.size)}</div>
-                        <audio controls autoplay style="width: 100%; max-width: 420px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>
+                        <audio id="preview-active-audio" controls autoplay style="width: 100%; max-width: 420px; margin-top: 16px;"><source src="${directUrl}">Your browser does not support audio playback.</audio>
                     </div>`;
+                const audioEl = document.getElementById('preview-active-audio');
+                const savedVol = localStorage.getItem('tgdrive_audio_vol');
+                if (audioEl && savedVol !== null) {
+                    audioEl.volume = parseFloat(savedVol);
+                }
+                if (audioEl) {
+                    audioEl.onvolumechange = () => {
+                        localStorage.setItem('tgdrive_audio_vol', audioEl.volume);
+                    };
+                }
+
             } else if (isPdf) {
                 holder.innerHTML = `<iframe src="${directUrl}" class="gd-preview-pdf-frame"></iframe>`;
             } else if (isText) {
@@ -1617,6 +1710,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const shortcutsClose = document.getElementById('shortcuts-modal-close');
     if (shortcutsClose) shortcutsClose.addEventListener('click', closeKeyboardShortcutsModal);
 
+    // Storage Section Click -> Opens Storage Breakdown Modal
+    const storageSection = document.querySelector('.gd-storage-section');
+    if (storageSection) {
+        storageSection.style.cursor = 'pointer';
+        storageSection.addEventListener('click', () => {
+            window.openStorageBreakdownModal();
+        });
+    }
+
+    const sbCloseBtn = document.getElementById('storage-breakdown-close');
+    if (sbCloseBtn) sbCloseBtn.addEventListener('click', window.closeStorageBreakdownModal);
+
     setupDragAndDrop();
     applyViewMode(CURRENT_VIEW_MODE);
     initSyncActivityManager();
@@ -1784,12 +1889,121 @@ window.closeKeyboardShortcutsModal = function() {
 let CMD_PALETTE_ITEMS = [];
 let CMD_PALETTE_ACTIVE_IDX = 0;
 
+window.openStorageBreakdownModal = async function() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('storage-breakdown-modal');
+    if (!modal) return;
+
+    if (bgBlur) {
+        bgBlur.style.zIndex = '100';
+        bgBlur.style.opacity = '1';
+    }
+    modal.style.zIndex = '101';
+    modal.style.opacity = '1';
+
+    // Calculate Storage Breakdown
+    let totalBytes = 0;
+    let totalFiles = 0;
+    let totalFolders = 0;
+
+    const breakdown = {
+        video: { label: 'Videos', size: 0, count: 0, color: '#ea4335', icon: '🎬' },
+        image: { label: 'Images', size: 0, count: 0, color: '#fbbc05', icon: '🖼️' },
+        audio: { label: 'Audio', size: 0, count: 0, color: '#34a853', icon: '🎵' },
+        doc: { label: 'Documents', size: 0, count: 0, color: '#4285f4', icon: '📄' },
+        code: { label: 'Code & Text', size: 0, count: 0, color: '#a142f4', icon: '💻' },
+        archive: { label: 'Archives', size: 0, count: 0, color: '#ff6d01', icon: '📦' },
+        other: { label: 'Other Files', size: 0, count: 0, color: '#5f6368', icon: '📁' }
+    };
+
+    const videoExts = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'ts', 'ogv', 'm4v', '3gp', 'flv'];
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'avif', 'heic', 'heif'];
+    const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus', 'wma'];
+    const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'epub', 'odt', 'ods', 'odp'];
+    const codeExts = ['txt', 'md', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'scss', 'json', 'xml', 'csv', 'log', 'sh', 'bat', 'yaml', 'yml', 'c', 'cpp', 'h', 'java', 'rs', 'go', 'sql', 'env'];
+    const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso'];
+
+    const items = (typeof DIRECTORY_ITEMS !== 'undefined') ? Object.values(DIRECTORY_ITEMS) : [];
+    items.forEach(item => {
+        if (item.type === 'folder') {
+            totalFolders++;
+            return;
+        }
+        totalFiles++;
+        const size = Number(item.size) || 0;
+        totalBytes += size;
+        const ext = (item.name && item.name.includes('.')) ? item.name.split('.').pop().toLowerCase() : '';
+
+        if (videoExts.includes(ext)) {
+            breakdown.video.size += size; breakdown.video.count++;
+        } else if (imageExts.includes(ext)) {
+            breakdown.image.size += size; breakdown.image.count++;
+        } else if (audioExts.includes(ext)) {
+            breakdown.audio.size += size; breakdown.audio.count++;
+        } else if (docExts.includes(ext)) {
+            breakdown.doc.size += size; breakdown.doc.count++;
+        } else if (codeExts.includes(ext)) {
+            breakdown.code.size += size; breakdown.code.count++;
+        } else if (archiveExts.includes(ext)) {
+            breakdown.archive.size += size; breakdown.archive.count++;
+        } else {
+            breakdown.other.size += size; breakdown.other.count++;
+        }
+    });
+
+    const totalSizeEl = document.getElementById('sb-total-size');
+    const totalFilesEl = document.getElementById('sb-total-files');
+    if (totalSizeEl) totalSizeEl.textContent = convertBytes(totalBytes);
+    if (totalFilesEl) totalFilesEl.textContent = `${totalFiles.toLocaleString()} files across ${totalFolders.toLocaleString()} folders in view`;
+
+    // Render stacked bar percentages
+    for (const [key, data] of Object.entries(breakdown)) {
+        const barEl = document.getElementById(`sb-bar-${key}`);
+        if (barEl) {
+            const pct = totalBytes > 0 ? ((data.size / totalBytes) * 100).toFixed(1) : 0;
+            barEl.style.width = `${pct}%`;
+        }
+    }
+
+    // Render categories breakdown list
+    const listEl = document.getElementById('sb-categories-list');
+    if (listEl) {
+        listEl.innerHTML = Object.entries(breakdown).map(([key, data]) => {
+            const pct = totalBytes > 0 ? ((data.size / totalBytes) * 100).toFixed(1) : 0;
+            return `
+                <div class="gd-sb-cat-row">
+                    <div class="gd-sb-cat-icon" style="background: ${data.color}22; color: ${data.color};">${data.icon}</div>
+                    <div class="gd-sb-cat-info">
+                        <div class="gd-sb-cat-title-row">
+                            <span class="gd-sb-cat-name">${data.label}</span>
+                            <span class="gd-sb-cat-size">${convertBytes(data.size)} (${pct}%)</span>
+                        </div>
+                        <div class="gd-sb-cat-subtext">${data.count.toLocaleString()} item(s)</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+};
+
+window.closeStorageBreakdownModal = function() {
+    const bgBlur = document.getElementById('bg-blur');
+    const modal = document.getElementById('storage-breakdown-modal');
+    if (bgBlur) bgBlur.style.opacity = '0';
+    if (modal) modal.style.opacity = '0';
+    setTimeout(() => {
+        if (bgBlur) bgBlur.style.zIndex = '-1';
+        if (modal) modal.style.zIndex = '-1';
+    }, 200);
+};
+
 function getStaticCommands() {
     return [
         { id: 'nav-my-drive', label: 'Go to My Drive', icon: '🏠', action: () => navigateToPath('/') },
         { id: 'nav-recent', label: 'Go to Recent Files', icon: '🕒', action: () => navigateToPath('/recent') },
         { id: 'nav-trash', label: 'Go to Trash', icon: '🗑️', action: () => navigateToPath('/trash') },
         { id: 'nav-sync', label: 'View Live Sync Activity', icon: '⚡', action: () => window.showSyncActivityView() },
+        { id: 'nav-storage', label: 'View Cloud Storage Breakdown', icon: '📊', action: () => window.openStorageBreakdownModal() },
         { id: 'act-new-folder', label: 'Create New Folder', icon: '📁', action: () => { const b = document.getElementById('new-folder-btn'); if (b) b.click(); } },
         { id: 'act-upload-file', label: 'Upload Local File', icon: '⬆️', action: () => { const b = document.getElementById('file-input'); if (b) b.click(); } },
         { id: 'act-upload-url', label: 'Upload from URL', icon: '🌐', action: () => { const b = document.getElementById('url-upload'); if (b) b.click(); } },

@@ -13,6 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
     <link rel="icon" href="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" />
+    <link rel="manifest" href="static/manifest.json" />
 </head>
 
 <body>
@@ -717,6 +718,52 @@
         </div>
     </div>
 
+    <!-- File Conflict Resolution Modal -->
+    <div id="conflict-resolution-modal" class="gd-modal" style="max-width: 460px;">
+        <div class="gd-modal-title">⚠️ File Already Exists</div>
+        <div class="gd-modal-body">
+            <p id="conflict-modal-message" class="gd-conflict-subtext">A file with this name already exists in this folder. What would you like to do?</p>
+            <div class="gd-conflict-file-box">
+                <div class="gd-conflict-file-icon">📄</div>
+                <div class="gd-conflict-file-info">
+                    <div id="conflict-file-name" class="gd-conflict-filename">file.ext</div>
+                    <div id="conflict-file-details" class="gd-conflict-meta">--</div>
+                </div>
+            </div>
+        </div>
+        <div class="gd-modal-footer gd-conflict-footer">
+            <button id="conflict-cancel-btn" class="gd-secondary-btn">Cancel</button>
+            <button id="conflict-keep-both-btn" class="gd-secondary-btn">Keep Both</button>
+            <button id="conflict-replace-btn" class="gd-primary-btn">Replace</button>
+        </div>
+    </div>
+
+    <!-- Storage Breakdown Modal -->
+    <div id="storage-breakdown-modal" class="gd-modal" style="max-width: 520px;">
+        <div class="gd-modal-title">📊 Cloud Storage Breakdown</div>
+        <div class="gd-modal-body gd-storage-breakdown-body">
+            <div class="gd-storage-stat-banner">
+                <div class="gd-stat-big-val" id="sb-total-size">0.00 MB</div>
+                <div class="gd-stat-sub" id="sb-total-files">0 files across 0 folders</div>
+            </div>
+            <div class="gd-storage-progress-stacked" id="sb-stacked-bar">
+                <div class="gd-sb-bar bar-video" id="sb-bar-video" style="width: 0%;" title="Videos"></div>
+                <div class="gd-sb-bar bar-image" id="sb-bar-image" style="width: 0%;" title="Images"></div>
+                <div class="gd-sb-bar bar-audio" id="sb-bar-audio" style="width: 0%;" title="Audio"></div>
+                <div class="gd-sb-bar bar-doc" id="sb-bar-doc" style="width: 0%;" title="Documents"></div>
+                <div class="gd-sb-bar bar-code" id="sb-bar-code" style="width: 0%;" title="Code & Text"></div>
+                <div class="gd-sb-bar bar-archive" id="sb-bar-archive" style="width: 0%;" title="Archives"></div>
+                <div class="gd-sb-bar bar-other" id="sb-bar-other" style="width: 0%;" title="Other"></div>
+            </div>
+            <div class="gd-storage-categories" id="sb-categories-list">
+                <!-- dynamic category items -->
+            </div>
+        </div>
+        <div class="gd-modal-footer">
+            <button id="storage-breakdown-close" class="gd-primary-btn">Close</button>
+        </div>
+    </div>
+
     <!-- Scripts -->
 
     <script src="static/js/extra.js?v=9.0"></script>
@@ -724,6 +771,13 @@
     <script src="static/js/sidebar.js?v=9.0"></script>
     <script src="static/js/fileClickHandler.js?v=9.0"></script>
     <script src="static/js/main.js?v=9.0"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+            });
+        }
+    </script>
 </body>
 
 </html>

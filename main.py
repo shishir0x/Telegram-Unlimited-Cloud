@@ -29,6 +29,8 @@ from utils.auth import (
     SESSION_TTL_SECONDS,
     get_client_ip,
     is_admin_authenticated,
+    verify_password,
+    sanitize_path,
 )
 from utils.email_service import email_service, EmailDeliveryError
 from utils.clients import initialize_clients
@@ -192,7 +194,7 @@ async def dl_file(request: Request):
     if not path:
         raise HTTPException(status_code=400, detail="Missing path parameter")
 
-    clean_path = ("/" + (path or "").replace("/share_", "").replace("share_", "").strip("/")).replace("//", "/")
+    clean_path = sanitize_path(path.replace("/share_", "").replace("share_", "").strip("/"))
     auth = request.query_params.get("auth")
     is_admin = is_admin_authenticated(request)
 
@@ -240,9 +242,9 @@ async def download_zip(request: Request):
 
     target_paths = []
     if raw_paths:
-        target_paths = [p.strip() for p in raw_paths.split(",") if p.strip()]
+        target_paths = [sanitize_path(p.strip()) for p in raw_paths.split(",") if p.strip()]
     elif raw_path:
-        target_paths = [raw_path.strip()]
+        target_paths = [sanitize_path(raw_path.strip())]
 
     if not target_paths:
         raise HTTPException(status_code=400, detail="Missing path or paths parameter")
@@ -535,7 +537,7 @@ async def get_thumbnail(request: Request):
     if not path:
         raise HTTPException(status_code=400, detail="Missing path parameter")
 
-    clean_path = ("/" + (path or "").replace("/share_", "").replace("share_", "").strip("/")).replace("//", "/")
+    clean_path = sanitize_path(path.replace("/share_", "").replace("share_", "").strip("/"))
     auth = request.query_params.get("auth")
     is_admin = is_admin_authenticated(request)
 
@@ -597,11 +599,7 @@ async def api_check_password(request: Request):
         return JSONResponse({"status": "Invalid payload"}, status_code=400)
 
     submitted_password = str(data.get("password") or data.get("pass") or "").strip()
-    if not submitted_password or not ADMIN_PASSWORD:
-        await asyncio.sleep(0.3)
-        return JSONResponse({"status": "Invalid password"}, status_code=401)
-
-    if not secrets.compare_digest(submitted_password.encode(), ADMIN_PASSWORD.encode()):
+    if not submitted_password or not ADMIN_PASSWORD or not verify_password(submitted_password, ADMIN_PASSWORD):
         await asyncio.sleep(0.3)
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
@@ -641,9 +639,7 @@ async def api_login(request: Request):
     email_ok = bool(ADMIN_EMAIL) and secrets.compare_digest(
         submitted_email.encode(), ADMIN_EMAIL.strip().lower().encode()
     )
-    password_ok = bool(ADMIN_PASSWORD) and secrets.compare_digest(
-        str(submitted_password).encode(), str(ADMIN_PASSWORD).encode()
-    )
+    password_ok = bool(ADMIN_PASSWORD) and verify_password(str(submitted_password), str(ADMIN_PASSWORD))
 
     if not (email_ok and password_ok):
         # Uniform delay to prevent timing-based enumeration
@@ -777,21 +773,23 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
     drive = ensure_drive_data()
 
     data = await request.json()
+    safe_path = sanitize_path(data.get("path", "/"))
+    folder_name = sanitize_path(data.get("name", "")).strip("/")
 
-    logger.info(f"createNewFolder path={data.get('path')} name={data.get('name')}")
-    target_dir = drive.get_directory(data["path"])
+    logger.info(f"createNewFolder path={safe_path} name={folder_name}")
+    target_dir = drive.get_directory(safe_path)
     if target_dir and hasattr(target_dir, "contents"):
         for id in target_dir.contents:
             f = target_dir.contents[id]
             if f.type == "folder":
-                if f.name == data["name"]:
+                if f.name.lower() == folder_name.lower():
                     return JSONResponse(
                         {
                             "status": "Folder with the name already exist in current directory"
                         }
                     )
 
-    drive.new_folder(data["path"], data["name"])
+    drive.new_folder(safe_path, folder_name)
     return JSONResponse({"status": "ok"})
 
 
@@ -806,7 +804,8 @@ async def api_get_directory(request: Request):
         data = {}
 
     auth = data.get("auth")
-    path = data.get("path", "/")
+    raw_path = data.get("path", "/")
+    path = sanitize_path(raw_path) if not (raw_path.startswith("/tags/") or "/search_" in raw_path or raw_path.startswith("/share_") or raw_path == "/trash" or raw_path == "/recent") else raw_path
     is_admin = is_admin_authenticated(request)
 
     logger.info(f"getFolder path={path} is_admin={is_admin}")
@@ -845,7 +844,7 @@ async def api_get_directory(request: Request):
         folder_data = convert_class_to_dict(search_data, isObject=False, showtrash=False)
 
     elif "/share_" in path or path.startswith("share_"):
-        share_path = path.replace("/share_", "").replace("share_", "").strip("/")
+        share_path = sanitize_path(path.replace("/share_", "").replace("share_", "").strip("/"))
         res = drive.get_directory(share_path, is_admin=is_admin, auth=auth)
         if not res:
             return JSONResponse({"status": "Folder not found or access expired"}, status_code=404)
@@ -888,10 +887,12 @@ async def move_file_folder(request: Request, _auth: Session = Depends(require_au
     drive = ensure_drive_data()
 
     data = await request.json()
+    src_path = sanitize_path(data.get("src_path", ""))
+    dest_path = sanitize_path(data.get("dest_path", "/"))
 
-    logger.info(f"moveFileFolder src={data.get('src_path')} dest={data.get('dest_path')}")
+    logger.info(f"moveFileFolder src={src_path} dest={dest_path}")
     try:
-        drive.move_file_folder(data["src_path"], data["dest_path"])
+        drive.move_file_folder(src_path, dest_path)
         return JSONResponse({"status": "ok"})
     except Exception as e:
         logger.error(f"Error moving file/folder: {e}")
@@ -904,15 +905,62 @@ async def copy_file_folder_api(request: Request, _auth: Session = Depends(requir
     drive = ensure_drive_data()
 
     data = await request.json()
+    src_path = sanitize_path(data.get("src_path", ""))
+    dest_path = sanitize_path(data.get("dest_path", "/")) if data.get("dest_path") else None
 
-    logger.info(f"copyFileFolder src={data.get('src_path')} dest={data.get('dest_path')}")
+    logger.info(f"copyFileFolder src={src_path} dest={dest_path}")
     try:
-        new_id = drive.copy_file_folder(data["src_path"], data.get("dest_path"))
+        new_id = drive.copy_file_folder(src_path, dest_path)
         return JSONResponse({"status": "ok", "new_id": new_id})
     except Exception as e:
         logger.error(f"Error copying file/folder: {e}")
         return JSONResponse({"status": str(e)}, status_code=400)
 
+
+
+@app.post("/api/checkFileExists")
+async def api_check_file_exists(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Checks if a file with the given name already exists in the target folder.
+    Used for pre-upload conflict resolution prompts (Replace vs Keep Both vs Cancel).
+    """
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"status": "Invalid payload"}, status_code=400)
+
+    target_path = sanitize_path(data.get("path", "/"))
+    filename = str(data.get("filename", "")).strip()
+
+    if not filename:
+        return JSONResponse({"exists": False})
+
+    folder_res = drive.get_directory(target_path, is_admin=True)
+    folder_obj = folder_res[0] if isinstance(folder_res, tuple) else folder_res
+
+    exists = False
+    existing_size = 0
+    existing_id = None
+
+    if folder_obj and hasattr(folder_obj, "contents"):
+        for item in folder_obj.contents.values():
+            if getattr(item, "type", "") == "file" and getattr(item, "name", "").lower() == filename.lower():
+                exists = True
+                existing_size = getattr(item, "size", 0)
+                existing_id = getattr(item, "id", None)
+                break
+
+    return JSONResponse({
+        "status": "ok",
+        "exists": exists,
+        "filename": filename,
+        "existing_size": existing_size,
+        "existing_id": existing_id,
+        "path": target_path
+    })
 
 
 SAVE_PROGRESS = {}
@@ -925,9 +973,12 @@ async def upload_file(
     path: str = Form(...),
     id: str = Form(...),
     total_size: str = Form(...),
+    conflict: str = Form("keep_both"),
     _auth: Session = Depends(require_auth),
 ):
     global SAVE_PROGRESS
+
+    safe_path = sanitize_path(path)
 
     # Sanitize upload ID and file extensions to prevent path traversal
     safe_id = "".join(c for c in str(id) if c.isalnum() or c in ("-", "_"))[:64]
@@ -972,7 +1023,7 @@ async def upload_file(
     SAVE_PROGRESS[safe_id] = ("completed", file_size, file_size)
 
     asyncio.create_task(
-        start_file_uploader(file_location, safe_id, path, safe_filename, file_size)
+        start_file_uploader(file_location, safe_id, safe_path, safe_filename, file_size, conflict=conflict)
     )
 
     return JSONResponse({"id": safe_id, "status": "ok"})
@@ -1048,9 +1099,11 @@ async def rename_file_folder(request: Request, _auth: Session = Depends(require_
     drive = ensure_drive_data()
 
     data = await request.json()
+    safe_path = sanitize_path(data.get("path", ""))
+    safe_name = sanitize_path(data.get("name", "")).strip("/")
 
-    logger.info(f"renameFileFolder path={data.get('path')} name={data.get('name')}")
-    drive.rename_file_folder(data["path"], data["name"])
+    logger.info(f"renameFileFolder path={safe_path} name={safe_name}")
+    drive.rename_file_folder(safe_path, safe_name)
     return JSONResponse({"status": "ok"})
 
 
@@ -1060,7 +1113,7 @@ async def tag_file_folder(request: Request, _auth: Session = Depends(require_aut
     drive = ensure_drive_data()
 
     data = await request.json()
-    path = data.get("path")
+    path = sanitize_path(data.get("path", ""))
     action = data.get("action", "add")  # 'add' or 'remove'
     tag = data.get("tag", "").strip()
 
@@ -1084,9 +1137,11 @@ async def trash_file_folder(request: Request, _auth: Session = Depends(require_a
     drive = ensure_drive_data()
 
     data = await request.json()
+    safe_path = sanitize_path(data.get("path", ""))
+    trash_val = bool(data.get("trash", True))
 
-    logger.info(f"trashFileFolder path={data.get('path')} trash={data.get('trash')}")
-    drive.trash_file_folder(data["path"], data["trash"])
+    logger.info(f"trashFileFolder path={safe_path} trash={trash_val}")
+    drive.trash_file_folder(safe_path, trash_val)
     return JSONResponse({"status": "ok"})
 
 
@@ -1097,8 +1152,9 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
     drive = ensure_drive_data()
 
     data = await request.json()
-    logger.info(f"deleteFileFolder path={data.get('path')}")
-    deleted_msg_ids = drive.delete_file_folder(data["path"])
+    safe_path = sanitize_path(data.get("path", ""))
+    logger.info(f"deleteFileFolder path={safe_path}")
+    deleted_msg_ids = drive.delete_file_folder(safe_path)
 
     # Delete message(s) from Telegram Storage Channel
     if deleted_msg_ids:
@@ -1121,7 +1177,8 @@ async def bulk_delete_api(request: Request, _auth: Session = Depends(require_aut
     drive = ensure_drive_data()
 
     data = await request.json()
-    paths = data.get("paths", [])
+    raw_paths = data.get("paths", [])
+    paths = [sanitize_path(p) for p in raw_paths if p]
     logger.info(f"bulkDelete {len(paths)} path(s)")
     if not paths:
         return JSONResponse({"status": "ok", "deleted_count": 0})
@@ -1150,7 +1207,8 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
     drive = ensure_drive_data()
 
     data = await request.json()
-    paths = data.get("paths", [])
+    raw_paths = data.get("paths", [])
+    paths = [sanitize_path(p) for p in raw_paths if p]
     trash = bool(data.get("trash", True))
     logger.info(f"bulkTrash {len(paths)} path(s) to trash={trash}")
 
@@ -1176,12 +1234,14 @@ async def getFileInfoFromUrl(request: Request, _auth: Session = Depends(require_
 @app.post("/api/startFileDownloadFromUrl")
 async def startFileDownloadFromUrl(request: Request, _auth: Session = Depends(require_auth)):
     data = await request.json()
+    safe_path = sanitize_path(data.get("path", "/"))
+    safe_name = sanitize_path(data.get("filename", "downloaded_file")).strip("/")
 
-    logger.info(f"startFileDownloadFromUrl filename={data.get('filename')} path={data.get('path')}")
+    logger.info(f"startFileDownloadFromUrl filename={safe_name} path={safe_path}")
     try:
         id = getRandomID()
         asyncio.create_task(
-            download_file(data["url"], id, data["path"], data["filename"], data["singleThreaded"])
+            download_file(data["url"], id, safe_path, safe_name, data["singleThreaded"])
         )
         return JSONResponse({"status": "ok", "id": id})
     except Exception as e:
@@ -1209,11 +1269,12 @@ async def getFolderShareAuth(request: Request, _auth: Session = Depends(require_
     drive = ensure_drive_data()
 
     data = await request.json()
+    safe_path = sanitize_path(data.get("path", "/"))
 
-    logger.info(f"getFolderShareAuth path={data.get('path')}")
+    logger.info(f"getFolderShareAuth path={safe_path}")
 
     try:
-        auth = drive.get_folder_auth(data["path"])
+        auth = drive.get_folder_auth(safe_path)
         return JSONResponse({"status": "ok", "auth": auth})
     except Exception:
         return JSONResponse({"status": "not found"})

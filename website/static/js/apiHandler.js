@@ -379,7 +379,75 @@ let uploadID = null;
 let UPLOAD_QUEUE = [];
 let IS_UPLOADING_QUEUE = false;
 
-function uploadFilesQueue(files, targetPath) {
+function promptFileConflict(file, destPath, existingInfo) {
+    return new Promise((resolve) => {
+        const bgBlur = document.getElementById('bg-blur');
+        const modal = document.getElementById('conflict-resolution-modal');
+        const nameEl = document.getElementById('conflict-file-name');
+        const detailsEl = document.getElementById('conflict-file-details');
+        const replaceBtn = document.getElementById('conflict-replace-btn');
+        const keepBothBtn = document.getElementById('conflict-keep-both-btn');
+        const cancelBtn = document.getElementById('conflict-cancel-btn');
+
+        if (!modal) {
+            // Fallback to confirm prompt if modal DOM is missing
+            const ans = confirm(`"${file.name}" already exists in this folder.\n\nClick OK to Replace, or Cancel to Keep Both.`);
+            resolve(ans ? 'replace' : 'keep_both');
+            return;
+        }
+
+        if (nameEl) nameEl.textContent = file.name;
+        if (detailsEl) {
+            const newSize = typeof convertBytes === 'function' ? convertBytes(file.size) : (file.size + ' B');
+            const oldSize = existingInfo && existingInfo.size ? (typeof convertBytes === 'function' ? convertBytes(existingInfo.size) : existingInfo.size + ' B') : 'Existing';
+            detailsEl.textContent = `New upload: ${newSize} • Existing on cloud: ${oldSize}`;
+        }
+
+        function closeModal() {
+            if (bgBlur) bgBlur.style.opacity = '0';
+            if (modal) modal.style.opacity = '0';
+            setTimeout(() => {
+                if (bgBlur) bgBlur.style.zIndex = '-1';
+                if (modal) modal.style.zIndex = '-1';
+            }, 200);
+            cleanup();
+        }
+
+        function onReplace() {
+            closeModal();
+            resolve('replace');
+        }
+
+        function onKeepBoth() {
+            closeModal();
+            resolve('keep_both');
+        }
+
+        function onCancel() {
+            closeModal();
+            resolve('cancel');
+        }
+
+        function cleanup() {
+            if (replaceBtn) replaceBtn.removeEventListener('click', onReplace);
+            if (keepBothBtn) keepBothBtn.removeEventListener('click', onKeepBoth);
+            if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
+        }
+
+        if (replaceBtn) replaceBtn.addEventListener('click', onReplace);
+        if (keepBothBtn) keepBothBtn.addEventListener('click', onKeepBoth);
+        if (cancelBtn) cancelBtn.addEventListener('click', onCancel);
+
+        if (bgBlur) {
+            bgBlur.style.zIndex = '100';
+            bgBlur.style.opacity = '1';
+        }
+        modal.style.zIndex = '101';
+        modal.style.opacity = '1';
+    });
+}
+
+async function uploadFilesQueue(files, targetPath) {
     if (!files || files.length === 0) return;
     const destPath = targetPath || getCurrentPath();
 
@@ -389,7 +457,23 @@ function uploadFilesQueue(files, targetPath) {
             showToast(`⚠️ "${file.name}" exceeds ${(MAX_FILE_SIZE / (1024 * 1024 * 1024)).toFixed(2)} GB limit`);
             continue;
         }
-        UPLOAD_QUEUE.push({ file: file, path: destPath });
+
+        // Check if file already exists in this path
+        let conflictChoice = 'keep_both';
+        try {
+            const checkRes = await postJson('/api/checkFileExists', { path: destPath, filename: file.name });
+            if (checkRes && checkRes.exists) {
+                conflictChoice = await promptFileConflict(file, destPath, checkRes);
+                if (conflictChoice === 'cancel') {
+                    showToast(`Skipped upload for "${file.name}"`);
+                    continue;
+                }
+            }
+        } catch (e) {
+            conflictChoice = 'keep_both';
+        }
+
+        UPLOAD_QUEUE.push({ file: file, path: destPath, conflict: conflictChoice });
     }
 
     if (!IS_UPLOADING_QUEUE && UPLOAD_QUEUE.length > 0) {
@@ -417,6 +501,7 @@ async function processUploadQueue() {
     const currentItem = UPLOAD_QUEUE.shift();
     const file = currentItem.file;
     const path = currentItem.path;
+    const conflictMode = currentItem.conflict || 'keep_both';
     const remaining = UPLOAD_QUEUE.length;
 
     const uploaderCard = document.getElementById('file-uploader');
@@ -435,7 +520,7 @@ async function processUploadQueue() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('path', path);
-    // No password in form data — auth is via HttpOnly session cookie
+    formData.append('conflict', conflictMode);
     const id = getRandomId();
     formData.append('id', id);
     formData.append('total_size', file.size);
