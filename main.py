@@ -837,10 +837,10 @@ async def api_get_directory(request: Request):
         tagged_data = {"contents": drive.get_tagged_items(tag_name)}
         folder_data = convert_class_to_dict(tagged_data, isObject=False, showtrash=False)
 
-    elif "/search_" in path:
+    elif "/search_" in path or path == "/search":
         if not is_admin:
             raise HTTPException(status_code=401, detail="Unauthorized access to search")
-        query = urllib.parse.unquote(path.split("_", 1)[1])
+        query = urllib.parse.unquote(path.split("_", 1)[1]) if "/search_" in path else ""
         search_data = {"contents": drive.search_file_folder(query)}
         folder_data = convert_class_to_dict(search_data, isObject=False, showtrash=False)
 
@@ -1179,6 +1179,70 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
     # Immediately trigger asynchronous Telegram backup
     asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok", "deleted_msg_count": len(deleted_msg_ids)})
+
+@app.post("/api/search")
+async def api_search_drive(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import ensure_drive_data
+    from utils.extra import convert_class_to_dict
+    drive = ensure_drive_data()
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    query = str(data.get("query", "")).strip()
+    search_root = data.get("search_root", "/") or "/"
+    item_type = data.get("item_type", "all") or "all"
+    min_size = data.get("min_size")
+    max_size = data.get("max_size")
+    date_filter = data.get("date_filter")
+    date_after = data.get("date_after")
+    date_before = data.get("date_before")
+    extension = data.get("extension")
+
+    try:
+        min_size = int(min_size) if min_size is not None and str(min_size).isdigit() else None
+    except Exception:
+        min_size = None
+
+    try:
+        max_size = int(max_size) if max_size is not None and str(max_size).isdigit() else None
+    except Exception:
+        max_size = None
+
+    raw_results = drive.search_file_folder(
+        query=query,
+        search_root=search_root,
+        item_type=item_type,
+        min_size=min_size,
+        max_size=max_size,
+        date_filter=date_filter,
+        date_after=date_after,
+        date_before=date_before,
+        extension=extension,
+    )
+
+    converted = convert_class_to_dict({"contents": raw_results}, isObject=False, showtrash=False)
+    breadcrumbs = [{"name": "Search Results", "path": f"/search_{urllib.parse.quote(query)}" if query else "/search"}]
+
+    return JSONResponse({
+        "status": "ok",
+        "query": query,
+        "filters": {
+            "search_root": search_root,
+            "item_type": item_type,
+            "min_size": min_size,
+            "max_size": max_size,
+            "date_filter": date_filter,
+            "date_after": date_after,
+            "date_before": date_before,
+            "extension": extension,
+        },
+        "count": len(converted.get("contents", {})),
+        "data": converted,
+        "breadcrumbs": breadcrumbs
+    })
 
 
 @app.post("/api/bulkDelete")

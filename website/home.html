@@ -44,6 +44,85 @@
                 <button class="gd-filter-btn" id="search-filter-btn" title="Search options">
                     <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
                 </button>
+
+                <!-- Google Drive Search Options Popover -->
+                <div class="gd-search-filter-popover" id="gd-search-filter-popover">
+                    <div class="gd-filter-popover-header">
+                        <span>Search options</span>
+                        <button type="button" class="gd-filter-popover-close" id="filter-popover-close" title="Close">✕</button>
+                    </div>
+                    <form id="search-filter-form" class="gd-filter-popover-body">
+                        <div class="gd-filter-row">
+                            <label for="filter-type-select">Type</label>
+                            <select id="filter-type-select" class="gd-filter-select">
+                                <option value="all" selected>Any</option>
+                                <option value="document">Documents</option>
+                                <option value="spreadsheet">Spreadsheets</option>
+                                <option value="presentation">Presentations</option>
+                                <option value="image">Photos & images</option>
+                                <option value="pdf">PDFs</option>
+                                <option value="video">Videos</option>
+                                <option value="audio">Audio</option>
+                                <option value="archive">Archives (ZIP, RAR, etc.)</option>
+                                <option value="code">Code & Text</option>
+                                <option value="folder">Folders</option>
+                            </select>
+                        </div>
+
+                        <div class="gd-filter-row">
+                            <label for="filter-location-select">Location</label>
+                            <select id="filter-location-select" class="gd-filter-select">
+                                <option value="/" selected>Anywhere in Drive</option>
+                                <option value="current">Current folder</option>
+                                <option value="/C_Drive">C_Drive</option>
+                                <option value="/D_Drive">D_Drive</option>
+                                <option value="/OnePlus_Nord_CE4">OnePlus Nord CE4</option>
+                            </select>
+                        </div>
+
+                        <div class="gd-filter-row">
+                            <label for="filter-date-select">Date modified</label>
+                            <select id="filter-date-select" class="gd-filter-select">
+                                <option value="any" selected>Anytime</option>
+                                <option value="today">Today</option>
+                                <option value="7days">Last 7 days</option>
+                                <option value="30days">Last 30 days</option>
+                                <option value="year">This year (2026)</option>
+                                <option value="custom">Custom date range...</option>
+                            </select>
+                        </div>
+
+                        <div class="gd-filter-row gd-filter-custom-date" id="filter-custom-date-row" style="display: none;">
+                            <label>Date range</label>
+                            <div class="gd-date-inputs">
+                                <input type="date" id="filter-date-after" class="gd-filter-input" title="From date" />
+                                <span>to</span>
+                                <input type="date" id="filter-date-before" class="gd-filter-input" title="To date" />
+                            </div>
+                        </div>
+
+                        <div class="gd-filter-row">
+                            <label for="filter-size-select">Item size</label>
+                            <select id="filter-size-select" class="gd-filter-select">
+                                <option value="any" selected>Any size</option>
+                                <option value="small">Small (&lt; 1 MB)</option>
+                                <option value="medium">Medium (1 MB – 25 MB)</option>
+                                <option value="large">Large (25 MB – 100 MB)</option>
+                                <option value="huge">Huge (&gt; 100 MB)</option>
+                            </select>
+                        </div>
+
+                        <div class="gd-filter-row">
+                            <label for="filter-words-input">Item name</label>
+                            <input type="text" id="filter-words-input" class="gd-filter-input" placeholder="Enter a term that matches part of the file name" />
+                        </div>
+
+                        <div class="gd-filter-popover-footer">
+                            <button type="button" class="gd-btn-text" id="filter-reset-btn">Reset</button>
+                            <button type="submit" class="gd-btn-primary" id="filter-apply-btn">Search</button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
 
@@ -193,6 +272,24 @@
                     </button>
                     <button class="gd-tool-btn" id="toggle-info-pane" title="View details">
                         <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Google Drive Search Results Header Banner -->
+            <div class="gd-search-results-banner" id="search-results-banner" style="display: none;">
+                <div class="gd-search-banner-left">
+                    <div class="gd-search-banner-title" id="search-banner-title">
+                        <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                        <span id="search-banner-query-text">Search results</span>
+                    </div>
+                    <span class="gd-search-banner-count" id="search-banner-count">0 items found</span>
+                    <div class="gd-search-active-filters" id="search-active-filters"></div>
+                </div>
+                <div class="gd-search-banner-right">
+                    <button class="gd-clear-search-pill" id="banner-clear-search-btn" title="Exit search and return to previous folder" onclick="if(typeof clearSearch==='function') clearSearch();">
+                        <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                        <span>Clear search</span>
                     </button>
                 </div>
             </div>

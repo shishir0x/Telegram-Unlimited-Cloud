@@ -758,7 +758,7 @@ function getItemProvenance(item) {
                         ${isSearch ? `
                         <div class="gd-search-path-subline" style="margin-left: 58px;">
                             ${prov.badge}
-                            <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
+                            <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
                         </div>` : ''}
                     </div>
                 </td>
@@ -793,7 +793,7 @@ function getItemProvenance(item) {
                     ${isSearch ? `
                     <div class="gd-search-path-subline" style="margin-top:0;">
                         ${prov.badge}
-                        <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
+                        <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
                     </div>` : ''}
                 </div>
             </div>
@@ -840,7 +840,7 @@ function getItemProvenance(item) {
                         ${isSearch ? `
                         <div class="gd-search-path-subline" style="margin-left: 58px;">
                             ${prov.badge}
-                            <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
+                            <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">📁 ${escapeHtml(prov.parentPath)}</span>
                         </div>` : ''}
                     </div>
                 </td>
@@ -908,7 +908,7 @@ function getItemProvenance(item) {
                 ${isSearch ? `
                 <div class="gd-search-path-subline" style="margin-top: 4px;">
                     ${prov.badge}
-                    <span class="gd-search-path-text" title="Stored in: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
+                    <span class="gd-search-path-text" style="cursor: pointer;" onclick="event.stopPropagation(); navigateToPath('${escapeHtml(item.path)}');" title="Jump to folder: ${escapeHtml(prov.parentPath)}">${escapeHtml(prov.parentPath)}</span>
                 </div>` : ''}
             </div>
         `;
@@ -1688,34 +1688,355 @@ function setupDragAndDrop() {
     }
 }
 
-// App Initialization
-document.addEventListener('DOMContentLoaded', () => {
+// --- Google Drive-Style Deep Search Controller ---
+window.IS_SEARCH_ACTIVE = false;
+window.PRE_SEARCH_PATH = '/';
+window.SEARCH_ABORT_CONTROLLER = null;
+window.SEARCH_REQUEST_ID = 0;
+window.CURRENT_SEARCH_QUERY = '';
+window.CURRENT_SEARCH_FILTERS = {};
+window.SEARCH_DEBOUNCE_TIMER = null;
+
+function initDriveSearch() {
     const searchForm = document.getElementById('search-form');
     const searchInput = document.getElementById('file-search');
     const searchClear = document.getElementById('search-clear-btn');
+    const filterBtn = document.getElementById('search-filter-btn');
+    const filterPopover = document.getElementById('gd-search-filter-popover');
+    const filterClose = document.getElementById('filter-popover-close');
+    const filterForm = document.getElementById('search-filter-form');
+    const filterDateSelect = document.getElementById('filter-date-select');
+    const customDateRow = document.getElementById('filter-custom-date-row');
+    const filterResetBtn = document.getElementById('filter-reset-btn');
+    const bannerClearBtn = document.getElementById('banner-clear-search-btn');
 
+    // 1. Popover Toggle & Close
+    if (filterBtn && filterPopover) {
+        filterBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            filterPopover.classList.toggle('active');
+        });
+    }
+
+    if (filterClose && filterPopover) {
+        filterClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            filterPopover.classList.remove('active');
+        });
+    }
+
+    // Close popover when clicking outside
+    document.addEventListener('click', (e) => {
+        if (filterPopover && filterPopover.classList.contains('active')) {
+            if (!filterPopover.contains(e.target) && e.target !== filterBtn && (!filterBtn || !filterBtn.contains(e.target))) {
+                filterPopover.classList.remove('active');
+            }
+        }
+    });
+
+    // 2. Custom Date Range Visibility
+    if (filterDateSelect && customDateRow) {
+        filterDateSelect.addEventListener('change', () => {
+            if (filterDateSelect.value === 'custom') {
+                customDateRow.style.display = 'flex';
+            } else {
+                customDateRow.style.display = 'none';
+            }
+        });
+    }
+
+    // 3. Reset Filters
+    if (filterResetBtn && filterForm) {
+        filterResetBtn.addEventListener('click', () => {
+            filterForm.reset();
+            if (customDateRow) customDateRow.style.display = 'none';
+            window.CURRENT_SEARCH_FILTERS = {};
+        });
+    }
+
+    // 4. Form Submit (Search Button in popover)
+    if (filterForm) {
+        filterForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (filterPopover) filterPopover.classList.remove('active');
+
+            const typeVal = document.getElementById('filter-type-select')?.value || 'all';
+            const locVal = document.getElementById('filter-location-select')?.value || '/';
+            const dateVal = document.getElementById('filter-date-select')?.value || 'any';
+            const afterVal = document.getElementById('filter-date-after')?.value || '';
+            const beforeVal = document.getElementById('filter-date-before')?.value || '';
+            const sizeVal = document.getElementById('filter-size-select')?.value || 'any';
+            const nameVal = document.getElementById('filter-words-input')?.value.trim() || '';
+            const mainQuery = searchInput ? searchInput.value.trim() : '';
+
+            const query = nameVal || mainQuery;
+            if (searchInput && nameVal) {
+                searchInput.value = nameVal;
+                if (searchClear) searchClear.style.display = 'flex';
+            }
+
+            // Construct filters
+            const filters = {};
+            if (typeVal && typeVal !== 'all') filters.type = typeVal;
+            if (locVal === 'current') {
+                filters.location = window.PRE_SEARCH_PATH || getCurrentPath() || '/';
+            } else if (locVal && locVal !== '/') {
+                filters.location = locVal;
+            }
+
+            if (dateVal === 'custom') {
+                if (afterVal) filters.date_after = afterVal;
+                if (beforeVal) filters.date_before = beforeVal;
+            } else if (dateVal && dateVal !== 'any') {
+                filters.date_range = dateVal;
+            }
+
+            if (sizeVal === 'small') {
+                filters.max_size = 1024 * 1024;
+            } else if (sizeVal === 'medium') {
+                filters.min_size = 1024 * 1024;
+                filters.max_size = 25 * 1024 * 1024;
+            } else if (sizeVal === 'large') {
+                filters.min_size = 25 * 1024 * 1024;
+                filters.max_size = 100 * 1024 * 1024;
+            } else if (sizeVal === 'huge') {
+                filters.min_size = 100 * 1024 * 1024;
+            }
+
+            executeDriveSearch(query, filters);
+        });
+    }
+
+    // 5. Search Bar Input & Debouncing
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            const q = searchInput.value.trim();
+            if (searchClear) {
+                searchClear.style.display = q ? 'flex' : 'none';
+            }
+
+            if (window.SEARCH_DEBOUNCE_TIMER) {
+                clearTimeout(window.SEARCH_DEBOUNCE_TIMER);
+            }
+
+            if (!q) {
+                if (window.IS_SEARCH_ACTIVE) {
+                    clearSearch();
+                }
+                return;
+            }
+
+            window.SEARCH_DEBOUNCE_TIMER = setTimeout(() => {
+                executeDriveSearch(q, window.CURRENT_SEARCH_FILTERS || {});
+            }, 300);
+        });
+    }
+
+    // 6. Search Bar Form Submit (Pressing Enter in search box)
     if (searchForm && searchInput) {
         searchForm.addEventListener('submit', (e) => {
             e.preventDefault();
+            if (window.SEARCH_DEBOUNCE_TIMER) clearTimeout(window.SEARCH_DEBOUNCE_TIMER);
             const q = searchInput.value.trim();
-            if (!q) return;
-            navigateToPath(`/search_${encodeURIComponent(q)}`);
-        });
-
-        searchInput.addEventListener('input', () => {
-            if (searchClear) {
-                searchClear.style.display = searchInput.value ? 'flex' : 'none';
+            if (!q) {
+                clearSearch();
+                return;
             }
+            executeDriveSearch(q, window.CURRENT_SEARCH_FILTERS || {});
         });
+    }
 
-        if (searchClear) {
-            searchClear.addEventListener('click', () => {
-                searchInput.value = '';
-                searchClear.style.display = 'none';
-                navigateToPath('/');
-            });
+    // 7. Clear Search Buttons
+    if (searchClear) {
+        searchClear.addEventListener('click', (e) => {
+            e.preventDefault();
+            clearSearch();
+        });
+    }
+    if (bannerClearBtn) {
+        bannerClearBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            clearSearch();
+        });
+    }
+}
+
+window.executeDriveSearch = async function(query, filters = {}) {
+    const searchInput = document.getElementById('file-search');
+    const searchClear = document.getElementById('search-clear-btn');
+    const currentPath = getCurrentPath();
+
+    if (!window.IS_SEARCH_ACTIVE && !currentPath.startsWith('/search')) {
+        window.PRE_SEARCH_PATH = currentPath || '/';
+    }
+
+    window.IS_SEARCH_ACTIVE = true;
+    window.CURRENT_SEARCH_QUERY = query || '';
+    window.CURRENT_SEARCH_FILTERS = filters || {};
+
+    if (searchInput && query && searchInput.value !== query) {
+        searchInput.value = query;
+    }
+    if (searchClear) {
+        searchClear.style.display = query ? 'flex' : 'none';
+    }
+
+    // Abort previous search request
+    if (window.SEARCH_ABORT_CONTROLLER) {
+        try { window.SEARCH_ABORT_CONTROLLER.abort(); } catch {}
+    }
+
+    const controller = new AbortController();
+    window.SEARCH_ABORT_CONTROLLER = controller;
+    const reqId = ++window.SEARCH_REQUEST_ID;
+
+    // Show skeleton immediately
+    if (typeof showDirectorySkeleton === 'function') {
+        showDirectorySkeleton();
+    }
+
+    const banner = document.getElementById('search-results-banner');
+    const bannerQuery = document.getElementById('search-banner-query-text');
+    const bannerCount = document.getElementById('search-banner-count');
+    const bannerFilters = document.getElementById('search-active-filters');
+
+    if (banner) banner.style.display = 'flex';
+    if (bannerQuery) bannerQuery.innerText = query ? `Results for "${query}"` : 'Filtered search results';
+    if (bannerCount) bannerCount.innerText = 'Searching Drive...';
+
+    // Render filter pills in banner
+    if (bannerFilters) {
+        let pillsHtml = '';
+        if (filters.type && filters.type !== 'all') {
+            pillsHtml += `<span class="gd-filter-pill">Type: ${escapeHtml(filters.type)} <span class="gd-filter-pill-remove" onclick="removeSearchFilter('type')">✕</span></span>`;
+        }
+        if (filters.location && filters.location !== '/') {
+            pillsHtml += `<span class="gd-filter-pill">In: ${escapeHtml(filters.location)} <span class="gd-filter-pill-remove" onclick="removeSearchFilter('location')">✕</span></span>`;
+        }
+        if (filters.date_range && filters.date_range !== 'any') {
+            pillsHtml += `<span class="gd-filter-pill">Date: ${escapeHtml(filters.date_range)} <span class="gd-filter-pill-remove" onclick="removeSearchFilter('date_range')">✕</span></span>`;
+        }
+        if (filters.date_after || filters.date_before) {
+            const rangeText = `${filters.date_after || ''} - ${filters.date_before || ''}`;
+            pillsHtml += `<span class="gd-filter-pill">Date: ${escapeHtml(rangeText)} <span class="gd-filter-pill-remove" onclick="removeSearchFilter('date_custom')">✕</span></span>`;
+        }
+        if (filters.min_size || filters.max_size) {
+            pillsHtml += `<span class="gd-filter-pill">Size filter <span class="gd-filter-pill-remove" onclick="removeSearchFilter('size')">✕</span></span>`;
+        }
+        bannerFilters.innerHTML = pillsHtml;
+    }
+
+    // Update URL smoothly without full page reload
+    const newPath = `/search_${encodeURIComponent(query || '')}`;
+    const url = new URL(window.location.href);
+    url.searchParams.set('path', newPath);
+    window.history.replaceState({ path: newPath }, '', url.toString());
+
+    try {
+        const res = await searchDrive(query, filters, controller.signal);
+        if (reqId !== window.SEARCH_REQUEST_ID) return;
+
+        if (res.status === 'ok') {
+            const count = res.count || 0;
+            if (bannerCount) bannerCount.innerText = `${count} item${count === 1 ? '' : 's'} found`;
+            showDirectory(res.data, res.breadcrumbs || [
+                { name: 'My Drive', path: '/', id: 'root' },
+                { name: `Search: "${query || 'Filters'}"`, path: newPath, id: 'search' }
+            ]);
+            document.title = `Search: "${query || 'Drive'}" - Google Drive`;
+        } else {
+            showSearchError(res.status || 'Search failed', query);
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') return;
+        if (reqId === window.SEARCH_REQUEST_ID) {
+            console.error('Search error:', err);
+            showSearchError(err.message || 'Search could not be completed.', query);
         }
     }
+};
+
+window.removeSearchFilter = function(filterKey) {
+    if (!window.CURRENT_SEARCH_FILTERS) return;
+    if (filterKey === 'type') delete window.CURRENT_SEARCH_FILTERS.type;
+    if (filterKey === 'location') delete window.CURRENT_SEARCH_FILTERS.location;
+    if (filterKey === 'date_range') delete window.CURRENT_SEARCH_FILTERS.date_range;
+    if (filterKey === 'date_custom') {
+        delete window.CURRENT_SEARCH_FILTERS.date_after;
+        delete window.CURRENT_SEARCH_FILTERS.date_before;
+    }
+    if (filterKey === 'size') {
+        delete window.CURRENT_SEARCH_FILTERS.min_size;
+        delete window.CURRENT_SEARCH_FILTERS.max_size;
+    }
+    executeDriveSearch(window.CURRENT_SEARCH_QUERY || '', window.CURRENT_SEARCH_FILTERS);
+};
+
+window.clearSearch = function() {
+    if (window.SEARCH_ABORT_CONTROLLER) {
+        try { window.SEARCH_ABORT_CONTROLLER.abort(); } catch {}
+    }
+    if (window.SEARCH_DEBOUNCE_TIMER) clearTimeout(window.SEARCH_DEBOUNCE_TIMER);
+
+    const searchInput = document.getElementById('file-search');
+    const searchClear = document.getElementById('search-clear-btn');
+    const banner = document.getElementById('search-results-banner');
+    const filterPopover = document.getElementById('gd-search-filter-popover');
+    const filterForm = document.getElementById('search-filter-form');
+
+    if (searchInput) searchInput.value = '';
+    if (searchClear) searchClear.style.display = 'none';
+    if (banner) banner.style.display = 'none';
+    if (filterPopover) filterPopover.classList.remove('active');
+    if (filterForm) filterForm.reset();
+
+    window.IS_SEARCH_ACTIVE = false;
+    window.CURRENT_SEARCH_QUERY = '';
+    window.CURRENT_SEARCH_FILTERS = {};
+
+    const targetPath = window.PRE_SEARCH_PATH || '/';
+    window.PRE_SEARCH_PATH = '/';
+    navigateToPath(targetPath);
+};
+
+function showSearchError(message, query) {
+    const tableBody = document.getElementById('directory-data');
+    const gridFolders = document.getElementById('grid-folders-data');
+    const gridFiles = document.getElementById('grid-files-data');
+    const gridFoldersTitle = document.getElementById('grid-folders-title');
+    const gridFilesTitle = document.getElementById('grid-files-title');
+    const errorState = document.getElementById('directory-error-state');
+
+    if (tableBody) tableBody.innerHTML = '';
+    if (gridFolders) gridFolders.innerHTML = '';
+    if (gridFiles) gridFiles.innerHTML = '';
+    if (gridFoldersTitle) gridFoldersTitle.style.display = 'none';
+    if (gridFilesTitle) gridFilesTitle.style.display = 'none';
+
+    if (errorState) {
+        errorState.style.display = 'flex';
+        errorState.innerHTML = `
+            <div class="gd-error-card">
+                <div class="gd-error-icon">🔍</div>
+                <div class="gd-error-title">Search Error</div>
+                <div class="gd-error-desc">${escapeHtml(message || 'An error occurred while searching your drive.')}</div>
+                <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                    <button class="gd-retry-btn" onclick="executeDriveSearch('${escapeHtml(query || '')}', window.CURRENT_SEARCH_FILTERS || {});">
+                        <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                        <span>Retry Search</span>
+                    </button>
+                    <button class="gd-btn gd-btn-outline" style="border: 1px solid #dadce0; border-radius: 20px; padding: 8px 16px; background: #fff; cursor: pointer; font-size: 0.88rem; font-weight: 500;" onclick="clearSearch();">
+                        <span>Clear Search</span>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+}
+
+// App Initialization
+document.addEventListener('DOMContentLoaded', () => {
+    initDriveSearch();
 
     // View Toggles
     const listBtn = document.getElementById('toggle-list-view');
@@ -1926,11 +2247,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+            const filterPopover = document.getElementById('gd-search-filter-popover');
+            if (filterPopover && filterPopover.classList.contains('active')) {
+                filterPopover.classList.remove('active');
+                return;
+            }
             closePreviewLightbox();
             closeCommandPalette();
             closeKeyboardShortcutsModal();
             closeManageTagsModal();
             deselectAllItems();
+            if (window.IS_SEARCH_ACTIVE) {
+                clearSearch();
+            }
         }
     });
 

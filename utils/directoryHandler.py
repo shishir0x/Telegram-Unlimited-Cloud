@@ -889,15 +889,119 @@ class NewDriveData:
         logger.info(f"Copied item '{item.name}' to '{dest_folder_path}' as '{new_item.name}' ({new_item.id}).")
         return new_item.id
 
-    def search_file_folder(self, query: str, search_root: str = "/"):
-        logger.info(f"Searching for items matching query '{query}' starting at '{search_root}'.")
-        query_clean = (query or "").strip().lower()
-        if not query_clean:
-            return {}
+    def search_file_folder(
+        self,
+        query: str = "",
+        search_root: str = "/",
+        item_type: str = "all",
+        min_size: Optional[int] = None,
+        max_size: Optional[int] = None,
+        date_filter: Optional[str] = None,
+        date_after: Optional[str] = None,
+        date_before: Optional[str] = None,
+        extension: Optional[str] = None,
+        file_type: Optional[str] = None,
+    ):
+        """
+        Comprehensive drive-wide search engine with multi-criteria filtering:
+        - Substring / token matching (case-insensitive & Unicode safe)
+        - Type filtering: 'all', 'folder', 'file', 'document', 'spreadsheet', 'presentation', 'image', 'video', 'audio', 'pdf', 'archive', 'code'
+        - Size range filtering: min_size / max_size in bytes
+        - Date filtering: 'today', '7days', '30days', 'year', or date_after / date_before ISO strings
+        - Location scoping: root '/' (default entire drive) or specific folder path
+        - Extension filtering: e.g. 'pdf', 'png', or comma-separated extensions
+        """
+        if file_type and item_type == "all":
+            item_type = file_type
 
+        logger.info(
+            f"Search initiated: query='{query}' root='{search_root}' type='{item_type}' "
+            f"size=[{min_size}, {max_size}] date_filter='{date_filter}' ext='{extension}'"
+        )
         import copy
-        root_res = self.get_directory(search_root)
-        root_folder = (root_res[0] if isinstance(root_res, tuple) else root_res) or self.contents.get("/")
+        import unicodedata
+        from datetime import datetime, timedelta
+
+        CATEGORY_EXTENSIONS = {
+            "document": {"pdf", "doc", "docx", "txt", "rtf", "odt", "pages", "csv", "xls", "xlsx", "ppt", "pptx", "md", "epub"},
+            "spreadsheet": {"xls", "xlsx", "csv", "ods", "tsv", "numbers"},
+            "presentation": {"ppt", "pptx", "key", "odp"},
+            "image": {"jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "tiff", "ico", "heic", "avif"},
+            "video": {"mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "3gp", "ts"},
+            "audio": {"mp3", "wav", "ogg", "m4a", "flac", "aac", "wma", "opus", "m4r"},
+            "pdf": {"pdf"},
+            "archive": {"zip", "rar", "7z", "tar", "gz", "bz2", "iso", "xz", "tgz"},
+            "code": {"py", "js", "html", "css", "json", "ts", "jsx", "tsx", "cpp", "c", "h", "hpp", "java", "go", "rs", "sh", "bat", "ps1", "yml", "yaml", "xml", "sql", "md"}
+        }
+
+        def normalize_str(s: str) -> str:
+            if not s:
+                return ""
+            nfkd = unicodedata.normalize("NFKD", str(s))
+            # Strip combining diacritics so 'Café Résumé' matches 'cafe resume'
+            no_accents = "".join(c for c in nfkd if not unicodedata.combining(c))
+            return no_accents.casefold().strip()
+
+        # Parse inline query operators if present (e.g., "report type:pdf size:>10mb")
+        raw_query = str(query or "").strip()
+        extracted_type = item_type
+        extracted_ext = extension
+        clean_tokens = []
+
+        for token in raw_query.split():
+            token_lower = token.lower()
+            if token_lower.startswith("type:") and len(token) > 5:
+                extracted_type = token[5:].strip().lower()
+            elif token_lower.startswith("ext:") and len(token) > 4:
+                extracted_ext = token[4:].strip().lower().lstrip(".")
+            elif token_lower.startswith("after:") and len(token) > 6:
+                date_after = token[6:].strip()
+            elif token_lower.startswith("before:") and len(token) > 7:
+                date_before = token[7:].strip()
+            else:
+                clean_tokens.append(token)
+
+        effective_query = " ".join(clean_tokens)
+        query_norm = normalize_str(effective_query)
+        query_words = query_norm.split() if query_norm else []
+
+        # Target extension set
+        target_exts = set()
+        if extracted_ext:
+            target_exts = {e.strip().lower().lstrip(".") for e in extracted_ext.split(",") if e.strip()}
+
+        # Date boundary calculations
+        now = datetime.now()
+        min_date = None
+        max_date = None
+
+        if date_filter == "today":
+            min_date = datetime(now.year, now.month, now.day)
+        elif date_filter == "7days":
+            min_date = now - timedelta(days=7)
+        elif date_filter == "30days":
+            min_date = now - timedelta(days=30)
+        elif date_filter == "year":
+            min_date = datetime(now.year, 1, 1)
+
+        if date_after:
+            try:
+                min_date = datetime.strptime(date_after[:10], "%Y-%m-%d")
+            except Exception:
+                pass
+
+        if date_before:
+            try:
+                max_date = datetime.strptime(date_before[:10], "%Y-%m-%d") + timedelta(days=1)
+            except Exception:
+                pass
+
+        # Resolve search starting root
+        root_res = self.get_directory(search_root) if search_root and search_root != "/" else None
+        root_folder = (root_res[0] if isinstance(root_res, tuple) else root_res) if root_res else self.contents.get("/")
+        if not root_folder:
+            root_folder = self.contents.get("/")
+
         search_results = {}
 
         def detect_device(path_str: str) -> str:
@@ -908,21 +1012,87 @@ class NewDriveData:
                 return "Computer"
             return ""
 
+        def parse_item_date(date_val) -> Optional[datetime]:
+            if not date_val:
+                return None
+            try:
+                date_str = str(date_val)[:19]
+                if len(date_str) >= 10:
+                    return datetime.strptime(date_str[:10], "%Y-%m-%d")
+            except Exception:
+                pass
+            return None
+
         def traverse_directory(folder, current_human_path=""):
             if not hasattr(folder, "contents"):
                 return
+
             for item in folder.contents.values():
                 if getattr(item, "trash", False):
                     continue
 
                 item_name = getattr(item, "name", "")
-                item_name_lower = item_name.lower()
-                matches = query_clean in item_name_lower
+                item_name_norm = normalize_str(item_name)
+                item_type_val = getattr(item, "type", "file")
+                item_size = getattr(item, "size", 0) or 0
+                item_date_raw = getattr(item, "upload_date", "")
+                item_date = parse_item_date(item_date_raw)
 
-                if not matches and query_clean.startswith("."):
-                    ext = "." + item_name_lower.rsplit(".", 1)[-1] if "." in item_name_lower else ""
-                    if ext == query_clean:
-                        matches = True
+                # 1. Type filter verification
+                if extracted_type and extracted_type != "all":
+                    if extracted_type == "folder" and item_type_val != "folder":
+                        if item_type_val == "folder":
+                            traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                        continue
+                    elif extracted_type == "file" and item_type_val != "file":
+                        if item_type_val == "folder":
+                            traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                        continue
+                    elif extracted_type in CATEGORY_EXTENSIONS:
+                        if item_type_val != "file":
+                            if item_type_val == "folder":
+                                traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                            continue
+                        item_ext = item_name_norm.rsplit(".", 1)[-1] if "." in item_name_norm else ""
+                        if item_ext not in CATEGORY_EXTENSIONS[extracted_type]:
+                            continue
+
+                # 2. Extension filter verification
+                if target_exts:
+                    item_ext = item_name_norm.rsplit(".", 1)[-1] if "." in item_name_norm else ""
+                    if item_ext not in target_exts:
+                        if item_type_val == "folder":
+                            traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                        continue
+
+                # 3. Size filter verification (applies to files and non-zero folders)
+                if min_size is not None and item_size < min_size:
+                    if item_type_val == "folder":
+                        traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                    continue
+                if max_size is not None and item_size > max_size:
+                    if item_type_val == "folder":
+                        traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                    continue
+
+                # 4. Date filter verification
+                if min_date and item_date and item_date < min_date:
+                    if item_type_val == "folder":
+                        traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                    continue
+                if max_date and item_date and item_date > max_date:
+                    if item_type_val == "folder":
+                        traverse_directory(item, (current_human_path + "/" + item_name).replace("//", "/"))
+                    continue
+
+                # 5. Text / Token matching
+                matches = True
+                if query_words:
+                    # All query tokens must match within the item name
+                    for word in query_words:
+                        if word not in item_name_norm:
+                            matches = False
+                            break
 
                 parent_path = current_human_path if current_human_path else "/"
                 full_path = (current_human_path + "/" + item_name).replace("//", "/") if current_human_path else f"/{item_name}"
@@ -935,7 +1105,7 @@ class NewDriveData:
                     item_copy.device = device_type
                     search_results[item.id] = item_copy
 
-                if getattr(item, "type", "") == "folder":
+                if item_type_val == "folder":
                     traverse_directory(item, full_path)
 
         start_path = "" if search_root in ["/", "root", ""] else getattr(root_folder, "name", "")

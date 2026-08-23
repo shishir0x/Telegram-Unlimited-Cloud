@@ -35,6 +35,7 @@ import json
 import time
 import os
 import secrets
+import urllib.parse
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -43,8 +44,56 @@ load_dotenv()
 BASE_URL = os.getenv("TEST_URL", "http://127.0.0.1:8001")
 PASSWORD = os.getenv("ADMIN_PASSWORD", "Ccrpandey@085")
 
-session = requests.Session()
-unauth_session = requests.Session()
+class UnifiedClient:
+    def __init__(self, base_url, use_test_client=False, app=None):
+        self.base_url = base_url
+        self.use_test_client = use_test_client
+        if use_test_client:
+            from starlette.testclient import TestClient
+            self.client = TestClient(app)
+        else:
+            self.client = requests.Session()
+
+    def _format_url(self, url):
+        if self.use_test_client:
+            if url.startswith(self.base_url):
+                url = url[len(self.base_url):]
+            if not url.startswith("/"):
+                url = "/" + url
+            return url
+        return url
+
+    @property
+    def cookies(self):
+        return self.client.cookies
+
+    def get(self, url, **kwargs):
+        return self.client.get(self._format_url(url), **kwargs)
+
+    def post(self, url, **kwargs):
+        return self.client.post(self._format_url(url), **kwargs)
+
+    def head(self, url, **kwargs):
+        return self.client.head(self._format_url(url), **kwargs)
+
+# Check if live server is reachable, else fall back to ASGI TestClient
+_live = False
+try:
+    _res = requests.get(f"{BASE_URL}/health", timeout=1)
+    if _res.status_code == 200:
+        _live = True
+except Exception:
+    _live = False
+
+if _live:
+    print(f"[*] Testing against live server at {BASE_URL}")
+    session = UnifiedClient(BASE_URL, use_test_client=False)
+    unauth_session = UnifiedClient(BASE_URL, use_test_client=False)
+else:
+    print(f"[*] Live server not running on {BASE_URL}. Running tests via ASGI TestClient...")
+    from main import app
+    session = UnifiedClient(BASE_URL, use_test_client=True, app=app)
+    unauth_session = UnifiedClient(BASE_URL, use_test_client=True, app=app)
 
 def run_tests():
     print("=" * 70)
@@ -303,6 +352,7 @@ def run_tests():
     # 12. Test Deep Search with Device & Location Provenance
     # -------------------------------------------------------------
     print("\n[12] Testing Deep Search Engine:")
+    # A. Search by exact name
     r = session.post(f"{BASE_URL}/api/search", json={"query": target_parent_name})
     print(f"  Search for '{target_parent_name}': {r.status_code}")
     assert r.status_code == 200
@@ -314,6 +364,21 @@ def run_tests():
     print(f"  Found search match: {match_item.get('name')}")
     print(f"  Item Location: {match_item.get('display_path')}")
     print(f"  Item Device Tag: {match_item.get('device')}")
+
+    # B. Search with type filter 'folder'
+    r_type = session.post(f"{BASE_URL}/api/search", json={"query": target_parent_name[:5], "type": "folder"})
+    assert r_type.status_code == 200
+    assert len(r_type.json()["data"]["contents"]) >= 1
+
+    # C. Search with location scoping
+    r_loc = session.post(f"{BASE_URL}/api/search", json={"query": "", "location": f"/{target_parent_id}"})
+    assert r_loc.status_code == 200
+
+    # D. Search via GET /api/getDirectory with /search_ path
+    r_path = session.post(f"{BASE_URL}/api/getDirectory", json={"path": f"/search_{urllib.parse.quote(target_parent_name)}"})
+    assert r_path.status_code == 200
+    assert len(r_path.json()["data"]["contents"]) >= 1
+    print("  Verified deep search endpoint and /search_ compatibility.")
 
     # -------------------------------------------------------------
     # 13. Test ZIP Download API

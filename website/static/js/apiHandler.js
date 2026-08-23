@@ -783,3 +783,26 @@ async function Start_URL_Upload() {
 }
 
 // URL Uploader End
+
+// Google Drive-Style Deep Search Client
+async function searchDrive(query, filters = {}, signal = null) {
+    const payload = {
+        query: query || '',
+        ...filters
+    };
+    const response = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: signal
+    });
+    if (!response.ok) {
+        if (response.status === 401) {
+            showLoginModal();
+            throw new Error('Unauthorized');
+        }
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Search failed with status ${response.status}`);
+    }
+    return await response.json();
+}
