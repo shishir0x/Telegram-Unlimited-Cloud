@@ -1220,6 +1220,8 @@ BOT_MODE: NewBotMode = None
 LAST_REMOTE_BACKUP_FILE_ID: Optional[str] = None
 LAST_REMOTE_SYNC_TIME: float = 0.0
 _METADATA_SYNC_LOCK = asyncio.Lock()
+# Track which client authored/can access the Telegram backup message
+_BACKUP_AUTHOR_CLIENT_ID = None
 
 
 async def sync_drive_data_from_telegram(force: bool = False) -> bool:
@@ -1228,7 +1230,7 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
     If an updated backup document is detected on Telegram (e.g. uploaded by Render or another server),
     it downloads it safely, validates the structure, and reloads DRIVE_DATA in memory & on disk.
     """
-    global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID, LAST_REMOTE_SYNC_TIME
+    global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID, LAST_REMOTE_SYNC_TIME, _BACKUP_AUTHOR_CLIENT_ID
 
     if not config.DATABASE_BACKUP_MSG_ID or not config.STORAGE_CHANNEL:
         return False
@@ -1242,17 +1244,33 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
 
     async with _METADATA_SYNC_LOCK:
         try:
-            from utils.clients import get_client, is_telegram_ready
+            from utils.clients import multi_clients, premium_clients, is_telegram_ready
             if not is_telegram_ready():
                 return False
 
-            client = get_client()
-            if not client:
+            all_active = {**multi_clients, **premium_clients}
+            if not all_active:
                 return False
 
-            msg: Message = await client.get_messages(
-                config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
-            )
+            client_candidates = []
+            if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
+                client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
+            for cid, cl in all_active.items():
+                if cid != _BACKUP_AUTHOR_CLIENT_ID:
+                    client_candidates.append((cid, cl))
+
+            msg: Optional[Message] = None
+            for cid, candidate_client in client_candidates:
+                try:
+                    cand_msg = await candidate_client.get_messages(
+                        config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
+                    )
+                    if cand_msg and not getattr(cand_msg, "empty", True) and cand_msg.document:
+                        msg = cand_msg
+                        _BACKUP_AUTHOR_CLIENT_ID = cid
+                        break
+                except Exception:
+                    continue
 
             if not msg or not msg.document:
                 logger.debug("Remote Telegram backup message or document not found.")
@@ -1309,10 +1327,6 @@ async def auto_sync_telegram_loop():
         except Exception as e:
             logger.debug(f"Auto-sync loop warning: {e}")
             await asyncio.sleep(15)
-
-
-# Track which client authored the Telegram backup message to prevent MESSAGE_AUTHOR_REQUIRED errors
-_BACKUP_AUTHOR_CLIENT_ID = None
 
 
 # Function to backup the drive data to telegram
