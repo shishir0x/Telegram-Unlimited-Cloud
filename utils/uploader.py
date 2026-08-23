@@ -85,6 +85,8 @@ async def start_file_uploader(
         filename = unquote_plus(filename)
 
         drive.new_file(directory_path, filename, message.id, size, conflict=conflict)
+        from utils.directoryHandler import backup_drive_data
+        asyncio.create_task(backup_drive_data(loop=False))
         PROGRESS_CACHE[id] = ("completed", size, size, filename)
 
         # Keep cache bounded to latest 200 upload items

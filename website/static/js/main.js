@@ -399,6 +399,147 @@ function handleFolderDrop(e) {
     }
 }
 
+// Skeleton Loader for Instant Navigation Feedback
+function showDirectorySkeleton() {
+    const tableBody = document.getElementById('directory-data');
+    const gridFolders = document.getElementById('grid-folders-data');
+    const gridFiles = document.getElementById('grid-files-data');
+    const gridFoldersTitle = document.getElementById('grid-folders-title');
+    const gridFilesTitle = document.getElementById('grid-files-title');
+    const errorState = document.getElementById('directory-error-state');
+
+    if (errorState) errorState.style.display = 'none';
+
+    if (tableBody) {
+        let rowsHtml = '';
+        for (let i = 0; i < 6; i++) {
+            rowsHtml += `
+                <tr class="gd-skeleton-row">
+                    <td class="col-select-td"><div class="gd-skeleton-box sm"></div></td>
+                    <td class="col-name-td">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div class="gd-skeleton-box icon"></div>
+                            <div class="gd-skeleton-box title" style="width: ${40 + (i % 4) * 15}%;"></div>
+                        </div>
+                    </td>
+                    <td class="col-type-td"><div class="gd-skeleton-box pill"></div></td>
+                    <td class="col-owner-td"><div class="gd-skeleton-box pill"></div></td>
+                    <td class="col-date-td"><div class="gd-skeleton-box text"></div></td>
+                    <td class="col-size-td"><div class="gd-skeleton-box text-sm"></div></td>
+                    <td class="col-more-td"></td>
+                </tr>
+            `;
+        }
+        tableBody.innerHTML = rowsHtml;
+    }
+
+    if (gridFolders && gridFoldersTitle) {
+        gridFoldersTitle.style.display = 'block';
+        let foldersHtml = '';
+        for (let i = 0; i < 4; i++) {
+            foldersHtml += `
+                <div class="gd-skeleton-folder-card">
+                    <div class="gd-skeleton-box folder-icon"></div>
+                    <div class="gd-skeleton-box folder-title" style="width: ${50 + (i % 3) * 15}%;"></div>
+                </div>
+            `;
+        }
+        gridFolders.innerHTML = foldersHtml;
+    }
+
+    if (gridFiles && gridFilesTitle) {
+        gridFilesTitle.style.display = 'block';
+        let filesHtml = '';
+        for (let i = 0; i < 6; i++) {
+            filesHtml += `
+                <div class="gd-skeleton-file-card">
+                    <div class="gd-skeleton-box file-thumb"></div>
+                    <div class="gd-skeleton-file-info">
+                        <div class="gd-skeleton-box file-title" style="width: ${60 + (i % 3) * 15}%;"></div>
+                        <div class="gd-skeleton-box file-sub"></div>
+                    </div>
+                </div>
+            `;
+        }
+        gridFiles.innerHTML = filesHtml;
+    }
+
+    const countsEl = document.getElementById('gd-status-counts');
+    if (countsEl) countsEl.innerText = 'Loading folder contents...';
+}
+
+function showDirectoryError(message, targetPath) {
+    const tableBody = document.getElementById('directory-data');
+    const gridFolders = document.getElementById('grid-folders-data');
+    const gridFiles = document.getElementById('grid-files-data');
+    const gridFoldersTitle = document.getElementById('grid-folders-title');
+    const gridFilesTitle = document.getElementById('grid-files-title');
+    const errorState = document.getElementById('directory-error-state');
+
+    if (tableBody) tableBody.innerHTML = '';
+    if (gridFolders) gridFolders.innerHTML = '';
+    if (gridFiles) gridFiles.innerHTML = '';
+    if (gridFoldersTitle) gridFoldersTitle.style.display = 'none';
+    if (gridFilesTitle) gridFilesTitle.style.display = 'none';
+
+    if (errorState) {
+        errorState.style.display = 'flex';
+        errorState.innerHTML = `
+            <div class="gd-error-card">
+                <div class="gd-error-icon">⚠️</div>
+                <div class="gd-error-title">Unable to access folder</div>
+                <div class="gd-error-desc">${escapeHtml(message || 'The requested folder could not be retrieved.')}</div>
+                <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                    <button class="gd-retry-btn" onclick="if(typeof getCurrentDirectory==='function') getCurrentDirectory();">
+                        <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                        <span>Try Again</span>
+                    </button>
+                    <button class="gd-btn gd-btn-outline" style="border: 1px solid #dadce0; border-radius: 20px; padding: 8px 16px; background: #fff; cursor: pointer; font-size: 0.88rem; font-weight: 500;" onclick="navigateToPath('/')">
+                        <span>Go to My Drive</span>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    const countsEl = document.getElementById('gd-status-counts');
+    if (countsEl) countsEl.innerText = 'Folder access error';
+}
+
+function updateStatusBar(foldersCount, filesCount, totalSize) {
+    const countsEl = document.getElementById('gd-status-counts');
+    const sortEl = document.getElementById('gd-status-sort');
+    const viewEl = document.getElementById('gd-status-view');
+
+    if (countsEl) {
+        const totalItems = (foldersCount || 0) + (filesCount || 0);
+        if (totalItems === 0) {
+            countsEl.innerText = 'Empty directory';
+        } else {
+            const parts = [];
+            if (foldersCount > 0) parts.push(`${foldersCount} folder${foldersCount === 1 ? '' : 's'}`);
+            if (filesCount > 0) parts.push(`${filesCount} file${filesCount === 1 ? '' : 's'}`);
+            let text = parts.join(', ');
+            if (totalSize && totalSize > 0) {
+                text += ` (${convertBytes(totalSize)})`;
+            }
+            countsEl.innerText = text;
+        }
+    }
+
+    if (sortEl && window.CURRENT_SORT) {
+        const keyName = window.CURRENT_SORT.key === 'name' ? 'Name' :
+                        window.CURRENT_SORT.key === 'date' ? 'Date modified' :
+                        window.CURRENT_SORT.key === 'size' ? 'File size' : 'Type';
+        const orderName = window.CURRENT_SORT.order === 'asc' ? 'A→Z' : 'Z→A';
+        sortEl.innerText = `${keyName} (${orderName})`;
+    }
+
+    if (viewEl) {
+        viewEl.innerText = (CURRENT_VIEW_MODE === 'grid') ? 'Grid layout' : 'List layout';
+    }
+}
+
 // Main Directory Renderer
 function showDirectory(data, breadcrumbs) {
     CURRENT_DIRECTORY_DATA = data;
@@ -406,6 +547,9 @@ function showDirectory(data, breadcrumbs) {
     const contents = data ? (data['contents'] || {}) : {};
     DIRECTORY_ITEMS = contents;
     const isTrash = getCurrentPath().startsWith('/trash');
+
+    const errorState = document.getElementById('directory-error-state');
+    if (errorState) errorState.style.display = 'none';
 
     if (window.CURRENT_PAGE_VIEW !== 'sync') {
         updateBreadcrumbs(window.CURRENT_BREADCRUMBS);
@@ -446,6 +590,10 @@ function showDirectory(data, breadcrumbs) {
 
     let folders = entries.filter(([key, value]) => value.type === 'folder');
     let files = entries.filter(([key, value]) => value.type === 'file');
+
+    // Calculate directory stats for status bar
+    const totalFilesSize = files.reduce((acc, [k, f]) => acc + (Number(f.size) || 0), 0);
+    updateStatusBar(folders.length, files.length, totalFilesSize);
 
     // Multi-Criteria Sorting Engine (Name, Date Modified, File Size, Type)
     const sortMultiplier = (window.CURRENT_SORT.order === 'desc') ? -1 : 1;
@@ -496,19 +644,37 @@ function showDirectory(data, breadcrumbs) {
         }
     });
 
-    // Handle Empty State
+    // Handle Enhanced Empty State
     if (folders.length === 0 && files.length === 0) {
+        const isFiltered = window.CURRENT_FILTER && window.CURRENT_FILTER !== 'all';
         const emptyHtml = `
             <tr>
-                <td colspan="7" style="text-align: center; padding: 60px 20px; color: var(--gd-text-tertiary);">
-                    <div style="font-size: 3rem; margin-bottom: 12px;">📁</div>
-                    <div style="font-size: 1.1rem; font-weight: 500; color: var(--gd-text-secondary);">No items match this filter or folder is empty</div>
-                    <div style="font-size: 0.85rem; margin-top: 6px;">Use "+ New" button or drag & drop files here to upload</div>
+                <td colspan="7" style="text-align: center; padding: 48px 20px;">
+                    <div class="gd-empty-card">
+                        <div class="gd-empty-icon-wrap">${isFiltered ? '🔍' : '📂'}</div>
+                        <div class="gd-empty-title">${isFiltered ? 'No matching items found' : 'This folder is empty'}</div>
+                        <div class="gd-empty-desc">${isFiltered ? 'Try selecting a different filter above to find what you are looking for.' : 'Use "+ New" button or drag & drop files here to upload instantly.'}</div>
+                        ${!isFiltered ? `
+                        <div class="gd-empty-actions">
+                            <button class="gd-retry-btn" onclick="const fi = document.getElementById('fileInput'); if (fi) fi.click();">
+                                <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor;"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+                                <span>Upload Files</span>
+                            </button>
+                        </div>` : ''}
+                    </div>
                 </td>
             </tr>
         `;
         tableBody.innerHTML = emptyHtml;
-        gridFolders.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--gd-text-tertiary);">No items found</div>`;
+        gridFolders.innerHTML = `
+            <div style="grid-column: 1/-1;">
+                <div class="gd-empty-card">
+                    <div class="gd-empty-icon-wrap">${isFiltered ? '🔍' : '📂'}</div>
+                    <div class="gd-empty-title">${isFiltered ? 'No matching items found' : 'This folder is empty'}</div>
+                    <div class="gd-empty-desc">${isFiltered ? 'Try selecting a different filter above.' : 'Drag & drop files or click "+ New" to upload.'}</div>
+                </div>
+            </div>
+        `;
         gridFoldersTitle.style.display = 'none';
         gridFilesTitle.style.display = 'none';
         return;
@@ -2570,4 +2736,56 @@ function initSyncActivityManager() {
 
     setInterval(pollSyncStatus, 2000);
 }
+
+// Google Drive Keyboard Navigation & Shortcuts
+window.addEventListener('keydown', (e) => {
+    // Do not intercept if user is typing in form inputs, textareas, search boxes, or modals
+    const tag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
+    const isEditable = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
+    if (isEditable) return;
+
+    // Check if any modal is active
+    const activeModal = document.querySelector('.gd-modal[style*="opacity: 1"], .gd-dialog[style*="opacity: 1"], #bg-blur[style*="opacity: 1"]');
+    if (activeModal && activeModal.style.opacity !== '0' && activeModal.style.zIndex !== '-1') return;
+
+    // 1. Backspace / Alt+Left: Navigate to Parent Folder
+    if (e.key === 'Backspace' || (e.altKey && e.key === 'ArrowLeft')) {
+        const curPath = typeof getCurrentPath === 'function' ? getCurrentPath() : '/';
+        if (curPath && curPath !== '/' && !curPath.startsWith('/trash') && !curPath.startsWith('/recent')) {
+            e.preventDefault();
+            const parent = typeof getParentPath === 'function' ? getParentPath(curPath) : '/';
+            if (typeof navigateToPath === 'function') {
+                navigateToPath(parent);
+            }
+        }
+    }
+
+    // 2. F5 or Ctrl+R / Cmd+R: Smooth Directory Refresh
+    if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
+        e.preventDefault();
+        if (typeof refreshCurrentDirectory === 'function') {
+            refreshCurrentDirectory();
+        }
+    }
+
+    // 3. Ctrl+A / Cmd+A: Select All Directory Items
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        if (typeof selectAllItems === 'function') {
+            selectAllItems();
+        }
+    }
+
+    // 4. Escape: Deselect all / close inspector
+    if (e.key === 'Escape') {
+        if (typeof deselectAllItems === 'function') {
+            deselectAllItems();
+        }
+        const inspector = document.getElementById('gd-inspector');
+        if (inspector && !inspector.classList.contains('hidden')) {
+            inspector.classList.add('hidden');
+        }
+    }
+});
+
 

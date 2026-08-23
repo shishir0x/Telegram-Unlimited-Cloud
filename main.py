@@ -769,7 +769,7 @@ async def api_logout(request: Request):
 
 @app.post("/api/createNewFolder")
 async def api_new_folder(request: Request, _auth: Session = Depends(require_auth)):
-    from utils.directoryHandler import ensure_drive_data
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
@@ -790,6 +790,7 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
                     )
 
     drive.new_folder(safe_path, folder_name)
+    asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok"})
 
 
@@ -1095,7 +1096,7 @@ async def cancel_upload(request: Request, _auth: Session = Depends(require_auth)
 
 @app.post("/api/renameFileFolder")
 async def rename_file_folder(request: Request, _auth: Session = Depends(require_auth)):
-    from utils.directoryHandler import ensure_drive_data
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
@@ -1104,6 +1105,7 @@ async def rename_file_folder(request: Request, _auth: Session = Depends(require_
 
     logger.info(f"renameFileFolder path={safe_path} name={safe_name}")
     drive.rename_file_folder(safe_path, safe_name)
+    asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok"})
 
 
@@ -1133,7 +1135,7 @@ async def tag_file_folder(request: Request, _auth: Session = Depends(require_aut
 
 @app.post("/api/trashFileFolder")
 async def trash_file_folder(request: Request, _auth: Session = Depends(require_auth)):
-    from utils.directoryHandler import ensure_drive_data
+    from utils.directoryHandler import ensure_drive_data, backup_drive_data
     drive = ensure_drive_data()
 
     data = await request.json()
@@ -1142,7 +1144,16 @@ async def trash_file_folder(request: Request, _auth: Session = Depends(require_a
 
     logger.info(f"trashFileFolder path={safe_path} trash={trash_val}")
     drive.trash_file_folder(safe_path, trash_val)
+    asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/syncDriveData")
+@app.get("/api/syncDriveData")
+async def api_sync_drive_data(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import sync_drive_data_from_telegram
+    updated = await sync_drive_data_from_telegram(force=True)
+    return JSONResponse({"status": "ok", "updated": updated})
 
 
 @app.post("/api/deleteFileFolder")
@@ -1474,4 +1485,9 @@ async def api_admin_integrity_report(session: Session = Depends(require_auth)):
         },
         "telegram": get_client_status()
     })
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
 

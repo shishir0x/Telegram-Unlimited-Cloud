@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Union, Optional, Dict, Any, List, Tuple
 import sys
 import config, dill
 import shutil
@@ -163,7 +164,20 @@ class NewDriveData:
                     shutil.copy2(drive_cache_path, drive_backup_path)
                 except Exception:
                     pass
-            os.replace(tmp_path, drive_cache_path)
+            try:
+                os.replace(tmp_path, drive_cache_path)
+            except (PermissionError, OSError):
+                # Windows atomic replacement fallback if target is momentarily locked
+                import time
+                time.sleep(0.05)
+                try:
+                    os.replace(tmp_path, drive_cache_path)
+                except Exception:
+                    shutil.copy2(tmp_path, drive_cache_path)
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
             
             # Compute and save SHA256 checksum
             try:
@@ -1030,16 +1044,116 @@ class NewBotMode:
 
 DRIVE_DATA: NewDriveData = None
 BOT_MODE: NewBotMode = None
+LAST_REMOTE_BACKUP_FILE_ID: Optional[str] = None
+LAST_REMOTE_SYNC_TIME: float = 0.0
+_METADATA_SYNC_LOCK = asyncio.Lock()
+
+
+async def sync_drive_data_from_telegram(force: bool = False) -> bool:
+    """
+    Synchronizes drive.data metadata from the Telegram Storage Channel.
+    If an updated backup document is detected on Telegram (e.g. uploaded by Render or another server),
+    it downloads it safely, validates the structure, and reloads DRIVE_DATA in memory & on disk.
+    """
+    global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID, LAST_REMOTE_SYNC_TIME
+
+    if not config.DATABASE_BACKUP_MSG_ID or not config.STORAGE_CHANNEL:
+        return False
+
+    import time
+    now = time.time()
+    if not force and (now - LAST_REMOTE_SYNC_TIME < 5):
+        return False
+
+    LAST_REMOTE_SYNC_TIME = now
+
+    async with _METADATA_SYNC_LOCK:
+        try:
+            from utils.clients import get_client, is_telegram_ready
+            if not is_telegram_ready():
+                return False
+
+            client = get_client()
+            if not client:
+                return False
+
+            msg: Message = await client.get_messages(
+                config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
+            )
+
+            if not msg or not msg.document:
+                logger.debug("Remote Telegram backup message or document not found.")
+                return False
+
+            remote_file_id = msg.document.file_id
+            if not force and LAST_REMOTE_BACKUP_FILE_ID and remote_file_id == LAST_REMOTE_BACKUP_FILE_ID:
+                return False
+
+            # Download to an isolated temporary file to prevent corruption of the active drive.data
+            temp_dl = Path(f"./cache/remote_drive_{random.randint(1000, 9999)}.tmp")
+            dl_result = await msg.download(file_name=str(temp_dl.resolve()))
+            if not dl_result or not os.path.exists(dl_result):
+                return False
+
+            try:
+                with open(dl_result, "rb") as f:
+                    new_drive_data = dill.load(f)
+
+                if not hasattr(new_drive_data, "contents") or "/" not in new_drive_data.contents:
+                    logger.warning("Downloaded remote drive.data has invalid structure, skipping reload.")
+                    return False
+
+                DRIVE_DATA = new_drive_data
+                LAST_REMOTE_BACKUP_FILE_ID = remote_file_id
+
+                # Save atomically to local disk cache
+                DRIVE_DATA.save()
+                # Clear updated flag since local matches remote
+                DRIVE_DATA.isUpdated = False
+
+                logger.info(f"✅ Successfully synchronized drive metadata from Telegram backup (Document ID: {remote_file_id[:12]}...).")
+                return True
+            finally:
+                if os.path.exists(dl_result):
+                    try:
+                        os.remove(dl_result)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Metadata sync from Telegram error: {e}")
+            return False
+
+
+async def auto_sync_telegram_loop():
+    """Periodic background task that checks Telegram for remote metadata updates every 15 seconds."""
+    logger.info("Starting Telegram metadata auto-sync loop (15s interval).")
+    while True:
+        try:
+            await asyncio.sleep(15)
+            # Only pull remote if we don't have pending local unsaved modifications
+            if DRIVE_DATA is not None and not getattr(DRIVE_DATA, "isUpdated", False):
+                await sync_drive_data_from_telegram(force=False)
+        except Exception as e:
+            logger.debug(f"Auto-sync loop warning: {e}")
+            await asyncio.sleep(15)
 
 
 # Function to backup the drive data to telegram
 async def backup_drive_data(loop=True):
-    global DRIVE_DATA
+    global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID
     logger.info("Starting backup drive data task.")
 
     while True:
         try:
-            if not DRIVE_DATA.isUpdated:
+            drive = ensure_drive_data()
+            if not drive or not getattr(drive, "isUpdated", False):
+                if not loop:
+                    break
+                await asyncio.sleep(config.DATABASE_BACKUP_TIME)
+                continue
+
+            if not config.STORAGE_CHANNEL or not config.DATABASE_BACKUP_MSG_ID:
+                logger.warning("Telegram backup skipped: STORAGE_CHANNEL or DATABASE_BACKUP_MSG_ID not configured.")
                 if not loop:
                     break
                 await asyncio.sleep(config.DATABASE_BACKUP_TIME)
@@ -1049,6 +1163,12 @@ async def backup_drive_data(loop=True):
             from utils.clients import get_client
 
             client = get_client()
+            if not client:
+                if not loop:
+                    break
+                await asyncio.sleep(5)
+                continue
+
             time_text = f"📅 **Last Updated :** {get_current_utc_time()} (UTC +00:00)"
             caption = (
                 f"🔐 **TG Drive Data Backup File**\n\n"
@@ -1056,12 +1176,15 @@ async def backup_drive_data(loop=True):
                 f"{time_text}"
             )
 
-            media_doc = InputMediaDocument(drive_cache_path, caption=caption)
+            media_doc = InputMediaDocument(str(drive_cache_path.resolve()), caption=caption)
             msg = await client.edit_message_media(
                 config.STORAGE_CHANNEL,
                 config.DATABASE_BACKUP_MSG_ID,
                 media=media_doc,
             )
+
+            if msg and msg.document:
+                LAST_REMOTE_BACKUP_FILE_ID = msg.document.file_id
 
             DRIVE_DATA.isUpdated = False
             logger.info("Drive data backed up to Telegram successfully.")
@@ -1069,7 +1192,7 @@ async def backup_drive_data(loop=True):
             try:
                 await msg.pin()
             except Exception as pin_e:
-                logger.error(f"Error pinning backup message: {pin_e}")
+                logger.debug(f"Pinning backup message note: {pin_e}")
 
             if not loop:
                 break
@@ -1077,6 +1200,8 @@ async def backup_drive_data(loop=True):
             await asyncio.sleep(config.DATABASE_BACKUP_TIME)
         except Exception as e:
             logger.error(f"Backup Error: {e}")
+            if not loop:
+                break
             await asyncio.sleep(10)
 
 
@@ -1084,7 +1209,8 @@ async def init_drive_data():
     global DRIVE_DATA
 
     logger.info("Initializing drive data.")
-    root_dir = DRIVE_DATA.get_directory("/")
+    drive = ensure_drive_data()
+    root_dir = drive.get_directory("/")
     if not hasattr(root_dir, "auth_hashes"):
         root_dir.auth_hashes = []
 
@@ -1097,37 +1223,18 @@ async def init_drive_data():
                     item.auth_hashes = []
 
     traverse_directory(root_dir)
-    DRIVE_DATA.save()
+    drive.save()
     logger.info("Drive data initialization completed.")
 
 
 async def loadDriveData():
     global DRIVE_DATA, BOT_MODE
 
-    logger.info("Loading drive data.")
-    from utils.clients import get_client
-
-    client = get_client()
-    try:
-        msg: Message = await client.get_messages(
-            config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
-        )
-
-        if msg and msg.document:
-            os.makedirs("cache", exist_ok=True)
-            target_file = os.path.abspath("cache/drive.data")
-            dl_path = await msg.download(file_name=target_file)
-            with open(dl_path, "rb") as f:
-                DRIVE_DATA = dill.load(f)
-
-            logger.info("Drive data loaded from Telegram backup.")
-        else:
-            raise Exception("Backup document not found on Telegram message.")
-    except Exception as e:
-        logger.warning(f"Backup load failed: {e}")
-        logger.info("Creating new drive.data file.")
-        DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
-        DRIVE_DATA.save()
+    logger.info("Loading drive data from Telegram backup...")
+    success = await sync_drive_data_from_telegram(force=True)
+    if not success:
+        logger.info("Remote sync skipped or offline, falling back to local cached drive.data...")
+        DRIVE_DATA = ensure_drive_data()
 
     await init_drive_data()
 

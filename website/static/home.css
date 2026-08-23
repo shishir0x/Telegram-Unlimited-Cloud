@@ -4528,3 +4528,435 @@ body {
         padding-bottom: calc(16px + env(safe-area-inset-bottom));
     }
 }
+
+/* ==========================================================
+   Google Drive Grade Architecture: Skeleton Loader, Status Bar & Error States
+   ========================================================== */
+
+/* Shimmer Animation */
+@keyframes gd-shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+.gd-skeleton-box {
+    background: linear-gradient(90deg, #f0f2f5 25%, #e6e8eb 37%, #f0f2f5 63%);
+    background-size: 400% 100%;
+    animation: gd-shimmer 1.4s ease infinite;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+/* Table Skeleton */
+.gd-skeleton-row {
+    pointer-events: none;
+    user-select: none;
+}
+
+.gd-skeleton-row td {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f1f3f4;
+    vertical-align: middle;
+}
+
+.gd-skeleton-box.sm {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+}
+
+.gd-skeleton-box.icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.gd-skeleton-box.title {
+    width: 55%;
+    min-width: 120px;
+    height: 16px;
+}
+
+.gd-skeleton-box.pill {
+    width: 60px;
+    height: 20px;
+    border-radius: 12px;
+}
+
+.gd-skeleton-box.text {
+    width: 80px;
+    height: 14px;
+}
+
+.gd-skeleton-box.text-sm {
+    width: 50px;
+    height: 14px;
+}
+
+/* Grid Folders Skeleton */
+.gd-skeleton-folder-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #f8f9fa;
+    border: 1px solid #e8eaed;
+    border-radius: 12px;
+    padding: 12px 16px;
+    min-height: 48px;
+    box-sizing: border-box;
+}
+
+.gd-skeleton-box.folder-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+}
+
+.gd-skeleton-box.folder-title {
+    width: 60%;
+    height: 16px;
+}
+
+/* Grid Files Skeleton */
+.gd-skeleton-file-card {
+    background: #f8f9fa;
+    border: 1px solid #e8eaed;
+    border-radius: 14px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 190px;
+    box-sizing: border-box;
+}
+
+.gd-skeleton-box.file-thumb {
+    width: 100%;
+    height: 120px;
+    border-radius: 0;
+}
+
+.gd-skeleton-file-info {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.gd-skeleton-box.file-title {
+    width: 80%;
+    height: 14px;
+}
+
+.gd-skeleton-box.file-sub {
+    width: 45%;
+    height: 11px;
+}
+
+/* Status Bar */
+.gd-status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: #ffffff;
+    border-top: 1px solid #e8eaed;
+    font-size: 0.78rem;
+    color: #5f6368;
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    user-select: none;
+    box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.02);
+}
+
+.gd-status-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+}
+
+.gd-status-pill-icon {
+    font-size: 0.85rem;
+}
+
+.gd-status-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #70757a;
+}
+
+.gd-status-sep {
+    color: #dadce0;
+}
+
+/* Refresh Button Animation */
+.gd-refresh-btn {
+    transition: transform 0.2s ease;
+}
+
+.gd-refresh-btn:hover {
+    background: #f1f3f4;
+}
+
+.gd-refresh-btn.is-refreshing svg {
+    animation: gd-spin-refresh 0.7s linear infinite;
+}
+
+@keyframes gd-spin-refresh {
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Error State */
+.gd-error-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 280px;
+    padding: 40px 20px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.gd-error-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    background: #ffffff;
+    border: 1px solid #fce8e6;
+    background-color: #fef7f6;
+    border-radius: 16px;
+    padding: 32px 28px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 4px 16px rgba(217, 48, 37, 0.08);
+}
+
+.gd-error-icon {
+    font-size: 2.8rem;
+    margin-bottom: 12px;
+    line-height: 1;
+}
+
+.gd-error-title {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #c5221f;
+    margin-bottom: 8px;
+}
+
+.gd-error-desc {
+    font-size: 0.88rem;
+    color: #5f6368;
+    line-height: 1.45;
+    margin-bottom: 20px;
+}
+
+.gd-retry-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #1a73e8;
+    color: #ffffff;
+    border: none;
+    border-radius: 20px;
+    padding: 8px 20px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.gd-retry-btn:hover {
+    background: #1557b0;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Enhanced Empty State */
+.gd-empty-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 60px 20px;
+    color: #5f6368;
+}
+
+.gd-empty-icon-wrap {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    background: #f1f3f4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    margin-bottom: 16px;
+}
+
+.gd-empty-title {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #202124;
+    margin-bottom: 6px;
+}
+
+.gd-empty-desc {
+    font-size: 0.88rem;
+    color: #5f6368;
+    max-width: 320px;
+    line-height: 1.4;
+    margin-bottom: 16px;
+}
+
+.gd-empty-actions {
+    display: flex;
+    gap: 10px;
+}
+
+@media (max-width: 768px) {
+    .gd-status-bar {
+        padding: 6px 12px;
+        font-size: 0.72rem;
+    }
+    .gd-status-right {
+        display: none;
+    }
+}
+
+/* Floating Google Drive Selection Bar */
+.gd-bulk-actions-bar {
+    display: none;
+    position: fixed;
+    bottom: 48px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #202124;
+    color: #ffffff;
+    border-radius: 28px;
+    padding: 6px 14px 6px 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+    z-index: 990;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-width: 320px;
+    max-width: 90vw;
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1), opacity 0.22s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.gd-bulk-actions-bar.active {
+    display: flex;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+}
+
+.gd-bulk-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.gd-bulk-close-btn {
+    background: transparent;
+    border: none;
+    color: #bdc1c6;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.gd-bulk-close-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+}
+
+.gd-bulk-close-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.gd-bulk-count {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: #e8eaed;
+    white-space: nowrap;
+}
+
+.gd-bulk-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.gd-bulk-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 18px;
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+}
+
+.gd-bulk-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.gd-bulk-btn:active {
+    transform: scale(0.97);
+}
+
+.gd-bulk-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
+
+.gd-bulk-delete-btn {
+    background: #d93025;
+    border-color: #d93025;
+}
+
+.gd-bulk-delete-btn:hover {
+    background: #b3261e;
+    border-color: #b3261e;
+}
+
+@media (max-width: 768px) {
+    .gd-bulk-actions-bar {
+        bottom: 56px;
+        min-width: 280px;
+        padding: 5px 10px;
+    }
+    .gd-bulk-btn span {
+        display: none;
+    }
+    .gd-bulk-btn {
+        padding: 6px 10px;
+    }
+}

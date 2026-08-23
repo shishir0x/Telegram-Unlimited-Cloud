@@ -40,7 +40,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.getenv("TEST_URL", "http://127.0.0.1:8001")
 PASSWORD = os.getenv("ADMIN_PASSWORD", "Ccrpandey@085")
 
 session = requests.Session()

@@ -77,6 +77,24 @@ function buildFileUrl(filePath, isStream = false) {
     return url;
 }
 
+// Navigation Request Tracking for Race Condition Prevention
+window.NAV_REQUEST_ID = 0;
+
+function getParentPath(currentPath) {
+    if (!currentPath || currentPath === '/' || currentPath === '/recent' || currentPath === '/trash' || currentPath.startsWith('/tags/')) {
+        return '/';
+    }
+    let clean = currentPath.replaceAll('//', '/');
+    if (clean.endsWith('/') && clean !== '/') {
+        clean = clean.slice(0, -1);
+    }
+    const lastSlash = clean.lastIndexOf('/');
+    if (lastSlash <= 0) {
+        return '/';
+    }
+    return clean.slice(0, lastSlash);
+}
+
 // Single Page Application (SPA) smooth router
 function navigateToPath(targetPath, pushState = true) {
     if (!targetPath) targetPath = '/';
@@ -105,6 +123,11 @@ function navigateToPath(targetPath, pushState = true) {
 
     // Update sidebar active highlights immediately
     updateSidebarNavSelection(cleanPath);
+
+    // Immediately show skeleton loader to prevent showing stale content during fetch
+    if (typeof showDirectorySkeleton === 'function') {
+        showDirectorySkeleton();
+    }
 
     // Fetch and render directory smoothly without full page reload
     if (typeof getCurrentDirectory === 'function') {
@@ -146,6 +169,9 @@ function updateSidebarNavSelection(path) {
 // Handle Browser Back / Forward buttons natively
 window.addEventListener('popstate', (e) => {
     updateSidebarNavSelection(getCurrentPath());
+    if (typeof showDirectorySkeleton === 'function') {
+        showDirectorySkeleton();
+    }
     if (typeof getCurrentDirectory === 'function') {
         getCurrentDirectory();
     }
@@ -242,6 +268,9 @@ function getRandomId() {
     }
     return result;
 }
+const getRandomID = getRandomId;
+window.getRandomId = getRandomId;
+window.getRandomID = getRandomId;
 
 function removeSlash(text) {
     let charactersToRemove = "[/]+"; // Define the characters to remove inside square brackets

@@ -49,6 +49,7 @@ def test_new_file_conflict_resolution():
     from utils.directoryHandler import Folder
     root_folder = Folder("/", "/")
     drive = NewDriveData(contents={"/": root_folder}, used_ids=["root"])
+    drive.save = lambda: None  # Mock save so unit test never writes to production drive.data
     folder_path = drive.new_folder("/", "TestFolder")
     folder_id = folder_path.strip("/").split("/")[-1]
     target_folder = drive.contents["/"].contents[folder_id]

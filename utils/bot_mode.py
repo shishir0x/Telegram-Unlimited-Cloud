@@ -157,6 +157,13 @@ async def current_folder_handler(client: Client, message: Message):
 async def file_handler(client: Client, message: Message):
     global BOT_MODE, DRIVE_DATA
 
+    try:
+        copied_message = await message.copy(config.STORAGE_CHANNEL)
+    except Exception as e:
+        logger.error(f"Error copying message to storage channel: {e}")
+        await message.reply_text(f"❌ Failed to copy file to storage channel: {e}")
+        return
+
     media_obj = (
         copied_message.document
         or copied_message.video

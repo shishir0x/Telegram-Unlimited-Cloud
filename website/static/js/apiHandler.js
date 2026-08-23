@@ -243,11 +243,27 @@ setInterval(async () => {
 }, 2000);
 
 async function getCurrentDirectory() {
-    let path = getCurrentPath();
+    const requestId = ++window.NAV_REQUEST_ID;
+    const path = getCurrentPath();
+
+    // Immediately trigger skeleton loader to eliminate stale folder rendering
+    if (typeof showDirectorySkeleton === 'function') {
+        showDirectorySkeleton();
+    }
+
+    const errorContainer = document.getElementById('directory-error-state');
+    if (errorContainer) errorContainer.style.display = 'none';
+
     try {
         const auth = getFolderAuthFromPath();
         const data = { 'path': path, 'auth': auth };
         const json = await postJson('/api/getDirectory', data);
+
+        // Race-condition guard: Discard response if user has navigated to a newer path
+        if (requestId !== window.NAV_REQUEST_ID) {
+            console.debug(`[Navigation] Discarded stale directory response for request #${requestId} (current: #${window.NAV_REQUEST_ID})`);
+            return;
+        }
 
         if (json.status === 'ok') {
             window.IS_AUTHENTICATED = true;
@@ -270,12 +286,37 @@ async function getCurrentDirectory() {
         } else if (json.status === 'Unauthorized' || json.status === 'Unauthorized folder access') {
             showLoginModal();
         } else {
-            showToast('Directory not accessible: ' + (json.status || 'Not Found'));
+            if (typeof showDirectoryError === 'function') {
+                showDirectoryError(json.status || 'Folder not accessible', path);
+            } else {
+                showToast('Directory not accessible: ' + (json.status || 'Not Found'));
+            }
         }
     }
     catch (err) {
         console.error(err);
-        showToast('Could not access current directory');
+        if (requestId === window.NAV_REQUEST_ID) {
+            if (typeof showDirectoryError === 'function') {
+                showDirectoryError('Could not access current directory. Please check connection.', path);
+            } else {
+                showToast('Could not access current directory');
+            }
+        }
+    }
+}
+
+async function refreshCurrentDirectory() {
+    const btn = document.getElementById('refresh-dir-btn');
+    if (btn) btn.classList.add('is-refreshing');
+    try {
+        await getCurrentDirectory();
+        showToast('Folder refreshed 🔄');
+    } catch (e) {
+        console.error('Refresh error:', e);
+    } finally {
+        setTimeout(() => {
+            if (btn) btn.classList.remove('is-refreshing');
+        }, 600);
     }
 }
 
