@@ -1873,9 +1873,8 @@ window.executeDriveSearch = async function(query, filters = {}) {
     window.CURRENT_SEARCH_QUERY = query || '';
     window.CURRENT_SEARCH_FILTERS = filters || {};
 
-    if (searchInput && query && searchInput.value !== query) {
-        searchInput.value = query;
-    }
+    // Never overwrite the live input value — the trimmed query is used for the
+    // API request only, preserving user-typed spaces during composition.
     if (searchClear) {
         searchClear.style.display = query ? 'flex' : 'none';
     }
