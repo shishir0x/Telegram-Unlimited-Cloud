@@ -366,6 +366,8 @@ $phones | ConvertTo-Json -Compress
 # TGDrive Backup Client
 # ==========================================
 MAX_CONSECUTIVE_UPLOAD_FAILURES = 25  # abort the run if this many files fail back-to-back
+MAX_MTP_WORKER_FAILURES = 5           # abort if the phone-side worker hangs/dies this often
+MTP_WORKER_TIMEOUT = int(os.getenv("MTP_WORKER_TIMEOUT", "300"))  # seconds per extraction (env-overridable)
 
 
 class TGDriveBackupClient:
@@ -1290,21 +1292,101 @@ while ($line = [Console]::In.ReadLine()) {{
         with open(ps_worker_file, "w", encoding="utf-8") as f:
             f.write(ps_worker_code)
 
-        proc = subprocess.Popen(
-            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ps_worker_file)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1
-        )
-
-        ready_line = proc.stdout.readline().strip() if proc.stdout else ""
-        if ready_line != "WORKER_READY":
-            print(f"⚠️ Worker init warning: {ready_line}")
-
         import base64
+        import queue as _queue
+        import threading
+
+        def _drain_stdout(pipe, q):
+            """Background reader so the main thread can wait with a timeout (a bare
+            readline() would block forever if the phone/COM layer wedges)."""
+            try:
+                for line in iter(pipe.readline, ''):
+                    q.put(line)
+            finally:
+                q.put(None)  # EOF sentinel
+
+        state: Dict = {"proc": None, "q": None, "err_file": None}
+
+        def _kill_worker():
+            p = state.get("proc")
+            try:
+                if p and p.stdin:
+                    try:
+                        p.stdin.close()
+                    except Exception:
+                        pass
+                if p and p.poll() is None:
+                    p.terminate()
+            except Exception:
+                pass
+            try:
+                if state.get("err_file"):
+                    state["err_file"].close()
+            except Exception:
+                pass
+            state["proc"], state["q"], state["err_file"] = None, None, None
+
+        def _spawn_worker():
+            err_file = open(staging_dir / "mtp_worker_stderr.log", "w", encoding="utf-8")
+            p = subprocess.Popen(
+                ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ps_worker_file)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=err_file,  # file, not PIPE — an undrained pipe deadlocks long runs
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1
+            )
+            q: _queue.Queue = _queue.Queue()
+            threading.Thread(target=_drain_stdout, args=(p.stdout, q), daemon=True).start()
+            state["proc"], state["q"], state["err_file"] = p, q, err_file
+
+            # Bounded handshake (never blocks forever)
+            ready_line = ""
+            try:
+                line = q.get(timeout=60)
+                ready_line = (line or "").strip() if line else "<worker died>"
+            except _queue.Empty:
+                ready_line = "<no response in 60s>"
+            if ready_line != "WORKER_READY":
+                print(f"⚠️ Worker init warning: {ready_line}")
+
+        def _ask_worker(b64_msg: str, timeout: float):
+            """Send one extraction request. Returns status: ok | failed | not_found | timeout | dead."""
+            p, q = state.get("proc"), state.get("q")
+            if p is None or q is None or p.poll() is not None:
+                return "dead"
+            # Discard stale output from any previously timed-out request
+            try:
+                while True:
+                    stale = q.get_nowait()
+                    if stale is None:
+                        return "dead"
+            except _queue.Empty:
+                pass
+            try:
+                p.stdin.write(f"{b64_msg}\n")
+                p.stdin.flush()
+            except Exception:
+                return "dead"
+            try:
+                line = q.get(timeout=timeout)
+            except _queue.Empty:
+                return "timeout"
+            if line is None:
+                return "dead"
+            line = line.strip()
+            if line.startswith("READY|"):
+                return "ok"
+            if line == "FAILED":
+                return "failed"
+            if line == "NOT_FOUND":
+                return "not_found"
+            return "ok"
+
+        worker_failures = 0
+        _spawn_worker()
+
         uploaded_count = 0
 
         # Push initial pending queue to Web UI
@@ -1334,22 +1416,45 @@ while ($line = [Console]::In.ReadLine()) {{
                     except Exception:
                         pass
 
-                # Request worker to extract single file with Base64 encoding
+                # Request worker to extract single file with Base64 encoding.
+                # Bounded: a wedged phone/worker is detected and the worker is restarted
+                # instead of blocking forever on readline().
                 raw_payload = f"{rel_folder}|{fname}"
                 b64_msg = base64.b64encode(raw_payload.encode('utf-8')).decode('ascii')
-                proc.stdin.write(f"{b64_msg}\n")
-                proc.stdin.flush()
-                resp = proc.stdout.readline().strip()
 
-                # Find the extracted file safely from directory listing
-                extracted_files = [f for f in folder_dest.iterdir() if f.is_file()]
-                if extracted_files and extracted_files[0].stat().st_size > 0:
-                    target_staged = extracted_files[0]
-                    file_bytes = target_staged.read_bytes()
+                staged_file = None
+                last_reason = "extraction failed"
+                for attempt in (1, 2):
+                    st = _ask_worker(b64_msg, MTP_WORKER_TIMEOUT)
+
+                    if st in ("timeout", "dead"):
+                        worker_failures += 1
+                        if worker_failures >= MAX_MTP_WORKER_FAILURES:
+                            _kill_worker()
+                            raise RuntimeError(
+                                f"MTP worker became unresponsive {worker_failures} times — "
+                                f"is the phone still connected and unlocked? Sync aborted."
+                            )
+                        print(f"\n[{idx}/{total_sync_files}] ⚠️ MTP worker {st} while extracting '{fname}' — restarting worker...", flush=True)
+                        _kill_worker()
+                        _spawn_worker()
+                        last_reason = f"worker {st}"
+                        continue
+
+                    files_now = [f for f in folder_dest.iterdir() if f.is_file()]
+                    if st == "ok" and files_now and files_now[0].stat().st_size > 0:
+                        staged_file = files_now[0]
+                        break
+
+                    last_reason = f"phone reported '{st}'" if st != "ok" else "nothing staged"
+                    break
+
+                if staged_file is not None:
+                    file_bytes = staged_file.read_bytes()
 
                     # Purge from disk IMMEDIATELY before cloud upload
                     try:
-                        target_staged.unlink(missing_ok=True)
+                        staged_file.unlink(missing_ok=True)
                     except Exception:
                         pass
 
@@ -1382,13 +1487,23 @@ while ($line = [Console]::In.ReadLine()) {{
                             }
                         })
                 else:
-                    print(f"\n[{idx}/{total_sync_files}] ⚠️ Could not extract '{fname}' from phone. Skipping.")
+                    print(f"\n[{idx}/{total_sync_files}] ⚠️ Skipping '{fname}' ({last_reason}).")
 
         finally:
             try:
-                proc.stdin.write("QUIT\n")
-                proc.stdin.flush()
-                proc.terminate()
+                p = state.get("proc")
+                if p and p.poll() is None:
+                    try:
+                        p.stdin.write("QUIT\n")
+                        p.stdin.flush()
+                    except Exception:
+                        pass
+                    p.terminate()
+            except Exception:
+                pass
+            try:
+                if state.get("err_file"):
+                    state["err_file"].close()
             except Exception:
                 pass
             print("\n🧹 Cleaning up temporary cache...")
