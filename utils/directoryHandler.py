@@ -7,7 +7,7 @@ import json
 import secrets
 from pyrogram.types import InputMediaDocument, Message
 from pyrogram.errors import FloodWait
-import os, random, string, asyncio
+import os, random, string, asyncio, time
 from utils.logger import Logger
 from datetime import datetime, timezone
 
@@ -161,9 +161,14 @@ class NewDriveData:
         self.contents = contents
         self.used_ids = used_ids
         self.isUpdated = False
+        # Epoch seconds of the last local mutation. Embedded in every Telegram backup
+        # so a stale remote snapshot can never overwrite newer local metadata on pull.
+        self.last_modified = time.time()
 
     def save(self) -> None:
         """Atomically saves drive data to disk with automatic .bak backup copy, SHA256 checksum, and JSON mirror."""
+        # Freshness stamp: bumped on every mutation (all mutators funnel through save()).
+        self.last_modified = time.time()
         tmp_path = drive_cache_path.with_suffix(".tmp")
         try:
             with open(tmp_path, "wb") as f:
@@ -178,7 +183,6 @@ class NewDriveData:
                 os.replace(tmp_path, drive_cache_path)
             except (PermissionError, OSError):
                 # Windows atomic replacement fallback if target is momentarily locked
-                import time
                 time.sleep(0.05)
                 try:
                     os.replace(tmp_path, drive_cache_path)
@@ -216,20 +220,54 @@ class NewDriveData:
                 except Exception:
                     pass
 
+    def _ensure_folder_chain(self, segments: List[str]) -> Folder:
+        """
+        Walks a list of ID-path segments, creating any missing folders along the way
+        (mkdir -p semantics). Preserves each requested segment as the folder id so
+        ID-based paths used by clients remain stable across restarts and restores.
+        """
+        node: Folder = self.contents["/"]
+        created_any = False
+        for seg in segments:
+            child = node.contents.get(seg)
+            if (
+                child is not None
+                and getattr(child, "type", "") == "folder"
+                and not getattr(child, "trash", False)
+            ):
+                node = child
+                continue
+
+            if getattr(node, "id", "") == "root":
+                parent_loc = "/"
+            else:
+                parent_loc = f"{getattr(node, 'path', '').strip('/')}/{node.id}"
+
+            folder = Folder(seg, parent_loc or "/")
+            if folder.id != seg:
+                if seg not in self.used_ids:
+                    self.used_ids.append(seg)
+                folder.id = seg
+            node.contents[folder.id] = folder
+            created_any = True
+            logger.warning(f"Healed missing folder '{seg}' inside '{parent_loc}' (auto mkdir -p).")
+            node = folder
+
+        if created_any:
+            self.save()
+        return node
+
     def new_folder(self, path: str, name: str) -> None:
         clean_name = sanitize_name(name)
         logger.info(f"Creating new folder '{clean_name}' in path '{path}'.")
 
         folder = Folder(clean_name, path)
-        if path == "/" or not path:
-            directory_folder: Folder = self.contents["/"]
-            directory_folder.contents[folder.id] = folder
-        else:
-            paths = [p for p in path.strip("/").split("/") if p]
-            directory_folder: Folder = self.contents["/"]
-            for p in paths:
-                directory_folder = directory_folder.contents[p]
-            directory_folder.contents[folder.id] = folder
+        directory_folder: Folder = self.contents["/"]
+        if path and path != "/":
+            directory_folder = self._ensure_folder_chain(
+                [p for p in path.strip("/").split("/") if p]
+            )
+        directory_folder.contents[folder.id] = folder
 
         self.save()
         return folder.path + folder.id
@@ -242,9 +280,7 @@ class NewDriveData:
             directory_folder: Folder = self.contents["/"]
         else:
             paths = [p for p in path.strip("/").split("/") if p]
-            directory_folder: Folder = self.contents["/"]
-            for p in paths:
-                directory_folder = directory_folder.contents[p]
+            directory_folder = self._ensure_folder_chain(paths)
 
         # Check for existing file with identical name in destination folder
         existing_file = None
@@ -1311,6 +1347,26 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
 
                 if not hasattr(new_drive_data, "contents") or "/" not in new_drive_data.contents:
                     logger.warning("Downloaded remote drive.data has invalid structure, skipping reload.")
+                    return False
+
+                # ── Stale-rollback protection ─────────────────────────────────
+                # Never let an OLDER Telegram backup wipe recent local changes
+                # (e.g. folders created moments ago during an active sync).
+                remote_ts = float(getattr(new_drive_data, "last_modified", 0) or 0)
+                local_ts = float(getattr(DRIVE_DATA, "last_modified", 0) or 0) if DRIVE_DATA is not None else 0.0
+                local_root_items = []
+                if DRIVE_DATA is not None:
+                    local_root_items = list(
+                        getattr(getattr(DRIVE_DATA, "contents", {}).get("/", None), "contents", {}) or {}
+                    )
+                if local_root_items and remote_ts and local_ts and remote_ts < local_ts:
+                    logger.warning(
+                        f"Remote Telegram backup is OLDER than local drive metadata "
+                        f"(remote {remote_ts:.0f} < local {local_ts:.0f}). "
+                        f"Skipping reload to protect recent changes."
+                    )
+                    # Remember this doc so we don't re-download the same stale backup every tick.
+                    LAST_REMOTE_BACKUP_FILE_ID = remote_file_id
                     return False
 
                 DRIVE_DATA = new_drive_data

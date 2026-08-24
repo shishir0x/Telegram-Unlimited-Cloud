@@ -365,6 +365,9 @@ $phones | ConvertTo-Json -Compress
 # ==========================================
 # TGDrive Backup Client
 # ==========================================
+MAX_CONSECUTIVE_UPLOAD_FAILURES = 25  # abort the run if this many files fail back-to-back
+
+
 class TGDriveBackupClient:
     def __init__(self, base_url: str, password: str, drive_root: str = ""):
         self.base_url = base_url.rstrip("/")
@@ -376,6 +379,55 @@ class TGDriveBackupClient:
         self.session.mount("https://", adapter)
         self.manifest = SyncManifest()
         self._folder_id_cache: Dict[str, str] = {"": "/"}
+        self.consecutive_upload_failures = 0
+
+    # ── Fault-tolerant upload wrappers ────────────────────────────────────────
+    def upload_file(self, local_file_path: Path, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
+        """Heals the destination folder (re-resolves & recreates missing IDs), then retries once."""
+        ok = self._upload_file_once(local_file_path, human_remote_folder, file_idx, total_files, remaining_files, remaining_bytes)
+        if not ok:
+            print("    ↻ Re-resolving destination folder and retrying once...")
+            if self._heal_destination(human_remote_folder):
+                ok = self._upload_file_once(local_file_path, human_remote_folder, file_idx, total_files, remaining_files, remaining_bytes)
+        return self._settle_upload_result(ok, human_remote_folder, local_file_path.name)
+
+    def upload_in_memory_file(self, file_bytes: bytes, file_name: str, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
+        """Heals the destination folder (in-memory variant), then retries once."""
+        ok = self._upload_in_memory_file_once(file_bytes, file_name, human_remote_folder, file_idx, total_files, remaining_files, remaining_bytes)
+        if not ok:
+            print("    ↻ Re-resolving destination folder and retrying once...")
+            if self._heal_destination(human_remote_folder):
+                ok = self._upload_in_memory_file_once(file_bytes, file_name, human_remote_folder, file_idx, total_files, remaining_files, remaining_bytes)
+        return self._settle_upload_result(ok, human_remote_folder, file_name)
+
+    def _heal_destination(self, human_remote_folder: str) -> Optional[str]:
+        """Drops every cached folder-ID for this path so the whole chain is re-listed
+        (and re-created server-side) before the retry."""
+        clean = human_remote_folder.strip("/")
+        parts = [p for p in clean.split("/") if p]
+        for i in range(len(parts)):
+            self._folder_id_cache.pop("/".join(parts[: i + 1]), None)
+        try:
+            return self.resolve_or_create_folder_id_path(human_remote_folder)
+        except Exception as e:
+            print(f"    [!] Folder re-resolution failed for '{human_remote_folder}': {e}")
+            return None
+
+    def _settle_upload_result(self, ok: bool, human_remote_folder: str, file_name: str) -> bool:
+        """Tracks consecutive failures and aborts the run when the server looks unhealthy."""
+        if ok:
+            self.consecutive_upload_failures = 0
+            return True
+
+        self.consecutive_upload_failures += 1
+        if self.consecutive_upload_failures >= MAX_CONSECUTIVE_UPLOAD_FAILURES:
+            msg = (
+                f"Aborting sync after {self.consecutive_upload_failures} consecutive upload failures "
+                f"(last target: '{human_remote_folder}/{file_name}'). The server is likely unhealthy."
+            )
+            self.push_web_sync_status({"state": "failed", "log": msg}, msg)
+            raise RuntimeError(msg)
+        return False
 
     def verify_auth(self) -> bool:
         """Verify password with TGDrive server."""
@@ -485,7 +537,7 @@ class TGDriveBackupClient:
                     print(f"    [!] Error creating folder '{part}': {e}")
 
             if not found_id:
-                print(f"    [!] Warning: Unable to resolve internal ID for '{part}' inside '{current_id_path}'")
+                print(f"    [!] Could not resolve folder ID for '{part}' in '{current_id_path}'. Using name-based fallback — the server will auto-create missing folders on upload.")
                 found_id = part
 
             current_id_path = (current_id_path + found_id + "/").replace("//", "/")
@@ -561,7 +613,7 @@ class TGDriveBackupClient:
             "folders_created": total_folders
         }, f"Verified all {total_folders} folders on cloud drive.")
 
-    def upload_file(self, local_file_path: Path, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
+    def _upload_file_once(self, local_file_path: Path, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
         """Upload a single file to TGDrive with real-time terminal progress bar and web broadcast."""
         file_name = local_file_path.name
         file_size = local_file_path.stat().st_size
@@ -678,7 +730,7 @@ class TGDriveBackupClient:
             print(f"    ❌ Upload error: {e}")
             return False
 
-    def upload_in_memory_file(self, file_bytes: bytes, file_name: str, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
+    def _upload_in_memory_file_once(self, file_bytes: bytes, file_name: str, human_remote_folder: str, file_idx: int = 1, total_files: int = 1, remaining_files: int = 0, remaining_bytes: int = 0) -> bool:
         """Upload in-memory file bytes directly to TGDrive with zero persistent disk storage."""
         file_size = len(file_bytes)
         if file_size == 0:
