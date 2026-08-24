@@ -76,53 +76,70 @@ def compute_folder_stats(folder):
 
 def convert_class_to_dict(data, isObject, showtrash=False):
     if isObject == True:
-        data = data.__dict__.copy()
+        data = getattr(data, "__dict__", {}).copy() if hasattr(data, "__dict__") else (data.copy() if isinstance(data, dict) else {})
     new_data = {"contents": {}}
 
-    for key in data["contents"]:
-        item = data["contents"][key]
-        if item.trash == showtrash:
-            if item.type == "folder":
+    raw_contents = data.get("contents", {}) if isinstance(data, dict) else getattr(data, "contents", {})
+    if not isinstance(raw_contents, dict):
+        return new_data
+
+    for key, item in raw_contents.items():
+        is_trash = bool(getattr(item, "trash", False) if not isinstance(item, dict) else item.get("trash", False))
+        if is_trash == showtrash:
+            item_type = getattr(item, "type", "file") if not isinstance(item, dict) else item.get("type", "file")
+            item_name = getattr(item, "name", "Unnamed") if not isinstance(item, dict) else item.get("name", "Unnamed")
+            item_id = getattr(item, "id", key) if not isinstance(item, dict) else item.get("id", key)
+            item_path = getattr(item, "path", "/") if not isinstance(item, dict) else item.get("path", "/")
+            item_date = getattr(item, "upload_date", "") if not isinstance(item, dict) else item.get("upload_date", "")
+            item_tags = getattr(item, "tags", []) if not isinstance(item, dict) else item.get("tags", [])
+            item_owner = getattr(item, "owner", "Admin") if not isinstance(item, dict) else item.get("owner", "Admin")
+            item_device = getattr(item, "device", "") if not isinstance(item, dict) else item.get("device", "")
+            item_display_path = getattr(item, "display_path", item_path) if not isinstance(item, dict) else item.get("display_path", item_path)
+            item_human_path = getattr(item, "human_path", item_display_path) if not isinstance(item, dict) else item.get("human_path", item_display_path)
+
+            if item_type == "folder":
                 folder = item
                 f_size, f_files, f_folders = compute_folder_stats(folder)
                 new_data["contents"][key] = {
-                    "name": folder.name,
-                    "type": folder.type,
-                    "id": folder.id,
+                    "name": item_name,
+                    "type": "folder",
+                    "id": item_id,
                     "size": f_size,
                     "file_count": f_files,
                     "folder_count": f_folders,
-                    "path": folder.path,
-                    "display_path": getattr(folder, "display_path", folder.path),
-                    "human_path": getattr(folder, "human_path", getattr(folder, "display_path", folder.path)),
-                    "device": getattr(folder, "device", ""),
+                    "path": item_path,
+                    "display_path": item_display_path,
+                    "human_path": item_human_path,
+                    "device": item_device,
                     "category": "Folder",
                     "mime_type": "inode/directory",
                     "extension": "",
-                    "tags": getattr(folder, "tags", []),
-                    "owner": getattr(folder, "owner", "Admin"),
-                    "upload_date": getattr(folder, "upload_date", ""),
+                    "tags": item_tags,
+                    "owner": item_owner,
+                    "upload_date": item_date,
                 }
             else:
                 file = item
-                mime_type, category, ext, icon = get_file_details(file.name)
+                f_size = getattr(file, "size", 0) if not isinstance(file, dict) else file.get("size", 0)
+                f_file_id = getattr(file, "file_id", 0) if not isinstance(file, dict) else file.get("file_id", 0)
+                mime_type, category, ext, icon = get_file_details(item_name)
                 new_data["contents"][key] = {
-                    "name": file.name,
-                    "type": file.type,
-                    "size": file.size,
-                    "id": file.id,
-                    "file_id": getattr(file, "file_id", 0),
-                    "path": file.path,
-                    "display_path": getattr(file, "display_path", file.path),
-                    "human_path": getattr(file, "human_path", getattr(file, "display_path", file.path)),
-                    "device": getattr(file, "device", ""),
+                    "name": item_name,
+                    "type": "file",
+                    "size": f_size,
+                    "id": item_id,
+                    "file_id": f_file_id,
+                    "path": item_path,
+                    "display_path": item_display_path,
+                    "human_path": item_human_path,
+                    "device": item_device,
                     "category": category,
                     "mime_type": mime_type,
                     "extension": ext,
                     "icon": icon,
-                    "tags": getattr(file, "tags", []),
-                    "owner": getattr(file, "owner", "Admin"),
-                    "upload_date": getattr(file, "upload_date", ""),
+                    "tags": item_tags,
+                    "owner": item_owner,
+                    "upload_date": item_date,
                 }
     return new_data
 

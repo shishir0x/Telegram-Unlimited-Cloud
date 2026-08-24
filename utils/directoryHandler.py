@@ -101,7 +101,10 @@ def ensure_drive_data():
         if not loaded:
             logger.info("Initializing new drive data structure.")
             DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
+            DRIVE_DATA.last_modified = 0.0
             DRIVE_DATA.save()
+            DRIVE_DATA.isUpdated = False
+            DRIVE_DATA.last_modified = 0.0
             
     return DRIVE_DATA
 
@@ -1322,13 +1325,27 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
             msg: Optional[Message] = None
             for cid, candidate_client in client_candidates:
                 try:
-                    cand_msg = await candidate_client.get_messages(
-                        config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
-                    )
-                    if cand_msg and not getattr(cand_msg, "empty", True) and cand_msg.document:
-                        msg = cand_msg
-                        _BACKUP_AUTHOR_CLIENT_ID = cid
-                        break
+                    if config.DATABASE_BACKUP_MSG_ID:
+                        cand_msg = await candidate_client.get_messages(
+                            config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
+                        )
+                        if cand_msg and not getattr(cand_msg, "empty", True) and cand_msg.document:
+                            msg = cand_msg
+                            _BACKUP_AUTHOR_CLIENT_ID = cid
+                            break
+
+                    # Fallback: check pinned message in storage channel if configured ID is missing or empty
+                    if not msg:
+                        try:
+                            chat = await candidate_client.get_chat(config.STORAGE_CHANNEL)
+                            if chat and chat.pinned_message and chat.pinned_message.document:
+                                msg = chat.pinned_message
+                                if not config.DATABASE_BACKUP_MSG_ID:
+                                    config.DATABASE_BACKUP_MSG_ID = chat.pinned_message.id
+                                _BACKUP_AUTHOR_CLIENT_ID = cid
+                                break
+                        except Exception:
+                            pass
                 except Exception:
                     continue
 
@@ -1364,7 +1381,7 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                     local_root_items = list(
                         getattr(getattr(DRIVE_DATA, "contents", {}).get("/", None), "contents", {}) or {}
                     )
-                if local_root_items and remote_ts and local_ts and remote_ts < local_ts:
+                if not force and local_root_items and remote_ts and local_ts and remote_ts < local_ts:
                     logger.warning(
                         f"Remote Telegram backup is OLDER than local drive metadata "
                         f"(remote {remote_ts:.0f} < local {local_ts:.0f}). "
