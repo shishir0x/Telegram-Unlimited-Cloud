@@ -202,6 +202,64 @@ def revoke_share(token: str) -> bool:
     return True
 
 
+def delete_share(token: str) -> bool:
+    """Permanently delete a share record from the store."""
+    shares = _load_shares()
+    if token not in shares:
+        return False
+    rec = shares.pop(token)
+    _save_shares(shares)
+    logger.info(f"Permanently deleted share '{rec.get('name')}'")
+    return True
+
+
+def clear_inactive_shares() -> int:
+    """Permanently delete all revoked and expired share records."""
+    shares = _load_shares()
+    now = time.time()
+    to_delete = []
+    for tok, rec in shares.items():
+        is_rev = bool(rec.get("revoked"))
+        exp = rec.get("expires_at")
+        is_exp = bool(exp and now > float(exp))
+        if is_rev or is_exp:
+            to_delete.append(tok)
+    for tok in to_delete:
+        del shares[tok]
+    if to_delete:
+        _save_shares(shares)
+        logger.info(f"Cleaned up {len(to_delete)} inactive share records")
+    return len(to_delete)
+
+
+def update_share_settings(
+    token: str,
+    expires_at: Optional[float] = None,
+    password_hash: Optional[str] = None,
+    clear_password: bool = False,
+    allow_download: Optional[bool] = None,
+    allow_preview: Optional[bool] = None,
+) -> Optional[dict]:
+    """Update settings on an existing active share without altering its token URL."""
+    shares = _load_shares()
+    rec = shares.get(token)
+    if not rec:
+        return None
+    if expires_at is not None or "expires_at" in rec:
+        rec["expires_at"] = expires_at
+    if clear_password:
+        rec["password_hash"] = None
+    elif password_hash is not None:
+        rec["password_hash"] = password_hash
+    if allow_download is not None:
+        rec["allow_download"] = bool(allow_download)
+    if allow_preview is not None:
+        rec["allow_preview"] = bool(allow_preview)
+    _save_shares(shares)
+    logger.info(f"Updated settings for share '{rec.get('name')}'")
+    return rec
+
+
 def list_shares() -> List[dict]:
     """All shares, newest first. Tokens ARE included (admin-only endpoint)."""
     recs = sorted(_load_shares().values(), key=lambda r: r.get("created_at", 0), reverse=True)

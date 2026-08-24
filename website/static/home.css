@@ -5330,13 +5330,17 @@ body:not(.dark-mode) .share-hint {
    Shared Links Management Center
    ========================================================================== */
 .gd-shared-links-view {
-    display: flex;
+    display: none;
     flex-direction: column;
     gap: 16px;
     padding: 16px 24px 40px;
     width: 100%;
     box-sizing: border-box;
     animation: fadeIn 0.18s ease-in-out;
+}
+
+.gd-shared-links-view.active {
+    display: flex !important;
 }
 
 .gd-shared-links-header {
@@ -5824,9 +5828,11 @@ body:not(.dark-mode) .gd-share-item-name {
 body:not(.dark-mode) .gd-share-url-row,
 body:not(.dark-mode) .gd-shared-search-wrap input,
 body:not(.dark-mode) .gd-stat-pill,
-body:not(.dark-mode) .gd-share-tag {
+body:not(.dark-mode) .gd-share-tag,
+body:not(.dark-mode) .gd-shared-select {
     background: #f8f9fa;
     border-color: #dadce0;
+    color: #202124;
 }
 
 body:not(.dark-mode) .gd-shared-tab-btn {
@@ -5849,5 +5855,269 @@ body:not(.dark-mode) .gd-shared-empty-card {
     background: #ffffff;
     border-color: #dadce0;
 }
+
+/* Enhanced Shared Links Toolbar & Controls */
+.gd-shared-toolbar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.gd-shared-actions-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.gd-shared-select {
+    background: var(--gd-surface, #1e1f20);
+    border: 1px solid var(--gd-border, #3c4043);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 0.82rem;
+    color: var(--gd-text-primary, #e8eaed);
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.gd-shared-select:focus {
+    border-color: var(--gd-primary, #8ab4f8);
+}
+
+.gd-shared-layout-toggle {
+    display: inline-flex;
+    background: var(--gd-surface, #1e1f20);
+    border: 1px solid var(--gd-border, #3c4043);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.gd-shared-view-btn {
+    background: transparent;
+    border: none;
+    padding: 6px 9px;
+    color: var(--gd-text-secondary, #9aa0a6);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+}
+
+.gd-shared-view-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
+
+.gd-shared-view-btn.active {
+    background: var(--gd-surface-elevated, #292a2d);
+    color: var(--gd-primary, #8ab4f8);
+}
+
+.gd-shared-clean-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(234, 67, 53, 0.1);
+    border: 1px solid rgba(234, 67, 53, 0.3);
+    color: #f28b82;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.gd-shared-clean-btn:hover {
+    background: rgba(234, 67, 53, 0.2);
+    border-color: rgba(234, 67, 53, 0.5);
+}
+
+.gd-shared-clean-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
+.gd-shared-export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--gd-surface, #1e1f20);
+    border: 1px solid var(--gd-border, #3c4043);
+    color: var(--gd-text-primary, #e8eaed);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.gd-shared-export-btn:hover {
+    background: var(--gd-hover, #35373a);
+}
+
+.gd-shared-export-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
+/* Action Buttons */
+.gd-share-action-btn.btn-edit {
+    background: rgba(138, 180, 248, 0.1);
+    border: 1px solid rgba(138, 180, 248, 0.25);
+    color: var(--gd-primary, #8ab4f8);
+    flex: 0 0 auto;
+    padding: 7px 10px;
+}
+
+.gd-share-action-btn.btn-edit:hover {
+    background: rgba(138, 180, 248, 0.2);
+}
+
+.gd-share-action-btn.btn-delete {
+    background: rgba(234, 67, 53, 0.08);
+    border: 1px solid rgba(234, 67, 53, 0.25);
+    color: #f28b82;
+    flex: 0 0 auto;
+    padding: 7px 10px;
+}
+
+.gd-share-action-btn.btn-delete:hover {
+    background: rgba(234, 67, 53, 0.22);
+    border-color: rgba(234, 67, 53, 0.6);
+}
+
+/* Table View for Shared Links */
+.gd-shared-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    background: var(--gd-surface, #1e1f20);
+    border: 1px solid var(--gd-border, #3c4043);
+    border-radius: 12px;
+}
+
+.gd-shared-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+    text-align: left;
+}
+
+.gd-shared-table th {
+    background: var(--gd-surface-elevated, #292a2d);
+    color: var(--gd-text-secondary, #9aa0a6);
+    font-weight: 600;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--gd-border, #3c4043);
+    white-space: nowrap;
+}
+
+.gd-shared-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--gd-border-light, rgba(255, 255, 255, 0.05));
+    color: var(--gd-text-primary, #e8eaed);
+    vertical-align: middle;
+}
+
+.gd-shared-table tr:hover {
+    background: var(--gd-hover, #35373a);
+}
+
+.gd-shared-table tr.is-revoked td {
+    opacity: 0.7;
+}
+
+.gd-shared-table tr.is-expired td {
+    opacity: 0.7;
+}
+
+.gd-shared-tbl-name-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gd-shared-tbl-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.gd-shared-tbl-btn {
+    background: var(--gd-surface-elevated, #292a2d);
+    border: 1px solid var(--gd-border, #3c4043);
+    color: var(--gd-text-primary, #e8eaed);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+}
+
+.gd-shared-tbl-btn:hover {
+    background: var(--gd-hover, #35373a);
+    border-color: var(--gd-primary, #8ab4f8);
+}
+
+.gd-shared-tbl-btn.tbl-danger {
+    color: #f28b82;
+    border-color: rgba(234, 67, 53, 0.3);
+}
+
+.gd-shared-tbl-btn.tbl-danger:hover {
+    background: rgba(234, 67, 53, 0.15);
+}
+
+body:not(.dark-mode) .gd-shared-table-wrap {
+    background: #ffffff;
+    border-color: #dadce0;
+}
+
+body:not(.dark-mode) .gd-shared-table th {
+    background: #f8f9fa;
+    border-color: #dadce0;
+    color: #5f6368;
+}
+
+body:not(.dark-mode) .gd-shared-table td {
+    border-color: #f1f3f4;
+    color: #202124;
+}
+
+body:not(.dark-mode) .gd-shared-table tr:hover {
+    background: #f8f9fa;
+}
+
+body:not(.dark-mode) .gd-shared-tbl-btn,
+body:not(.dark-mode) .gd-shared-export-btn,
+body:not(.dark-mode) .gd-shared-layout-toggle {
+    background: #ffffff;
+    border-color: #dadce0;
+    color: #3c4043;
+}
+
+body:not(.dark-mode) .gd-shared-view-btn.active {
+    background: #e8f0fe;
+    color: #1a73e8;
+}
+
 
 

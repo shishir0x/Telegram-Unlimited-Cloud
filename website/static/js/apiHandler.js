@@ -253,11 +253,11 @@ async function getCurrentDirectory() {
 
     if (path === '/shared_links' || path.startsWith('/shared_links')) {
         if (typeof window.showSharedLinksView === 'function') {
-            window.showSharedLinksView();
+            window.showSharedLinksView(false);
             return;
         }
     } else {
-        if (typeof window.hideSharedLinksView === 'function' && window.CURRENT_PAGE_VIEW === 'shared_links') {
+        if (typeof window.hideSharedLinksView === 'function') {
             window.hideSharedLinksView();
         }
     }

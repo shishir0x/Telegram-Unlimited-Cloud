@@ -33,6 +33,7 @@ from utils.auth import (
     get_client_ip,
     is_admin_authenticated,
     verify_password,
+    hash_password,
     sanitize_path,
 )
 from utils.email_service import email_service, EmailDeliveryError
@@ -1531,6 +1532,75 @@ async def api_share_regenerate(request: Request, _auth: Session = Depends(requir
     })
     resp.delete_cookie(_share_unlock_cookie_name(token), path="/")
     return resp
+
+
+@app.post("/api/share/delete")
+async def api_share_delete(request: Request, _auth: Session = Depends(require_auth)):
+    """Permanently delete a share record completely from the store."""
+    from utils import shareManager
+    data = await request.json()
+    token = str(data.get("token", "")).strip()
+    if not token:
+        return JSONResponse({"status": "error", "error": "missing_token"}, status_code=400)
+    ok = shareManager.delete_share(token)
+    if not ok:
+        return JSONResponse({"status": "error", "error": "not_found"}, status_code=404)
+    resp = JSONResponse({"status": "ok"})
+    resp.delete_cookie(_share_unlock_cookie_name(token), path="/")
+    return resp
+
+
+@app.post("/api/share/clear_inactive")
+async def api_share_clear_inactive(request: Request, _auth: Session = Depends(require_auth)):
+    """Bulk delete all revoked and expired shares."""
+    from utils import shareManager
+    count = shareManager.clear_inactive_shares()
+    return JSONResponse({"status": "ok", "deleted_count": count})
+
+
+@app.post("/api/share/update")
+async def api_share_update(request: Request, _auth: Session = Depends(require_auth)):
+    """Update settings on an existing active share (permissions, password, expiration)."""
+    from utils import shareManager
+    data = await request.json()
+    token = str(data.get("token", "")).strip()
+    if not token:
+        return JSONResponse({"status": "error", "error": "missing_token"}, status_code=400)
+
+    password_hash = None
+    clear_password = bool(data.get("clear_password", False))
+    raw_pwd = data.get("password")
+    if raw_pwd and not clear_password:
+        if len(raw_pwd) < 4:
+            return JSONResponse({"status": "error", "error": "password_too_short"}, status_code=400)
+        password_hash = hash_password(raw_pwd)
+
+    expires_at = None
+    if "expires_in_hours" in data:
+        raw_hours = data.get("expires_in_hours")
+        if raw_hours not in (None, "", "null"):
+            try:
+                h = float(raw_hours)
+                if h > 0:
+                    expires_at = time.time() + (h * 3600.0)
+            except (ValueError, TypeError):
+                pass
+
+    rec = shareManager.update_share_settings(
+        token=token,
+        expires_at=expires_at if "expires_in_hours" in data else None,
+        password_hash=password_hash,
+        clear_password=clear_password,
+        allow_download=data.get("allow_download"),
+        allow_preview=data.get("allow_preview"),
+    )
+    if not rec:
+        return JSONResponse({"status": "error", "error": "not_found"}, status_code=404)
+
+    return JSONResponse({
+        "status": "ok",
+        "share": shareManager.public_record(rec, include_token=True),
+    })
 
 
 @app.post("/api/share/list")

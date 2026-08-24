@@ -10,6 +10,9 @@ function openFolder() {
     if (typeof window.hideSyncActivityView === 'function') {
         window.hideSyncActivityView();
     }
+    if (typeof window.hideSharedLinksView === 'function') {
+        window.hideSharedLinksView();
+    }
     navigateToPath(targetPath);
 }
 

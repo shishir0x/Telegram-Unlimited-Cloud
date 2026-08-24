@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
     <title>Google Drive - TG Unlimited Cloud</title>
-    <link rel="stylesheet" href="static/home.css?v=12.0" />
+    <link rel="stylesheet" href="static/home.css?v=14.0" />
 
     <!-- Google Fonts: Google Sans & Roboto -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -529,24 +529,57 @@
                                     <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
                                 </button>
                             </div>
-                            <p class="gd-shared-subtitle">Manage all active public links, check remaining time, and revoke access instantly.</p>
+                            <p class="gd-shared-subtitle">Manage all active public links, track remaining time, edit permissions, and revoke or delete access.</p>
                         </div>
                         <div class="gd-shared-header-right">
                             <div class="gd-shared-stats-pills">
-                                <span class="gd-stat-pill pill-total"><strong id="shared-stat-total">0</strong> Total</span>
-                                <span class="gd-stat-pill pill-active"><strong id="shared-stat-active">0</strong> Active</span>
-                                <span class="gd-stat-pill pill-expiring"><strong id="shared-stat-expiring">0</strong> Expiring Soon</span>
-                                <span class="gd-stat-pill pill-revoked"><strong id="shared-stat-revoked">0</strong> Revoked</span>
+                                <span class="gd-stat-pill pill-total" id="pill-filter-total" style="cursor:pointer;" title="Click to view all links"><strong id="shared-stat-total">0</strong> Total</span>
+                                <span class="gd-stat-pill pill-active" id="pill-filter-active" style="cursor:pointer;" title="Click to view active links"><strong id="shared-stat-active">0</strong> Active</span>
+                                <span class="gd-stat-pill pill-expiring" id="pill-filter-expiring" style="cursor:pointer;" title="Click to view expiring soon links"><strong id="shared-stat-expiring">0</strong> Expiring Soon</span>
+                                <span class="gd-stat-pill pill-revoked" id="pill-filter-revoked" style="cursor:pointer;" title="Click to view revoked / expired links"><strong id="shared-stat-revoked">0</strong> Revoked</span>
                             </div>
                         </div>
                     </div>
 
                     <!-- Search & Filter Controls -->
                     <div class="gd-shared-toolbar">
-                        <div class="gd-shared-search-wrap">
-                            <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-                            <input type="text" id="shared-links-search" placeholder="Search shared links by name, token, or type..." />
+                        <div class="gd-shared-toolbar-row">
+                            <div class="gd-shared-search-wrap">
+                                <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                                <input type="text" id="shared-links-search" placeholder="Search shared links by name, token, or type..." />
+                            </div>
+
+                            <div class="gd-shared-actions-bar-right">
+                                <select id="shared-links-sort" class="gd-shared-select" title="Sort shared links">
+                                    <option value="newest" selected>Newest First</option>
+                                    <option value="oldest">Oldest First</option>
+                                    <option value="expiring_soon">Expiring Soonest</option>
+                                    <option value="name_asc">Name (A → Z)</option>
+                                    <option value="name_desc">Name (Z → A)</option>
+                                    <option value="views_desc">Most Views</option>
+                                </select>
+
+                                <div class="gd-shared-layout-toggle">
+                                    <button class="gd-shared-view-btn active" id="shared-view-grid-btn" title="Grid layout">
+                                        <svg viewBox="0 0 24 24"><path d="M4 11h5V5H4v6zm0 7h5v-6H4v6zm6 0h5v-6h-5v6zm6 0h5v-6h-5v6zm-6-7h5V5h-5v6zm6-6v6h5V5h-5z"/></svg>
+                                    </button>
+                                    <button class="gd-shared-view-btn" id="shared-view-table-btn" title="Table layout">
+                                        <svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+                                    </button>
+                                </div>
+
+                                <button id="shared-links-clean-inactive-btn" class="gd-shared-clean-btn" title="Permanently delete all revoked and expired share links from panel">
+                                    <svg viewBox="0 0 24 24"><path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zm2 15H7V6h10v13zM9 8h2v9H9zm4 0h2v9h-2z"/></svg>
+                                    <span>Clean Inactive</span>
+                                </button>
+
+                                <button id="shared-links-export-btn" class="gd-shared-export-btn" title="Export all shared links to JSON backup">
+                                    <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                                    <span>Export</span>
+                                </button>
+                            </div>
                         </div>
+
                         <div class="gd-shared-filter-tabs">
                             <button class="gd-shared-tab-btn active" data-filter="all">All (<span id="count-all">0</span>)</button>
                             <button class="gd-shared-tab-btn" data-filter="active">Active (<span id="count-active">0</span>)</button>
@@ -742,6 +775,49 @@
         <div class="gd-modal-footer">
             <button id="share-done-btn" class="gd-secondary-btn">Close</button>
             <button id="share-create-btn" class="gd-primary-btn">Create Link</button>
+        </div>
+    </div>
+
+    <!-- Edit Shared Link Settings Modal -->
+    <div id="shared-link-edit-modal" class="gd-modal gd-share-modal" style="max-width: 480px;">
+        <div class="gd-modal-title">
+            <span>⚙️ Edit Share Link Settings</span>
+            <div id="shared-edit-target-name" class="gd-move-target-subtext">--</div>
+        </div>
+        <div class="gd-modal-body">
+            <input type="hidden" id="shared-edit-token" value="" />
+            
+            <label class="share-label" for="shared-edit-expiry">Update Expiration</label>
+            <select id="shared-edit-expiry" class="share-select">
+                <option value="keep" selected>Keep current expiration</option>
+                <option value="1">Reset to 1 hour from now</option>
+                <option value="24">Reset to 24 hours from now</option>
+                <option value="168">Reset to 7 days from now</option>
+                <option value="720">Reset to 30 days from now</option>
+                <option value="never">Remove Expiration (Permanent)</option>
+            </select>
+
+            <label class="share-label" for="shared-edit-password" style="margin-top: 12px;">Password Protection</label>
+            <input type="password" id="shared-edit-password" placeholder="Enter new password (or leave empty to keep)" autocomplete="new-password" maxlength="128" />
+            <div class="gd-checkbox-row" style="margin-top: 6px;">
+                <input type="checkbox" id="shared-edit-clear-pwd">
+                <label for="shared-edit-clear-pwd">Remove password requirement completely</label>
+            </div>
+
+            <label class="share-label" style="margin-top: 12px;">Visitor Permissions</label>
+            <div class="gd-checkbox-row">
+                <input type="checkbox" id="shared-edit-allow-download" checked>
+                <label for="shared-edit-allow-download">Allow file downloading</label>
+            </div>
+            <div class="gd-checkbox-row">
+                <input type="checkbox" id="shared-edit-allow-preview" checked>
+                <label for="shared-edit-allow-preview">Allow in-browser preview</label>
+            </div>
+            <p id="shared-edit-error" class="share-error" style="display:none;"></p>
+        </div>
+        <div class="gd-modal-footer">
+            <button id="shared-edit-cancel-btn" class="gd-secondary-btn">Cancel</button>
+            <button id="shared-edit-save-btn" class="gd-primary-btn">Save Changes</button>
         </div>
     </div>
 
@@ -1002,11 +1078,11 @@
 
     <!-- Scripts -->
 
-    <script src="static/js/extra.js?v=12.0"></script>
-    <script src="static/js/apiHandler.js?v=12.0"></script>
-    <script src="static/js/sidebar.js?v=12.0"></script>
-    <script src="static/js/fileClickHandler.js?v=12.0"></script>
-    <script src="static/js/main.js?v=12.0"></script>
+    <script src="static/js/extra.js?v=14.0"></script>
+    <script src="static/js/apiHandler.js?v=14.0"></script>
+    <script src="static/js/sidebar.js?v=14.0"></script>
+    <script src="static/js/fileClickHandler.js?v=14.0"></script>
+    <script src="static/js/main.js?v=14.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

@@ -1,12 +1,12 @@
-const CACHE_NAME = 'tgdrive-v12';
+const CACHE_NAME = 'tgdrive-v14';
 const STATIC_ASSETS = [
   '/',
-  '/static/home.css?v=12.0',
-  '/static/js/extra.js?v=12.0',
-  '/static/js/apiHandler.js?v=12.0',
-  '/static/js/sidebar.js?v=12.0',
-  '/static/js/fileClickHandler.js?v=12.0',
-  '/static/js/main.js?v=12.0',
+  '/static/home.css?v=14.0',
+  '/static/js/extra.js?v=14.0',
+  '/static/js/apiHandler.js?v=14.0',
+  '/static/js/sidebar.js?v=14.0',
+  '/static/js/fileClickHandler.js?v=14.0',
+  '/static/js/main.js?v=14.0',
   '/static/manifest.json'
 ];
 

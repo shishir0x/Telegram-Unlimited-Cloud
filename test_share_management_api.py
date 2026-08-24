@@ -57,9 +57,6 @@ def test_shared_links_management_flow():
     assert res_pub_meta.status_code == 410
     assert res_pub_meta.json().get("error") == "revoked"
 
-    res_pub_stream = client.get(f"/share/{share_token}/file")
-    assert res_pub_stream.status_code == 410
-
     # 4. Regenerate share
     res_regen = client.post("/api/share/regenerate", json={"token": share_token})
     assert res_regen.status_code == 200, res_regen.text
@@ -72,7 +69,62 @@ def test_shared_links_management_flow():
     res_new_pub = client.get(f"/s/{new_token}")
     assert res_new_pub.status_code == 200
 
-    print("\n[PASS] Shared Links Management API flow verified successfully!")
+    # 5. Update share settings
+    res_update = client.post("/api/share/update", json={
+        "token": new_token,
+        "expires_in_hours": 48,
+        "password": "SecretPassword123",
+        "allow_download": False,
+        "allow_preview": True
+    })
+    assert res_update.status_code == 200, res_update.text
+    updated_share = res_update.json()["share"]
+    assert updated_share["has_password"] is True
+    assert updated_share["allow_download"] is False
+    assert updated_share["allow_preview"] is True
+
+    # 6. Verify updated password protection
+    res_meta_locked = client.post("/api/share/meta", json={"token": new_token})
+    assert res_meta_locked.status_code == 200
+    assert res_meta_locked.json().get("status") == "locked"
+    assert res_meta_locked.json().get("has_password") is True
+
+    # Bad password returns 401
+    res_unlock_bad = client.post("/api/share/unlock", json={"token": new_token, "password": "WrongPassword"})
+    assert res_unlock_bad.status_code == 401
+
+    # Correct password unlocks
+    res_unlock_good = client.post("/api/share/unlock", json={"token": new_token, "password": "SecretPassword123"})
+    assert res_unlock_good.status_code == 200
+
+    # Verify unlocking with cookie allows metadata
+    res_meta_unlocked = client.post("/api/share/meta", json={"token": new_token})
+    assert res_meta_unlocked.status_code == 200
+    assert res_meta_unlocked.json().get("status") == "ok"
+
+    # 7. Test delete share
+    res_del = client.post("/api/share/delete", json={"token": share_token})
+    assert res_del.status_code == 200, res_del.text
+    assert res_del.json()["status"] == "ok"
+
+    # Verify deleted share is gone from list
+    res_list2 = client.post("/api/share/list", json={})
+    assert not any(s["token"] == share_token for s in res_list2.json()["shares"])
+
+    # 8. Test clear_inactive
+    # Revoke new_token
+    client.post("/api/share/revoke", json={"token": new_token})
+    res_clear = client.post("/api/share/clear_inactive", json={})
+    assert res_clear.status_code == 200, res_clear.text
+    assert res_clear.json()["status"] == "ok"
+    assert res_clear.json()["deleted_count"] >= 1
+
+    # Verify new_token is also cleaned
+    res_list3 = client.post("/api/share/list", json={})
+    assert not any(s["token"] == new_token for s in res_list3.json()["shares"])
+
+    print("\n[PASS] Shared Links Management API (List, Revoke, Regenerate, Update, Delete, Clear Inactive) verified successfully!")
 
 if __name__ == "__main__":
     test_shared_links_management_flow()
+

@@ -3162,7 +3162,10 @@ function initSyncActivityManager() {
 // Shared Links Management Center
 // ==========================================================================
 window.SHARED_LINKS_CACHE = [];
+window.SHARED_LINKS_CACHE = [];
 window.SHARED_LINKS_FILTER = 'all';
+window.SHARED_LINKS_SORT = 'newest';
+window.SHARED_LINKS_VIEW_MODE = 'grid';
 
 function formatRemainingTime(expiresAt, isRevoked) {
     if (isRevoked) {
@@ -3198,23 +3201,46 @@ function formatRemainingTime(expiresAt, isRevoked) {
     };
 }
 
-window.showSharedLinksView = function() {
+window.showSharedLinksView = function(pushState = true) {
     window.CURRENT_PAGE_VIEW = 'shared_links';
+    if (pushState) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('path', '/shared_links');
+        window.history.pushState({ path: '/shared_links' }, '', url.toString());
+    }
+    if (typeof window.hideSyncActivityView === 'function') {
+        window.hideSyncActivityView();
+    }
     const listViewContainer = document.getElementById('list-view-container');
     const gridViewContainer = document.getElementById('grid-view-container');
     const syncViewContainer = document.getElementById('sync-view-container');
     const sharedViewContainer = document.getElementById('shared-links-container');
-    const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
     const navMyDrive = document.getElementById('nav-my-drive');
     const navRecent = document.getElementById('nav-recent');
     const navSharedLinks = document.getElementById('nav-shared-links');
     const navSyncActivity = document.getElementById('nav-sync-activity');
     const navTrash = document.getElementById('nav-trash');
 
+    // Drive-specific toolbars to hide completely for dedicated Shared Links view
+    const actionBar = document.querySelector('.gd-action-bar');
+    const filterChipsBar = document.getElementById('filter-chips-bar');
+    const statusBar = document.getElementById('gd-status-bar');
+    const searchResultsBanner = document.getElementById('search-results-banner');
+    const bulkActionsBar = document.getElementById('bulk-actions-bar');
+
     if (listViewContainer) listViewContainer.style.display = 'none';
     if (gridViewContainer) gridViewContainer.style.display = 'none';
     if (syncViewContainer) syncViewContainer.style.display = 'none';
-    if (sharedViewContainer) sharedViewContainer.style.display = 'flex';
+    if (sharedViewContainer) {
+        sharedViewContainer.classList.add('active');
+        sharedViewContainer.style.display = 'flex';
+    }
+
+    if (actionBar) actionBar.style.display = 'none';
+    if (filterChipsBar) filterChipsBar.style.display = 'none';
+    if (statusBar) statusBar.style.display = 'none';
+    if (searchResultsBanner) searchResultsBanner.style.display = 'none';
+    if (bulkActionsBar) bulkActionsBar.style.display = 'none';
 
     // Update sidebar selection
     if (navMyDrive) navMyDrive.className = 'gd-nav-item unselected-item';
@@ -3222,23 +3248,6 @@ window.showSharedLinksView = function() {
     if (navTrash) navTrash.className = 'gd-nav-item unselected-item';
     if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
     if (navSharedLinks) navSharedLinks.className = 'gd-nav-item selected-item';
-
-    // Update breadcrumbs
-    if (breadcrumbsContainer) {
-        breadcrumbsContainer.innerHTML = `
-            <span class="gd-crumb gd-crumb-target" id="crumb-root-back-shared">My Drive</span>
-            <span class="gd-crumb-separator">&gt;</span>
-            <span class="gd-crumb gd-crumb-current">🔗 Shared Links</span>
-        `;
-        const rootCrumb = document.getElementById('crumb-root-back-shared');
-        if (rootCrumb) {
-            rootCrumb.addEventListener('click', (e) => {
-                e.preventDefault();
-                window.hideSharedLinksView();
-                if (typeof navigateToPath === 'function') navigateToPath('/');
-            });
-        }
-    }
 
     fetchAndRenderSharedLinks();
 };
@@ -3251,8 +3260,22 @@ window.hideSharedLinksView = function() {
     const navMyDrive = document.getElementById('nav-my-drive');
     const navSharedLinks = document.getElementById('nav-shared-links');
 
-    if (sharedViewContainer) sharedViewContainer.style.display = 'none';
-    if (CURRENT_VIEW_MODE === 'grid') {
+    const actionBar = document.querySelector('.gd-action-bar');
+    const filterChipsBar = document.getElementById('filter-chips-bar');
+    const statusBar = document.getElementById('gd-status-bar');
+
+    if (sharedViewContainer) {
+        sharedViewContainer.classList.remove('active');
+        sharedViewContainer.style.display = 'none';
+    }
+    if (actionBar) actionBar.style.display = 'flex';
+    if (statusBar) statusBar.style.display = 'flex';
+    if (filterChipsBar) {
+        const path = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+        filterChipsBar.style.display = (path && (path.startsWith('/trash') || path.startsWith('/sync'))) ? 'none' : 'flex';
+    }
+
+    if (typeof CURRENT_VIEW_MODE !== 'undefined' && CURRENT_VIEW_MODE === 'grid') {
         if (gridViewContainer) gridViewContainer.style.display = 'block';
         if (listViewContainer) listViewContainer.style.display = 'none';
     } else {
@@ -3260,7 +3283,6 @@ window.hideSharedLinksView = function() {
         if (gridViewContainer) gridViewContainer.style.display = 'none';
     }
     if (navSharedLinks) navSharedLinks.className = 'gd-nav-item unselected-item';
-    if (navMyDrive) navMyDrive.className = 'gd-nav-item selected-item';
 };
 
 async function fetchAndRenderSharedLinks() {
@@ -3287,8 +3309,10 @@ function renderSharedLinksList() {
     const searchInput = document.getElementById('shared-links-search');
     const query = (searchInput?.value || '').trim().toLowerCase();
     const filter = window.SHARED_LINKS_FILTER || 'all';
+    const sortBy = window.SHARED_LINKS_SORT || 'newest';
+    const viewMode = window.SHARED_LINKS_VIEW_MODE || 'grid';
 
-    const shares = window.SHARED_LINKS_CACHE || [];
+    const shares = [...(window.SHARED_LINKS_CACHE || [])];
     const now = Date.now() / 1000;
 
     let total = shares.length;
@@ -3330,7 +3354,7 @@ function renderSharedLinksList() {
     if (tabInactive) tabInactive.textContent = revokedOrExpiredCount;
 
     // Filter Items
-    const filtered = shares.filter(s => {
+    let filtered = shares.filter(s => {
         const isRev = s.revoked;
         const isExp = s.expires_at && Number(s.expires_at) <= now;
         const isExpiring = !isRev && s.expires_at && Number(s.expires_at) > now && (Number(s.expires_at) - now < 86400);
@@ -3350,6 +3374,21 @@ function renderSharedLinksList() {
         return true;
     });
 
+    // Sort Items
+    filtered.sort((a, b) => {
+        if (sortBy === 'newest') return (b.created_at || 0) - (a.created_at || 0);
+        if (sortBy === 'oldest') return (a.created_at || 0) - (b.created_at || 0);
+        if (sortBy === 'name_asc') return (a.name || '').localeCompare(b.name || '');
+        if (sortBy === 'name_desc') return (b.name || '').localeCompare(a.name || '');
+        if (sortBy === 'views_desc') return (b.access_count || 0) - (a.access_count || 0);
+        if (sortBy === 'expiring_soon') {
+            const expA = a.expires_at ? Number(a.expires_at) : Infinity;
+            const expB = b.expires_at ? Number(b.expires_at) : Infinity;
+            return expA - expB;
+        }
+        return 0;
+    });
+
     if (!grid) return;
 
     if (filtered.length === 0) {
@@ -3357,12 +3396,93 @@ function renderSharedLinksList() {
             <div class="gd-shared-empty-card">
                 <div class="gd-shared-empty-icon">🔗</div>
                 <div class="gd-shared-empty-title">${query ? 'No matching shared links found' : 'No shared links in this category'}</div>
-                <div class="gd-shared-empty-desc">${query ? 'Try searching with a different name or token.' : 'Right-click any file or folder and select "Share link" to create a public link.'}</div>
+                <div class="gd-shared-empty-desc">${query ? 'Try searching with a different name or token.' : 'Right-click any file or folder in your drive and select "Share link" to create a public link.'}</div>
             </div>
         `;
         return;
     }
 
+    if (viewMode === 'table') {
+        grid.innerHTML = `
+            <div class="gd-shared-table-wrap">
+                <table class="gd-shared-table">
+                    <thead>
+                        <tr>
+                            <th>Item Name</th>
+                            <th>Type</th>
+                            <th>Created</th>
+                            <th>Time Remaining</th>
+                            <th>Status</th>
+                            <th>Views</th>
+                            <th>Permissions</th>
+                            <th style="text-align: right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filtered.map(s => {
+                            const isRev = s.revoked;
+                            const isExp = s.expires_at && Number(s.expires_at) <= now;
+                            const isExpiring = !isRev && s.expires_at && Number(s.expires_at) > now && (Number(s.expires_at) - now < 86400);
+
+                            let badgeClass = 'badge-active';
+                            let badgeText = 'ACTIVE';
+                            if (isRev) {
+                                badgeClass = 'badge-revoked';
+                                badgeText = 'REVOKED';
+                            } else if (isExp) {
+                                badgeClass = 'badge-expired';
+                                badgeText = 'EXPIRED';
+                            } else if (isExpiring) {
+                                badgeClass = 'badge-expiring';
+                                badgeText = 'EXPIRING';
+                            }
+
+                            const remaining = formatRemainingTime(s.expires_at, isRev);
+                            const icon = s.type === 'folder' ? '📁' : '📄';
+                            const rootOrigin = window.location.origin;
+                            const shareUrl = `${rootOrigin}/s/${s.token}`;
+                            const createdDate = s.created_at ? new Date(Number(s.created_at) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '--';
+
+                            return `
+                                <tr class="${isRev ? 'is-revoked' : ''} ${isExp ? 'is-expired' : ''}">
+                                    <td>
+                                        <div class="gd-shared-tbl-name-cell">
+                                            <span>${icon}</span>
+                                            <span title="${escapeHtml(s.name || '')}">${escapeHtml(s.name || 'Shared Item')}</span>
+                                        </div>
+                                    </td>
+                                    <td>${escapeHtml(s.type || 'file')}</td>
+                                    <td>${createdDate}</td>
+                                    <td><span class="${remaining.class}">${remaining.text}</span></td>
+                                    <td><span class="gd-share-status-badge ${badgeClass}">${badgeText}</span></td>
+                                    <td>📊 ${(s.access_count || 0)}</td>
+                                    <td>
+                                        <span style="font-size:0.75rem; color:var(--gd-text-secondary);">${s.has_password ? '🔒' : '🔓'} ${s.allow_download ? '⬇️' : '🚫'} ${s.allow_preview ? '👁️' : ''}</span>
+                                    </td>
+                                    <td>
+                                        <div class="gd-shared-tbl-actions" style="justify-content: flex-end;">
+                                            <button class="gd-shared-tbl-btn" onclick="copyShareUrlDirect('${escapeHtml(s.token)}')" title="Copy URL">📋 Copy</button>
+                                            ${!isRev && !isExp ? `
+                                            <button class="gd-shared-tbl-btn" onclick="window.open('${escapeHtml(shareUrl)}', '_blank')" title="Open URL">🌐 Open</button>
+                                            <button class="gd-shared-tbl-btn" onclick="openEditShareModal('${escapeHtml(s.token)}')" title="Edit Settings">⚙️ Edit</button>
+                                            <button class="gd-shared-tbl-btn tbl-danger" onclick="confirmRevokeShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')" title="Revoke">🚫 Revoke</button>
+                                            ` : `
+                                            <button class="gd-shared-tbl-btn" onclick="confirmRegenerateShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')" title="Regenerate">🔄 Regen</button>
+                                            `}
+                                            <button class="gd-shared-tbl-btn tbl-danger" onclick="confirmDeleteShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')" title="Permanently delete from panel">🗑️ Delete</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+        return;
+    }
+
+    // Grid Card Mode
     grid.innerHTML = filtered.map(s => {
         const isRev = s.revoked;
         const isExp = s.expires_at && Number(s.expires_at) <= now;
@@ -3428,16 +3548,20 @@ function renderSharedLinksList() {
                         <svg style="width:14px;height:14px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
                         <span>Open</span>
                     </button>
-                    ` : ''}
-                    ${!isRev ? `
+                    <button class="gd-share-action-btn btn-edit" onclick="openEditShareModal('${escapeHtml(s.token)}')" title="Edit expiration or permissions">
+                        <span>⚙️ Edit</span>
+                    </button>
                     <button class="gd-share-action-btn btn-revoke" onclick="confirmRevokeShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')">
                         <span>Revoke</span>
                     </button>
                     ` : `
                     <button class="gd-share-action-btn btn-regenerate" onclick="confirmRegenerateShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')">
-                        <span>Regenerate Link</span>
+                        <span>Regenerate</span>
                     </button>
                     `}
+                    <button class="gd-share-action-btn btn-delete" onclick="confirmDeleteShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')" title="Permanently delete from panel">
+                        <span>🗑️</span>
+                    </button>
                 </div>
             </div>
         `;
@@ -3457,14 +3581,13 @@ window.copyShareUrlDirect = async function(token) {
 };
 
 window.confirmRevokeShare = async function(token, name) {
-    if (!confirm(`Are you sure you want to revoke the shared link for "${name || 'this item'}"?\n\nPublic visitors will immediately lose access (410 Gone).`)) {
+    if (!confirm(`Are you sure you want to revoke the shared link for "${name || 'this item'}"?\n\nPublic visitors will immediately lose access (HTTP 410 Gone).`)) {
         return;
     }
     try {
         const res = await postJson('/api/share/revoke', { token });
         if (res.status === 'ok') {
             if (typeof showToast === 'function') showToast(`Share link for "${name}" revoked. 🚫`);
-            // Update local cache
             if (window.SHARED_LINKS_CACHE) {
                 const item = window.SHARED_LINKS_CACHE.find(s => s.token === token);
                 if (item) item.revoked = true;
@@ -3475,6 +3598,190 @@ window.confirmRevokeShare = async function(token, name) {
         }
     } catch (e) {
         alert('Network error while revoking share link.');
+    }
+};
+
+window.confirmDeleteShare = async function(token, name) {
+    if (!confirm(`Permanently delete the share record for "${name || 'this item'}" from this panel?\n\nThis cannot be undone.`)) {
+        return;
+    }
+    try {
+        const res = await postJson('/api/share/delete', { token });
+        if (res.status === 'ok') {
+            if (typeof showToast === 'function') showToast(`Share record deleted. 🗑️`);
+            if (window.SHARED_LINKS_CACHE) {
+                window.SHARED_LINKS_CACHE = window.SHARED_LINKS_CACHE.filter(s => s.token !== token);
+            }
+            renderSharedLinksList();
+        } else {
+            alert('Failed to delete share record: ' + (res.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Network error while deleting share record.');
+    }
+};
+
+window.cleanInactiveShares = async function() {
+    const shares = window.SHARED_LINKS_CACHE || [];
+    const now = Date.now() / 1000;
+    const inactiveCount = shares.filter(s => s.revoked || (s.expires_at && Number(s.expires_at) <= now)).length;
+
+    if (inactiveCount === 0) {
+        if (typeof showToast === 'function') showToast('No revoked or expired links to clean up! ✨');
+        return;
+    }
+
+    if (!confirm(`Clean up and permanently delete all ${inactiveCount} inactive (revoked/expired) share links?`)) {
+        return;
+    }
+
+    try {
+        const res = await postJson('/api/share/clear_inactive', {});
+        if (res.status === 'ok') {
+            const count = res.deleted_count || inactiveCount;
+            if (typeof showToast === 'function') showToast(`Cleaned up ${count} inactive links! 🧹`);
+            fetchAndRenderSharedLinks();
+        } else {
+            alert('Failed to clean inactive links: ' + (res.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Network error while cleaning inactive links.');
+    }
+};
+
+window.exportSharedLinksJson = function() {
+    const shares = window.SHARED_LINKS_CACHE || [];
+    if (shares.length === 0) {
+        if (typeof showToast === 'function') showToast('No shared links available to export.');
+        return;
+    }
+    const origin = window.location.origin;
+    const exportData = shares.map(s => ({
+        name: s.name,
+        type: s.type,
+        token: s.token,
+        full_url: `${origin}/s/${s.token}`,
+        created_at: s.created_at ? new Date(Number(s.created_at) * 1000).toISOString() : null,
+        expires_at: s.expires_at ? new Date(Number(s.expires_at) * 1000).toISOString() : null,
+        revoked: Boolean(s.revoked),
+        has_password: Boolean(s.has_password),
+        allow_download: Boolean(s.allow_download),
+        allow_preview: Boolean(s.allow_preview),
+        access_count: Number(s.access_count || 0)
+    }));
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tgdrive_shared_links_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    if (typeof showToast === 'function') showToast('Exported shared links to JSON! 📥');
+};
+
+window.openEditShareModal = function(token) {
+    const shares = window.SHARED_LINKS_CACHE || [];
+    const share = shares.find(s => s.token === token);
+    if (!share) return;
+
+    const modal = document.getElementById('shared-link-edit-modal');
+    const bgBlur = document.getElementById('bg-blur');
+    const nameEl = document.getElementById('shared-edit-target-name');
+    const tokenInput = document.getElementById('shared-edit-token');
+    const expirySelect = document.getElementById('shared-edit-expiry');
+    const pwdInput = document.getElementById('shared-edit-password');
+    const clearPwdCb = document.getElementById('shared-edit-clear-pwd');
+    const allowDlCb = document.getElementById('shared-edit-allow-download');
+    const allowPvCb = document.getElementById('shared-edit-allow-preview');
+    const errorEl = document.getElementById('shared-edit-error');
+
+    if (!modal) return;
+
+    tokenInput.value = token;
+    if (nameEl) nameEl.textContent = `${share.name || 'Item'} (${share.type || 'file'})`;
+    if (expirySelect) expirySelect.value = 'keep';
+    if (pwdInput) pwdInput.value = '';
+    if (clearPwdCb) clearPwdCb.checked = false;
+    if (allowDlCb) allowDlCb.checked = Boolean(share.allow_download);
+    if (allowPvCb) allowPvCb.checked = Boolean(share.allow_preview);
+    if (errorEl) { errorEl.textContent = ''; errorEl.style.display = 'none'; }
+
+    modal.style.zIndex = '1000';
+    modal.style.opacity = '1';
+    if (bgBlur) {
+        bgBlur.style.zIndex = '999';
+        bgBlur.style.opacity = '1';
+    }
+};
+
+window.closeEditShareModal = function() {
+    const modal = document.getElementById('shared-link-edit-modal');
+    const bgBlur = document.getElementById('bg-blur');
+    if (modal) {
+        modal.style.zIndex = '-1';
+        modal.style.opacity = '0';
+    }
+    if (bgBlur) {
+        bgBlur.style.zIndex = '-1';
+        bgBlur.style.opacity = '0';
+    }
+};
+
+window.saveEditShareSettings = async function() {
+    const token = document.getElementById('shared-edit-token')?.value;
+    const expiryVal = document.getElementById('shared-edit-expiry')?.value;
+    const pwd = document.getElementById('shared-edit-password')?.value;
+    const clearPwd = document.getElementById('shared-edit-clear-pwd')?.checked;
+    const allowDownload = document.getElementById('shared-edit-allow-download')?.checked;
+    const allowPreview = document.getElementById('shared-edit-allow-preview')?.checked;
+    const errorEl = document.getElementById('shared-edit-error');
+
+    if (!token) return;
+
+    const payload = {
+        token: token,
+        allow_download: allowDownload,
+        allow_preview: allowPreview,
+        clear_password: clearPwd
+    };
+
+    if (pwd && !clearPwd) {
+        if (pwd.length < 4) {
+            if (errorEl) {
+                errorEl.textContent = 'Password must be at least 4 characters long.';
+                errorEl.style.display = 'block';
+            }
+            return;
+        }
+        payload.password = pwd;
+    }
+
+    if (expiryVal === 'never') {
+        payload.expires_in_hours = null;
+    } else if (expiryVal !== 'keep' && expiryVal) {
+        payload.expires_in_hours = Number(expiryVal);
+    }
+
+    try {
+        const res = await postJson('/api/share/update', payload);
+        if (res.status === 'ok') {
+            if (typeof showToast === 'function') showToast('Share settings updated! ⚙️');
+            window.closeEditShareModal();
+            fetchAndRenderSharedLinks();
+        } else {
+            if (errorEl) {
+                errorEl.textContent = res.error || 'Failed to update share settings.';
+                errorEl.style.display = 'block';
+            }
+        }
+    } catch (e) {
+        if (errorEl) {
+            errorEl.textContent = 'Network error while updating share.';
+            errorEl.style.display = 'block';
+        }
     }
 };
 
@@ -3504,13 +3811,60 @@ function initSharedLinksManager() {
     const searchInput = document.getElementById('shared-links-search');
     const filterTabs = document.querySelectorAll('.gd-shared-tab-btn');
     const viewAllModalBtn = document.getElementById('share-view-all-links-btn');
+    const sortSelect = document.getElementById('shared-links-sort');
+    const gridViewBtn = document.getElementById('shared-view-grid-btn');
+    const tableViewBtn = document.getElementById('shared-view-table-btn');
+    const cleanInactiveBtn = document.getElementById('shared-links-clean-inactive-btn');
+    const exportBtn = document.getElementById('shared-links-export-btn');
+
+    // Stat pill direct filter clicks
+    const pillTotal = document.getElementById('pill-filter-total');
+    const pillActive = document.getElementById('pill-filter-active');
+    const pillExpiring = document.getElementById('pill-filter-expiring');
+    const pillRevoked = document.getElementById('pill-filter-revoked');
+
+    function setActiveFilter(filterName) {
+        window.SHARED_LINKS_FILTER = filterName;
+        filterTabs.forEach(btn => {
+            if (btn.getAttribute('data-filter') === filterName) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        renderSharedLinksList();
+    }
+
+    if (pillTotal) pillTotal.addEventListener('click', () => setActiveFilter('all'));
+    if (pillActive) pillActive.addEventListener('click', () => setActiveFilter('active'));
+    if (pillExpiring) pillExpiring.addEventListener('click', () => setActiveFilter('expiring'));
+    if (pillRevoked) pillRevoked.addEventListener('click', () => setActiveFilter('revoked'));
 
     if (navSharedLinks) {
         navSharedLinks.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            window.showSharedLinksView();
+            window.showSharedLinksView(true);
         });
+    }
+
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navRecent = document.getElementById('nav-recent');
+    const navTrash = document.getElementById('nav-trash');
+    const navSyncActivity = document.getElementById('nav-sync-activity');
+    const logoLink = document.getElementById('gd-logo-link');
+
+    if (navMyDrive) navMyDrive.addEventListener('click', () => window.hideSharedLinksView());
+    if (navRecent) navRecent.addEventListener('click', () => window.hideSharedLinksView());
+    if (navTrash) navTrash.addEventListener('click', () => window.hideSharedLinksView());
+    if (navSyncActivity) navSyncActivity.addEventListener('click', () => window.hideSharedLinksView());
+    if (logoLink) logoLink.addEventListener('click', () => window.hideSharedLinksView());
+
+    const curPath = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+    if (curPath === '/shared_links' || curPath.startsWith('/shared_links')) {
+        window.showSharedLinksView(false);
+    } else {
+        window.hideSharedLinksView();
     }
 
     if (refreshBtn) {
@@ -3523,6 +3877,42 @@ function initSharedLinksManager() {
     if (searchInput) {
         searchInput.addEventListener('input', () => {
             renderSharedLinksList();
+        });
+    }
+
+    if (sortSelect) {
+        sortSelect.addEventListener('change', () => {
+            window.SHARED_LINKS_SORT = sortSelect.value;
+            renderSharedLinksList();
+        });
+    }
+
+    if (gridViewBtn && tableViewBtn) {
+        gridViewBtn.addEventListener('click', () => {
+            gridViewBtn.classList.add('active');
+            tableViewBtn.classList.remove('active');
+            window.SHARED_LINKS_VIEW_MODE = 'grid';
+            renderSharedLinksList();
+        });
+        tableViewBtn.addEventListener('click', () => {
+            tableViewBtn.classList.add('active');
+            gridViewBtn.classList.remove('active');
+            window.SHARED_LINKS_VIEW_MODE = 'table';
+            renderSharedLinksList();
+        });
+    }
+
+    if (cleanInactiveBtn) {
+        cleanInactiveBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.cleanInactiveShares();
+        });
+    }
+
+    if (exportBtn) {
+        exportBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.exportSharedLinksJson();
         });
     }
 
@@ -3542,6 +3932,12 @@ function initSharedLinksManager() {
             window.showSharedLinksView();
         });
     }
+
+    // Edit modal listeners
+    const editCancelBtn = document.getElementById('shared-edit-cancel-btn');
+    const editSaveBtn = document.getElementById('shared-edit-save-btn');
+    if (editCancelBtn) editCancelBtn.addEventListener('click', window.closeEditShareModal);
+    if (editSaveBtn) editSaveBtn.addEventListener('click', window.saveEditShareSettings);
 
     // Auto-update countdown every 30 seconds when in shared_links view
     setInterval(() => {
