@@ -885,19 +885,35 @@
         </div>
     </div>
 
-    <!-- Media Lightbox / Preview Modal -->
+    <!-- Media Lightbox / Preview Modal with Next/Prev Navigation -->
     <div id="media-preview-modal" class="gd-preview-lightbox">
         <div class="gd-preview-topbar">
-            <span id="preview-filename" class="gd-preview-name">Preview</span>
+            <div class="gd-preview-topbar-left">
+                <span id="preview-counter" class="gd-preview-counter" style="display:none;"></span>
+                <span id="preview-filename" class="gd-preview-name">Preview</span>
+            </div>
             <div class="gd-preview-actions">
+                <button id="preview-prev-btn-top" class="gd-icon-btn" title="Previous item (← Left Arrow)">
+                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                </button>
+                <button id="preview-next-btn-top" class="gd-icon-btn" title="Next item (→ Right Arrow)">
+                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                </button>
                 <button id="preview-download-btn" class="gd-icon-btn" title="Download">
                     <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
                 </button>
-                <button id="preview-close-btn" class="gd-icon-btn" title="Close">
+                <button id="preview-close-btn" class="gd-icon-btn" title="Close (Esc)">
                     <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
                 </button>
             </div>
         </div>
+        <!-- Floating Navigation Arrows -->
+        <button id="preview-nav-prev" class="gd-preview-nav-arrow gd-preview-nav-prev" title="Previous item (← Left Arrow)">
+            <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </button>
+        <button id="preview-nav-next" class="gd-preview-nav-arrow gd-preview-nav-next" title="Next item (→ Right Arrow)">
+            <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+        </button>
         <div class="gd-preview-content" id="preview-content-holder"></div>
     </div>
 

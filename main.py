@@ -70,17 +70,25 @@ async def lifespan(app: FastAPI):
     start_cleanup_task()
 
     import socket
-    local_ip = "127.0.0.1"
+    lan_ips = []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
+        # Get all host IPs
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if not ip.startswith("127.") and ":" not in ip:
+                lan_ips.append(ip)
     except Exception:
         pass
 
-    logger.info(f"🌐 Local Browser: http://localhost:8000")
-    logger.info(f"📱 Mobile Devices on Wi-Fi: http://{local_ip}:8000")
+    # Sort so physical LAN (192.168.x.x / 172.x) appears before VPN virtual tunnels (10.x / 100.x) if available
+    lan_ips.sort(key=lambda x: (not x.startswith("192.168."), not x.startswith("172."), x))
+
+    logger.info("🌐 Local Browser: http://localhost:8000")
+    if lan_ips:
+        for ip in lan_ips:
+            logger.info(f"📱 Mobile Devices on Wi-Fi/LAN: http://{ip}:8000")
+    else:
+        logger.info("📱 Mobile Devices on Wi-Fi: http://192.168.x.x:8000")
 
     yield
 
@@ -445,20 +453,20 @@ class ThumbnailService:
                     return None
 
                 ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
-                is_image = ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]
-                is_video = ext in ["mp4", "mkv", "webm", "mov", "avi", "3gp", "ts", "flv"]
+                is_image = ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "ico", "tiff", "tif", "heic", "heif", "avif"]
+                is_video = ext in ["mp4", "mkv", "webm", "mov", "avi", "3gp", "ts", "flv", "wmv", "m4v"]
 
                 thumb_target = None
                 if msg.photo:
-                    thumb_target = msg.photo
+                    thumb_target = getattr(msg.photo, "file_id", msg.photo)
                 elif msg.document and msg.document.thumbs:
-                    thumb_target = msg.document.thumbs[0]
+                    thumb_target = getattr(msg.document.thumbs[0], "file_id", msg.document.thumbs[0])
                 elif msg.video and msg.video.thumbs:
-                    thumb_target = msg.video.thumbs[0]
+                    thumb_target = getattr(msg.video.thumbs[0], "file_id", msg.video.thumbs[0])
                 elif msg.animation and msg.animation.thumbs:
-                    thumb_target = msg.animation.thumbs[0]
-                elif is_image and msg.document:
-                    thumb_target = msg.document
+                    thumb_target = getattr(msg.animation.thumbs[0], "file_id", msg.animation.thumbs[0])
+                elif is_image and msg.document and getattr(msg.document, "file_size", 0) <= 25 * 1024 * 1024:
+                    thumb_target = getattr(msg.document, "file_id", msg.document)
                 elif is_image:
                     thumb_target = msg
 
@@ -468,10 +476,20 @@ class ThumbnailService:
                         if buf and hasattr(buf, "getbuffer") and buf.getbuffer().nbytes > 0:
                             buf.seek(0)
                             with Image.open(buf) as img:
-                                img = img.convert("RGB")
+                                if img.mode in ("RGBA", "LA", "P"):
+                                    bg = Image.new("RGB", img.size, (255, 255, 255))
+                                    if img.mode == "P":
+                                        img = img.convert("RGBA")
+                                    if "A" in img.mode:
+                                        bg.paste(img, mask=img.split()[-1])
+                                    else:
+                                        bg.paste(img)
+                                    img = bg
+                                elif img.mode != "RGB":
+                                    img = img.convert("RGB")
                                 img.thumbnail((320, 320), Image.Resampling.LANCZOS)
                                 out_buf = io.BytesIO()
-                                img.save(out_buf, format="JPEG", quality=75, optimize=True)
+                                img.save(out_buf, format="JPEG", quality=80, optimize=True)
                                 thumb_bytes = out_buf.getvalue()
                                 self.cache_dir.mkdir(parents=True, exist_ok=True)
                                 disk_file.write_bytes(thumb_bytes)

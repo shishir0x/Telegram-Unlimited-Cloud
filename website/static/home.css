@@ -6119,5 +6119,315 @@ body:not(.dark-mode) .gd-shared-view-btn.active {
     color: #1a73e8;
 }
 
+/* ========================================================= */
+/* Media Lightbox Modal & Next/Previous Navigation           */
+/* ========================================================= */
 
+.gd-preview-lightbox {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(15, 17, 21, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 9999;
+    display: none;
+    flex-direction: column;
+    opacity: 0;
+    transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
+.gd-preview-lightbox.active {
+    display: flex;
+    opacity: 1;
+}
+
+.gd-preview-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    background: rgba(20, 24, 30, 0.8);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+    z-index: 10;
+}
+
+.gd-preview-topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+}
+
+.gd-preview-counter {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.12);
+    padding: 3px 10px;
+    border-radius: 12px;
+    white-space: nowrap;
+}
+
+.gd-preview-name {
+    font-size: 1.05rem;
+    font-weight: 500;
+    color: #f1f3f4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 50vw;
+}
+
+.gd-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.gd-preview-actions .gd-icon-btn {
+    color: #e8eaed;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.gd-preview-actions .gd-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+    transform: scale(1.06);
+}
+
+.gd-preview-nav-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 54px;
+    height: 54px;
+    background: rgba(32, 38, 46, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 50%;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 100;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.gd-preview-nav-arrow svg {
+    width: 30px;
+    height: 30px;
+    fill: currentColor;
+}
+
+.gd-preview-nav-arrow:hover:not(:disabled) {
+    background: #ffffff;
+    color: #111827;
+    transform: translateY(-50%) scale(1.12);
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6);
+}
+
+.gd-preview-nav-arrow:disabled {
+    opacity: 0.2;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.gd-preview-nav-prev {
+    left: 20px;
+}
+
+.gd-preview-nav-next {
+    right: 20px;
+}
+
+.gd-preview-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    padding: 16px;
+}
+
+.gd-preview-image-container,
+.gd-preview-video-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.gd-preview-controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    margin-bottom: 12px;
+    background: rgba(30, 36, 46, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    backdrop-filter: blur(10px);
+}
+
+.gd-preview-tool-btn,
+.gd-preview-speed-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.gd-preview-tool-btn:hover,
+.gd-preview-speed-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+
+.gd-preview-speed-btn.active {
+    background: var(--gd-primary, #8ab4f8);
+    color: #111827;
+    font-weight: 600;
+}
+
+.gd-preview-bar-label {
+    font-size: 0.76rem;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.gd-preview-pdf-frame {
+    width: 88vw;
+    height: 82vh;
+    border: none;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.gd-preview-text-wrap {
+    width: 85vw;
+    max-width: 900px;
+    max-height: 80vh;
+    background: #1e1f20;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.gd-preview-text-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    color: #e8eaed;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.gd-btn-copy-code {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.gd-btn-copy-code:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.gd-preview-code {
+    margin: 0;
+    padding: 16px;
+    overflow: auto;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #c9d1d9;
+}
+
+.gd-preview-audio-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 36px 48px;
+    background: rgba(30, 36, 46, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    text-align: center;
+}
+
+.gd-preview-audio-icon {
+    font-size: 4rem;
+    margin-bottom: 12px;
+}
+
+.gd-preview-audio-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 4px;
+}
+
+.gd-preview-audio-size {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* Extension Badge Cards in Grid View */
+.badge-pdf .gd-ext-label { background-color: rgba(239, 68, 68, 0.18); color: #ef4444; }
+.badge-doc .gd-ext-label, .badge-docx .gd-ext-label, .badge-txt .gd-ext-label, .badge-rtf .gd-ext-label { background-color: rgba(59, 130, 246, 0.18); color: #3b82f6; }
+.badge-xls .gd-ext-label, .badge-xlsx .gd-ext-label, .badge-csv .gd-ext-label, .badge-tsv .gd-ext-label { background-color: rgba(34, 197, 94, 0.18); color: #22c55e; }
+.badge-ppt .gd-ext-label, .badge-pptx .gd-ext-label { background-color: rgba(249, 115, 22, 0.18); color: #f97316; }
+.badge-zip .gd-ext-label, .badge-rar .gd-ext-label, .badge-7z .gd-ext-label, .badge-tar .gd-ext-label, .badge-gz .gd-ext-label, .badge-iso .gd-ext-label { background-color: rgba(234, 179, 8, 0.18); color: #eab308; }
+.badge-py .gd-ext-label, .badge-js .gd-ext-label, .badge-ts .gd-ext-label, .badge-html .gd-ext-label, .badge-css .gd-ext-label, .badge-json .gd-ext-label, .badge-cpp .gd-ext-label, .badge-c .gd-ext-label, .badge-java .gd-ext-label, .badge-rs .gd-ext-label, .badge-go .gd-ext-label, .badge-sql .gd-ext-label { background-color: rgba(14, 165, 233, 0.18); color: #0ea5e9; }
+.badge-mp3 .gd-ext-label, .badge-wav .gd-ext-label, .badge-flac .gd-ext-label, .badge-m4a .gd-ext-label, .badge-aac .gd-ext-label, .badge-opus .gd-ext-label { background-color: rgba(168, 85, 247, 0.18); color: #a855f7; }
+.badge-apk .gd-ext-label, .badge-exe .gd-ext-label, .badge-msi .gd-ext-label, .badge-app .gd-ext-label { background-color: rgba(16, 185, 129, 0.18); color: #10b981; }
+
+@media (max-width: 768px) {
+    .gd-preview-nav-arrow {
+        width: 44px;
+        height: 44px;
+    }
+    .gd-preview-nav-arrow svg {
+        width: 24px;
+        height: 24px;
+    }
+    .gd-preview-nav-prev {
+        left: 10px;
+    }
+    .gd-preview-nav-next {
+        right: 10px;
+    }
+    .gd-preview-name {
+        max-width: 38vw;
+    }
+}

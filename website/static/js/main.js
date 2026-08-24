@@ -57,20 +57,28 @@ function getFileBadge(item) {
     if (item.type === 'folder') {
         return `<img class="item-icon-img" src="static/assets/folder-solid-icon.svg">`;
     }
-    const ext = (item.extension || '').toLowerCase();
+    const ext = (item.extension || (item.name && item.name.includes('.') ? '.' + item.name.split('.').pop() : '')).toLowerCase();
     const cat = item.category || 'Document';
 
     if (ext === '.pdf' || cat === 'PDF Document') {
         return `<span class="badge-icon badge-pdf">PDF</span>`;
-    } else if (cat === 'Image') {
+    } else if (cat === 'Image' || ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg', '.bmp', '.ico', '.heic', '.avif'].includes(ext)) {
         return `<span class="badge-icon badge-image">IMG</span>`;
-    } else if (cat === 'Video') {
+    } else if (cat === 'Video' || ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.ts', '.flv', '.wmv', '.3gp'].includes(ext)) {
         return `<span class="badge-icon badge-video">VID</span>`;
-    } else if (cat === 'Audio') {
+    } else if (cat === 'Audio' || ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.opus'].includes(ext)) {
         return `<span class="badge-icon badge-audio">AUD</span>`;
-    } else if (cat === 'Archive') {
+    } else if (cat === 'Archive' || ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.iso'].includes(ext)) {
         return `<span class="badge-icon badge-zip">ZIP</span>`;
-    } else if (cat === 'Source Code') {
+    } else if (cat === 'Word Document' || ['.doc', '.docx', '.rtf', '.odt'].includes(ext)) {
+        return `<span class="badge-icon badge-doc">DOC</span>`;
+    } else if (cat === 'Excel Spreadsheet' || ['.xls', '.xlsx', '.csv', '.tsv', '.ods'].includes(ext)) {
+        return `<span class="badge-icon badge-xls">XLS</span>`;
+    } else if (cat === 'PowerPoint Presentation' || ['.ppt', '.pptx', '.odp', '.key'].includes(ext)) {
+        return `<span class="badge-icon badge-ppt">PPT</span>`;
+    } else if (cat === 'Application' || ['.apk', '.exe', '.msi', '.app'].includes(ext)) {
+        return `<span class="badge-icon badge-apk">APP</span>`;
+    } else if (cat === 'Source Code' || ['.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.json', '.xml', '.cpp', '.c', '.java', '.rs', '.go', '.sql'].includes(ext)) {
         return `<span class="badge-icon badge-code">CODE</span>`;
     } else {
         return `<span class="badge-icon badge-doc">FILE</span>`;
@@ -79,13 +87,19 @@ function getFileBadge(item) {
 
 function getBigIconEmoji(item) {
     if (item.type === 'folder') return '📁';
+    const ext = (item.extension || (item.name && item.name.includes('.') ? '.' + item.name.split('.').pop() : '')).toLowerCase();
     const cat = item.category || 'Document';
-    if (cat === 'PDF Document') return '📄';
-    if (cat === 'Image') return '🖼️';
-    if (cat === 'Video') return '🎬';
-    if (cat === 'Audio') return '🎵';
-    if (cat === 'Archive') return '📦';
-    if (cat === 'Source Code') return '💻';
+
+    if (cat === 'PDF Document' || ext === '.pdf') return '📄';
+    if (cat === 'Image' || ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg', '.bmp', '.ico', '.heic', '.avif'].includes(ext)) return '🖼️';
+    if (cat === 'Video' || ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.ts', '.flv', '.wmv', '.3gp'].includes(ext)) return '🎬';
+    if (cat === 'Audio' || ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.opus'].includes(ext)) return '🎵';
+    if (cat === 'Archive' || ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.iso'].includes(ext)) return '📦';
+    if (cat === 'Word Document' || ['.doc', '.docx', '.rtf', '.odt'].includes(ext)) return '📝';
+    if (cat === 'Excel Spreadsheet' || ['.xls', '.xlsx', '.csv', '.tsv', '.ods'].includes(ext)) return '📊';
+    if (cat === 'PowerPoint Presentation' || ['.ppt', '.pptx', '.odp', '.key'].includes(ext)) return '📽️';
+    if (cat === 'Application' || ['.apk', '.exe', '.msi', '.app'].includes(ext)) return '⚙️';
+    if (cat === 'Source Code' || ['.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.json', '.xml', '.cpp', '.c', '.java', '.rs', '.go', '.sql'].includes(ext)) return '💻';
     return '📄';
 }
 
@@ -1396,17 +1410,59 @@ async function bulkDeleteSelected() {
     }
 }
 
-// In-App File & Media Preview Lightbox
-function openFilePreview() {
-    const id = this.getAttribute ? this.getAttribute('data-id') : (typeof this.id === 'string' ? this.id : null);
-    const item = (typeof DIRECTORY_ITEMS !== 'undefined' && id) ? DIRECTORY_ITEMS[id] : null;
-    if (!item) return;
+// In-App File & Media Preview Lightbox with Next & Previous Navigation
+let CURRENT_PREVIEW_FILES = [];
+let CURRENT_PREVIEW_INDEX = -1;
 
-    if (item.type === 'folder') {
-        openFolder.call(this);
-        return;
+function getPreviewableFilesList() {
+    if (typeof DIRECTORY_ITEMS === 'undefined') return [];
+    return Object.values(DIRECTORY_ITEMS).filter(item => item && item.type === 'file' && !item.trash);
+}
+
+function updatePreviewNavControls() {
+    const total = CURRENT_PREVIEW_FILES.length;
+    const idx = CURRENT_PREVIEW_INDEX;
+    const counterEl = document.getElementById('preview-counter');
+    const prevTop = document.getElementById('preview-prev-btn-top');
+    const nextTop = document.getElementById('preview-next-btn-top');
+    const prevArrow = document.getElementById('preview-nav-prev');
+    const nextArrow = document.getElementById('preview-nav-next');
+
+    if (total > 1 && idx >= 0) {
+        if (counterEl) {
+            counterEl.style.display = 'inline-block';
+            counterEl.innerText = `${idx + 1} / ${total}`;
+        }
+        if (prevTop) prevTop.style.display = 'inline-flex';
+        if (nextTop) nextTop.style.display = 'inline-flex';
+        if (prevArrow) {
+            prevArrow.style.display = 'flex';
+            prevArrow.disabled = (idx === 0);
+        }
+        if (nextArrow) {
+            nextArrow.style.display = 'flex';
+            nextArrow.disabled = (idx === total - 1);
+        }
+    } else {
+        if (counterEl) counterEl.style.display = 'none';
+        if (prevTop) prevTop.style.display = 'none';
+        if (nextTop) nextTop.style.display = 'none';
+        if (prevArrow) prevArrow.style.display = 'none';
+        if (nextArrow) nextArrow.style.display = 'none';
     }
+}
 
+function navigatePreview(direction) {
+    if (!CURRENT_PREVIEW_FILES.length || CURRENT_PREVIEW_INDEX === -1) return;
+    const nextIndex = CURRENT_PREVIEW_INDEX + direction;
+    if (nextIndex >= 0 && nextIndex < CURRENT_PREVIEW_FILES.length) {
+        CURRENT_PREVIEW_INDEX = nextIndex;
+        renderPreviewItem(CURRENT_PREVIEW_FILES[CURRENT_PREVIEW_INDEX]);
+    }
+}
+
+function renderPreviewItem(item) {
+    if (!item) return;
     const fileName = item.name.toLowerCase();
     const path = (item.path + '/' + item.id).replaceAll('//', '/');
     const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(path) : `${getRootUrl()}/file?path=${encodeURIComponent(path)}`;
@@ -1427,13 +1483,15 @@ function openFilePreview() {
         document.body.removeChild(dl);
     };
 
+    updatePreviewNavControls();
+
     const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.avif', '.heic', '.heif'];
-    const videoExts = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.ts', '.ogv', '.m4v', '.3gp', '.flv'];
+    const videoExts = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.ts', '.ogv', '.m4v', '.3gp', '.flv', '.wmv'];
     const audioExts = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.opus', '.wma'];
     const codeTextExts = [
         '.txt', '.md', '.markdown', '.py', '.js', '.ts', '.jsx', '.tsx',
-        '.html', '.htm', '.css', '.scss', '.json', '.xml', '.csv', '.log',
-        '.sh', '.bat', '.cmd', '.yaml', '.yml', '.c', '.cpp', '.h', '.hpp',
+        '.html', '.htm', '.css', '.scss', '.json', '.xml', '.csv', '.tsv', '.log',
+        '.sh', '.bat', '.cmd', '.ps1', '.yaml', '.yml', '.c', '.cpp', '.h', '.hpp',
         '.java', '.rs', '.go', '.sql', '.ini', '.env', '.cfg', '.conf', '.toml',
         '.dockerfile', '.gitattributes', '.gitignore'
     ];
@@ -1602,6 +1660,30 @@ function openFilePreview() {
         dl.click();
         document.body.removeChild(dl);
     }
+}
+
+function openFilePreview(targetId) {
+    let id = typeof targetId === 'string' ? targetId : null;
+    if (!id && this) {
+        id = this.getAttribute ? this.getAttribute('data-id') : (typeof this.id === 'string' ? this.id : null);
+    }
+    const item = (typeof DIRECTORY_ITEMS !== 'undefined' && id) ? DIRECTORY_ITEMS[id] : null;
+    if (!item) return;
+
+    if (item.type === 'folder') {
+        openFolder.call(this);
+        return;
+    }
+
+    // Index all previewable files in current folder order
+    CURRENT_PREVIEW_FILES = getPreviewableFilesList();
+    CURRENT_PREVIEW_INDEX = CURRENT_PREVIEW_FILES.findIndex(f => f.id === item.id);
+    if (CURRENT_PREVIEW_INDEX === -1) {
+        CURRENT_PREVIEW_FILES = [item];
+        CURRENT_PREVIEW_INDEX = 0;
+    }
+
+    renderPreviewItem(item);
 }
 
 // Drag & Drop Upload Zone (Explorer to Browser & Sidebar drop targets)
@@ -2321,6 +2403,8 @@ document.addEventListener('DOMContentLoaded', () => {
             previewLightbox.classList.remove('active');
             const holder = document.getElementById('preview-content-holder');
             if (holder) holder.innerHTML = '';
+            CURRENT_PREVIEW_INDEX = -1;
+            CURRENT_PREVIEW_FILES = [];
         }
     }
     if (previewClose) {
@@ -2333,7 +2417,32 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // Preview Navigation Click Listeners (Top Bar + Side Arrows)
+    const prevBtnTop = document.getElementById('preview-prev-btn-top');
+    const nextBtnTop = document.getElementById('preview-next-btn-top');
+    const prevArrow = document.getElementById('preview-nav-prev');
+    const nextArrow = document.getElementById('preview-nav-next');
+
+    if (prevBtnTop) prevBtnTop.addEventListener('click', () => navigatePreview(-1));
+    if (nextBtnTop) nextBtnTop.addEventListener('click', () => navigatePreview(1));
+    if (prevArrow) prevArrow.addEventListener('click', (e) => { e.stopPropagation(); navigatePreview(-1); });
+    if (nextArrow) nextArrow.addEventListener('click', (e) => { e.stopPropagation(); navigatePreview(1); });
+
     document.addEventListener('keydown', (e) => {
+        // Handle Arrow navigation when Lightbox is open
+        if (previewLightbox && previewLightbox.classList.contains('active')) {
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                navigatePreview(-1);
+                return;
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                navigatePreview(1);
+                return;
+            }
+        }
+
         if (e.key === 'Escape') {
             const filterPopover = document.getElementById('gd-search-filter-popover');
             if (filterPopover && filterPopover.classList.contains('active')) {

@@ -22,24 +22,36 @@ def get_file_details(file_name: str):
     if ext == ".pdf" or mime_type == "application/pdf":
         category = "PDF Document"
         icon = "pdf"
-    elif mime_type.startswith("image/") or ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".bmp", ".ico"]:
+    elif mime_type.startswith("image/") or ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".bmp", ".ico", ".tiff", ".tif", ".heic", ".heif", ".avif", ".psd", ".ai"]:
         category = "Image"
         icon = "image"
-    elif mime_type.startswith("video/") or ext in [".mp4", ".mkv", ".mov", ".webm", ".avi", ".ts", ".flv", ".wmv"]:
+    elif mime_type.startswith("video/") or ext in [".mp4", ".mkv", ".mov", ".webm", ".avi", ".ts", ".flv", ".wmv", ".m4v", ".3gp", ".ogv", ".vob"]:
         category = "Video"
         icon = "video"
-    elif mime_type.startswith("audio/") or ext in [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus"]:
+    elif mime_type.startswith("audio/") or ext in [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus", ".wma", ".mid", ".midi"]:
         category = "Audio"
         icon = "audio"
-    elif ext in [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso"]:
+    elif ext in [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso", ".dmg", ".tgz"]:
         category = "Archive"
         icon = "archive"
-    elif ext in [".py", ".js", ".html", ".css", ".json", ".xml", ".sh", ".bat", ".ps1", ".cpp", ".c", ".java", ".rs", ".go", ".ts", ".yaml", ".yml", ".md"]:
+    elif ext in [".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css", ".scss", ".json", ".xml", ".sh", ".bat", ".ps1", ".cpp", ".c", ".h", ".hpp", ".java", ".rs", ".go", ".php", ".rb", ".sql", ".yaml", ".yml", ".md", ".env", ".toml", ".ini"]:
         category = "Source Code"
         icon = "code"
-    elif ext in [".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".csv"]:
-        category = "Office Document"
+    elif ext in [".doc", ".docx", ".rtf", ".odt"]:
+        category = "Word Document"
         icon = "doc"
+    elif ext in [".xls", ".xlsx", ".csv", ".tsv", ".ods"]:
+        category = "Excel Spreadsheet"
+        icon = "sheet"
+    elif ext in [".ppt", ".pptx", ".odp", ".key"]:
+        category = "PowerPoint Presentation"
+        icon = "slide"
+    elif ext in [".apk", ".exe", ".msi", ".app", ".deb", ".rpm"]:
+        category = "Application"
+        icon = "app"
+    elif ext in [".txt", ".log", ".nfo"]:
+        category = "Text Document"
+        icon = "text"
     
     return mime_type, category, ext, icon
 
