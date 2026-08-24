@@ -1,5 +1,6 @@
 import os
 import aiohttp, asyncio
+from urllib.parse import urlparse
 from utils.extra import get_filename
 from utils.logger import Logger
 from pathlib import Path
@@ -15,6 +16,18 @@ cache_dir = Path("./cache")
 cache_dir.mkdir(parents=True, exist_ok=True)
 
 
+def validate_download_url(url: str) -> str:
+    """Validate that the URL uses an allowable HTTP/HTTPS scheme and has a valid hostname."""
+    if not url or not isinstance(url, str):
+        raise ValueError("URL is required")
+    parsed = urlparse(url.strip())
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError("Invalid URL scheme: only http and https are permitted")
+    if not parsed.netloc:
+        raise ValueError("Invalid URL: missing hostname")
+    return url.strip()
+
+
 async def download_progress_callback(status, current, total, id):
     global DOWNLOAD_PROGRESS
 
@@ -28,11 +41,12 @@ async def download_progress_callback(status, current, total, id):
 async def download_file(url, id, path, filename, singleThreaded):
     global DOWNLOAD_PROGRESS, STOP_DOWNLOAD
 
-    logger.info(f"Downloading file from {url}")
+    clean_url = validate_download_url(url)
+    logger.info(f"Downloading file from {clean_url}")
 
     try:
         downloader = TechZDL(
-            url,
+            clean_url,
             output_dir=cache_dir,
             debug=False,
             progress_callback=download_progress_callback,
@@ -75,15 +89,17 @@ async def download_file(url, id, path, filename, singleThreaded):
         )
     except Exception as e:
         DOWNLOAD_PROGRESS[id] = ("error", 0, 0)
-        logger.error(f"Failed to download file: {url} {e}")
+        logger.error(f"Failed to download file: {clean_url} {e}")
 
 
 async def get_file_info_from_url(url):
+    clean_url = validate_download_url(url)
     downloader = TechZDL(
-        url,
+        clean_url,
         output_dir=cache_dir,
         debug=False,
         max_retries=5,
     )
     file_info = await downloader.get_file_info()
     return {"file_size": file_info.get("total_size", 0), "file_name": file_info.get("filename", "downloaded_file")}
+

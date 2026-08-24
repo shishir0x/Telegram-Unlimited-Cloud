@@ -91,33 +91,42 @@ async def media_streamer(channel: int, message_id: int, file_name: str, request)
     disposition = "attachment"
     mime_type = mimetypes.guess_type(file_name.lower())[0] or "application/octet-stream"
 
-    previewable_exts = (
-        ".pdf", ".txt", ".md", ".py", ".js", ".ts", ".html", ".htm", ".css",
-        ".json", ".xml", ".csv", ".log", ".yaml", ".yml", ".sh", ".bat",
+    # Safely previewable extensions that cannot execute arbitrary JS in browser document origin
+    safe_previewable_exts = (
+        ".pdf", ".txt", ".md", ".py", ".ts", ".css",
+        ".json", ".csv", ".tsv", ".log", ".yaml", ".yml", ".sh", ".bat",
         ".c", ".cpp", ".h", ".java", ".rs", ".go", ".sql", ".ini", ".env", ".cfg"
     )
 
-    if (
+    is_media = (
         "video/" in mime_type
         or "audio/" in mime_type
-        or "image/" in mime_type
-        or "text/" in mime_type
+        or ("image/" in mime_type and not file_name.lower().endswith(".svg"))
         or "application/pdf" in mime_type
-        or "application/json" in mime_type
-        or "application/javascript" in mime_type
-        or "application/xml" in mime_type
-        or file_name.lower().endswith(previewable_exts)
-    ):
+        or file_name.lower().endswith(safe_previewable_exts)
+    )
+
+    if is_media:
         disposition = "inline"
-        if mime_type == "application/octet-stream" and file_name.lower().endswith(previewable_exts):
-            if file_name.lower().endswith((".txt", ".log", ".ini", ".env", ".cfg")):
-                mime_type = "text/plain"
-            elif file_name.lower().endswith((".py", ".sh", ".bat", ".c", ".cpp", ".h", ".java", ".rs", ".go", ".sql", ".yaml", ".yml")):
-                mime_type = "text/plain; charset=utf-8"
-            elif file_name.lower().endswith(".md"):
-                mime_type = "text/markdown; charset=utf-8"
-            elif file_name.lower().endswith(".pdf"):
-                mime_type = "application/pdf"
+        if file_name.lower().endswith((".txt", ".log", ".ini", ".env", ".cfg")):
+            mime_type = "text/plain; charset=utf-8"
+        elif file_name.lower().endswith((".py", ".sh", ".bat", ".c", ".cpp", ".h", ".java", ".rs", ".go", ".sql", ".yaml", ".yml", ".ts", ".css")):
+            mime_type = "text/plain; charset=utf-8"
+        elif file_name.lower().endswith(".md"):
+            mime_type = "text/markdown; charset=utf-8"
+        elif file_name.lower().endswith(".pdf"):
+            mime_type = "application/pdf"
+
+    # Stored XSS defense: never render active browser markup (.html, .htm, .svg, .xml, .xhtml, .js)
+    # same-origin inline in the browser, which could steal cookies/tokens.
+    ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
+    if ext in ("svg", "html", "htm", "xhtml", "xml", "js"):
+        disposition = "attachment"
+        mime_type = "application/octet-stream"
+
+    # RFC 6266 / RFC 5987 standard for Unicode and special character filename protection
+    safe_ascii = file_name.encode("ascii", "replace").decode("ascii").replace('"', '\\"')
+    quoted_utf8 = quote(file_name)
 
     return StreamingResponse(
         status_code=206 if range_header else 200,
@@ -126,8 +135,9 @@ async def media_streamer(channel: int, message_id: int, file_name: str, request)
             "Content-Type": f"{mime_type}",
             "Content-Range": f"bytes {from_bytes}-{until_bytes}/{file_size}",
             "Content-Length": str(req_length),
-            "Content-Disposition": f'{disposition}; filename="{quote(file_name)}"',
+            "Content-Disposition": f'{disposition}; filename="{safe_ascii}"; filename*=UTF-8\'\'{quoted_utf8}',
             "Accept-Ranges": "bytes",
+            "X-Content-Type-Options": "nosniff",
         },
         media_type=mime_type,
     )
