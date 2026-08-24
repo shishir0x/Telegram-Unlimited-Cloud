@@ -131,10 +131,9 @@ function initAuthListeners() {
                     hideLoginModal();
                     if (typeof getCurrentDirectory === 'function') {
                         getCurrentDirectory();
-                    }
-                    setTimeout(() => {
+                    } else {
                         window.location.reload();
-                    }, 100);
+                    }
                 } else {
                     const msg = json.detail || json.status || 'Invalid or expired code.';
                     if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }

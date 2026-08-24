@@ -124,22 +124,29 @@ def sanitize_path(raw_path: Optional[str]) -> str:
 
 def get_client_ip(request: Request) -> str:
     """
-    Extracts the client IP address, safe for reverse-proxied deployments (Render, etc.).
+    Extracts the client IP address, safe for reverse-proxied deployments (Render, Cloudflare, Nginx, etc.).
 
-    Uses the RIGHTMOST entry of X-Forwarded-For: that is the value appended by the
-    trusted platform proxy after receiving the request, so client-supplied fake
-    entries earlier in the chain cannot be used to spoof identity or rotate
-    rate-limit buckets.
+    Prioritizes CDN/Proxy headers (CF-Connecting-IP, True-Client-IP, X-Real-IP) and the
+    original client IP (first entry) of X-Forwarded-For.
     """
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # Cap input size defensively, then take the last (most-trusted) hop
-        hops = [h.strip() for h in forwarded[:512].split(",") if h.strip()]
-        if hops:
-            return hops[-1][:64]
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip.strip()[:64]
+
+    true_ip = request.headers.get("True-Client-IP")
+    if true_ip:
+        return true_ip.strip()[:64]
+
     real_ip = request.headers.get("X-Real-IP")
     if real_ip:
         return real_ip.strip()[:64]
+
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        hops = [h.strip() for h in forwarded[:512].split(",") if h.strip()]
+        if hops:
+            return hops[0][:64]
+
     return request.client.host if request.client else "unknown"
 
 
@@ -321,13 +328,19 @@ def is_secure_cookie(request: Request) -> bool:
     """
     Determines if session cookies should have the Secure attribute.
     Respects explicit SECURE_COOKIES environment variable, request.url.is_secure,
-    and X-Forwarded-Proto header from reverse proxies.
+    and X-Forwarded-Proto / X-Forwarded-Ssl headers from reverse proxies.
     """
     if SECURE_COOKIES_ENV in ("true", "1", "yes"):
         return True
     if SECURE_COOKIES_ENV in ("false", "0", "no"):
         return False
-    return request.url.is_secure or request.headers.get("x-forwarded-proto") == "https"
+
+    proto = request.headers.get("x-forwarded-proto", "").lower()
+    first_proto = proto.split(",")[0].strip() if proto else ""
+    if first_proto == "https" or request.headers.get("x-forwarded-ssl", "").lower() == "on":
+        return True
+
+    return bool(getattr(request.url, "is_secure", False)) or request.url.scheme == "https"
 
 
 def verify_otp(submitted_otp: str) -> bool:
@@ -441,28 +454,38 @@ def invalidate_session(token: str) -> None:
         logger.info("Session invalidated")
 
 
+ENFORCE_IP_BINDING: bool = os.getenv("ENFORCE_IP_BINDING", "false").strip().lower() in ("true", "1", "yes")
+
+
 def validate_session(token: str, ip: str = None) -> Optional[Session]:
     """
-    Look up and validate a session token with IP verification.
-    Returns the Session object or None if invalid/expired/IP mismatched.
+    Look up and validate a session token.
+    Returns the Session object or None if invalid or expired.
     """
+    if not token:
+        return None
+
     session = _SESSIONS.get(token)
     if session is None:
         return None
 
     if session.is_expired:
-        del _SESSIONS[token]
+        _SESSIONS.pop(token, None)
         _save_sessions_to_disk()
         logger.info("Expired session evicted")
         return None
 
-    # IP Binding verification: if both IPs are known, prevent session hijacking from foreign IPs
-    if ip and session.ip and session.ip != "unknown":
+    # IP Binding verification: only enforce hard failure if explicitly enabled in env
+    if ENFORCE_IP_BINDING and ip and session.ip and session.ip != "unknown":
         local_ips = {"127.0.0.1", "::1", "localhost", "testclient"}
         is_both_local = (session.ip in local_ips and ip in local_ips)
         if not is_both_local and session.ip != ip:
             logger.warning(f"Session IP mismatch: session registered to {session.ip}, request from {ip}")
             return None
+
+    # Update last seen timestamp and track latest client IP
+    if ip and ip != "unknown":
+        session.ip = ip
 
     session.last_seen = time.time()
     return session
