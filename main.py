@@ -183,7 +183,7 @@ async def static_files(file_path):
         with open(Path("website/static/js/apiHandler.js"), "r", encoding="utf-8") as f:
             content = f.read()
             content = content.replace("MAX_FILE_SIZE__SDGJDG", str(MAX_FILE_SIZE))
-        return Response(content=content, media_type="application/javascript")
+        return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-cache, must-revalidate"})
 
     # Path traversal shield: resolved target must remain inside website/static
     webroot = Path("website/static").resolve()
@@ -194,7 +194,7 @@ async def static_files(file_path):
     except (ValueError, OSError):
         raise HTTPException(status_code=404, detail="Not found")
 
-    return FileResponse(target)
+    return FileResponse(target, headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 
@@ -1429,7 +1429,8 @@ def _share_unlock_cookie_name(token: str) -> str:
 
 def _share_base_url(request: Request) -> str:
     host = request.headers.get("host") or request.url.netloc
-    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    proto_header = request.headers.get("x-forwarded-proto") or request.url.scheme
+    scheme = proto_header.split(",")[0].strip() if proto_header else "http"
     return f"{scheme}://{host}"
 
 
@@ -1540,6 +1541,7 @@ async def api_share_list(request: Request, _auth: Session = Depends(require_auth
 
 
 @app.get("/s/{token}")
+@app.get("/s/{token}/")
 async def shared_item_page(token: str):
     """Dedicated public page for a shared file or folder."""
     return FileResponse("website/share.html")
@@ -1565,7 +1567,7 @@ def _share_state_payload(rec: dict, rel: str = ""):
             "expires_at": rec.get("expires_at"),
         }
     else:
-        node, parent = shareManager.resolve_scope_root(rec)
+        node, parent, _ = shareManager.resolve_scope_root(rec)
         if node is None or getattr(node, "type", "") != "file":
             return None
         name = getattr(node, "name", rec.get("name"))
@@ -1597,7 +1599,8 @@ async def api_share_meta(request: Request):
 
     rec, err = _validate_or_none(token)
     if err:
-        return JSONResponse({"status": "error", "error": err}, status_code=404)
+        status_code = 410 if err in ("expired", "revoked") else 404
+        return JSONResponse({"status": "error", "error": err}, status_code=status_code)
 
     # Reject unsafe relative paths outright (fail closed, never fall back to root)
     if rel and not shareManager.sanitize_rel(rel):
@@ -1638,7 +1641,8 @@ async def api_share_unlock(request: Request):
 
     rec, err = _validate_or_none(token)
     if err:
-        return JSONResponse({"status": "error", "error": err}, status_code=404)
+        status_code = 410 if err in ("expired", "revoked") else 404
+        return JSONResponse({"status": "error", "error": err}, status_code=status_code)
     if not rec.get("password_hash"):
         return JSONResponse({"status": "ok"})
 
@@ -1662,6 +1666,7 @@ async def api_share_unlock(request: Request):
 
 
 @app.get("/share/{token}/file")
+@app.get("/share/{token}/file/")
 @app.get("/share/{token}/file/{rel:path}")
 async def share_file_stream(request: Request, token: str, rel: str = ""):
     """Stream a shared file inline (preview) or as attachment (download).
@@ -1671,7 +1676,8 @@ async def share_file_stream(request: Request, token: str, rel: str = ""):
 
     rec, err = _validate_or_none(token)
     if err:
-        raise HTTPException(status_code=404, detail=f"Link {err}")
+        status_code = 410 if err in ("expired", "revoked") else 404
+        raise HTTPException(status_code=status_code, detail=f"Link {err}")
     if rec.get("password_hash"):
         cookie_val = request.cookies.get(_share_unlock_cookie_name(token))
         if not shareManager.verify_unlock_cookie(token, cookie_val):
@@ -1692,7 +1698,12 @@ async def share_file_stream(request: Request, token: str, rel: str = ""):
         raise HTTPException(status_code=404, detail="File not found")
 
     name = getattr(node, "name", "file")
-    response = await media_streamer(STORAGE_CHANNEL, file_id, name, request)
+    try:
+        response = await media_streamer(STORAGE_CHANNEL, file_id, name, request)
+    except Exception as e:
+        logger.error(f"Error streaming shared file '{name}' (msg {file_id}): {e}")
+        raise HTTPException(status_code=404, detail="File unavailable on Telegram")
+
     disposition = "attachment" if wants_download else "inline"
     # Never render active content (SVG/HTML/XML/JS) same-origin from shares —
     # force download so stored markup can never execute on the app origin.
@@ -1700,13 +1711,17 @@ async def share_file_stream(request: Request, token: str, rel: str = ""):
     if ext in ("svg", "html", "htm", "xhtml", "xml", "js"):
         disposition = "attachment"
         response.headers["Content-Type"] = "application/octet-stream"
-    quoted = urllib.parse.quote(name)
-    response.headers["Content-Disposition"] = f"{disposition}; filename*=utf-8''{quoted}; filename=\"{quoted}\""
+
+    # RFC 6266 / RFC 5987 standard for Unicode and special characters
+    safe_ascii = name.encode("ascii", "replace").decode("ascii").replace('"', '\\"')
+    quoted_utf8 = urllib.parse.quote(name)
+    response.headers["Content-Disposition"] = f"{disposition}; filename=\"{safe_ascii}\"; filename*=UTF-8''{quoted_utf8}"
     shareManager.touch_access(rec)
     return response
 
 
 @app.get("/share/{token}/thumb")
+@app.get("/share/{token}/thumb/")
 @app.get("/share/{token}/thumb/{rel:path}")
 async def share_file_thumb(request: Request, token: str, rel: str = ""):
     """Thumbnail for shared items (preview permission required)."""
@@ -1715,7 +1730,8 @@ async def share_file_thumb(request: Request, token: str, rel: str = ""):
 
     rec, err = _validate_or_none(token)
     if err:
-        raise HTTPException(status_code=404, detail=f"Link {err}")
+        status_code = 410 if err in ("expired", "revoked") else 404
+        raise HTTPException(status_code=status_code, detail=f"Link {err}")
     if rec.get("password_hash"):
         cookie_val = request.cookies.get(_share_unlock_cookie_name(token))
         if not shareManager.verify_unlock_cookie(token, cookie_val):
@@ -1727,7 +1743,12 @@ async def share_file_thumb(request: Request, token: str, rel: str = ""):
     if node is None or getattr(node, "type", "") != "file" or getattr(node, "trash", False):
         raise HTTPException(status_code=404, detail="Not found")
 
-    thumb_data = await THUMB_SERVICE.get_or_fetch(getattr(node, "file_id", 0), getattr(node, "name", ""))
+    try:
+        thumb_data = await THUMB_SERVICE.get_or_fetch(getattr(node, "file_id", 0), getattr(node, "name", ""))
+    except Exception as e:
+        logger.warning(f"Failed to fetch thumb for shared node {getattr(node, 'name', '')}: {e}")
+        thumb_data = None
+
     if not thumb_data:
         raise HTTPException(status_code=404, detail="No thumbnail")
 
@@ -1736,6 +1757,60 @@ async def share_file_thumb(request: Request, token: str, rel: str = ""):
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@app.get("/share/{token}/zip")
+@app.get("/share/{token}/zip/")
+@app.get("/share/{token}/zip/{rel:path}")
+async def share_folder_zip(request: Request, token: str, rel: str = ""):
+    """Download a shared folder or subfolder as a ZIP archive."""
+    from utils import shareManager
+    from starlette.background import BackgroundTask
+    from utils.zipper import create_zip_archive, cleanup_temp_zip
+
+    rate_limit_public_media(request, "share_zip", 60, 60)
+
+    rec, err = _validate_or_none(token)
+    if err:
+        status_code = 410 if err in ("expired", "revoked") else 404
+        raise HTTPException(status_code=status_code, detail=f"Link {err}")
+    if rec.get("password_hash"):
+        cookie_val = request.cookies.get(_share_unlock_cookie_name(token))
+        if not shareManager.verify_unlock_cookie(token, cookie_val):
+            raise HTTPException(status_code=401, detail="Password required")
+
+    if not rec.get("allow_download"):
+        raise HTTPException(status_code=403, detail="Download unavailable")
+
+    node, _parent = shareManager.resolve_within_scope(rec, rel)
+    if node is None or getattr(node, "type", "") != "folder" or getattr(node, "trash", False):
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    base_name, items = shareManager.collect_share_items_for_zip(node, rec.get("name") or "Shared")
+    if not items:
+        raise HTTPException(status_code=404, detail="No files found in shared folder")
+
+    try:
+        zip_file_path, final_filename, total_size = await create_zip_archive(items, base_name)
+    except Exception as e:
+        logger.error(f"Error creating ZIP archive for share {token}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create zip archive")
+
+    quoted_utf8 = urllib.parse.quote(final_filename)
+    safe_ascii = final_filename.encode("ascii", "replace").decode("ascii").replace('"', '\\"')
+
+    shareManager.touch_access(rec)
+    return FileResponse(
+        path=str(zip_file_path),
+        filename=final_filename,
+        media_type="application/zip",
+        background=BackgroundTask(cleanup_temp_zip, zip_file_path),
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_ascii}"; filename*=UTF-8\'\'{quoted_utf8}',
+            "Cache-Control": "no-cache",
+        },
+    )
+
 
 
 # ==========================================

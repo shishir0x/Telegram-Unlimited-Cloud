@@ -2,21 +2,26 @@
 (function () {
   "use strict";
 
-  const TOKEN = decodeURIComponent(location.pathname.split("/").pop() || "");
+  const pathParts = location.pathname.split("/").filter(Boolean);
+  const TOKEN = decodeURIComponent(pathParts.pop() || "");
   const $ = (id) => document.getElementById(id);
 
   const state = { meta: null, rel: "", previewableCache: {} };
 
   /* ── helpers ─────────────────────────────────────────── */
   async function postJSON(url, body) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body || {}),
-    });
-    let json = {};
-    try { json = await res.json(); } catch (_) { /* empty */ }
-    return { status: res.status, json };
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      let json = {};
+      try { json = await res.json(); } catch (_) { /* empty */ }
+      return { status: res.status, json };
+    } catch (err) {
+      return { status: 0, json: { error: "network_error" } };
+    }
   }
 
   function formatSize(bytes) {
@@ -30,6 +35,7 @@
 
   function showToast(msg, isErr) {
     const t = $("toast");
+    if (!t) return;
     t.textContent = msg;
     t.classList.toggle("err-t", !!isErr);
     t.classList.remove("hidden");
@@ -38,27 +44,54 @@
   }
 
   function showOnly(id) {
-    ["st-loading", "st-invalid", "st-revoked", "st-expired", "st-gone", "st-locked", "st-main"]
-      .forEach((s) => $(s).classList.toggle("hidden", s !== id));
+    ["st-loading", "st-invalid", "st-revoked", "st-expired", "st-gone", "st-rate-limited", "st-error", "st-locked", "st-main"]
+      .forEach((s) => {
+        const el = $(s);
+        if (el) el.classList.toggle("hidden", s !== id);
+      });
   }
 
-  const fileUrl = (rel, dl) =>
-    `/share/${encodeURIComponent(TOKEN)}/file/${rel.split("/").map(encodeURIComponent).join("/")}${dl ? "?dl=1" : ""}`;
-  const thumbUrl = (rel) =>
-    `/share/${encodeURIComponent(TOKEN)}/thumb/${rel.split("/").map(encodeURIComponent).join("/")}`;
+  const fileUrl = (rel, dl) => {
+    const cleanRel = (rel || "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
+    const base = `/share/${encodeURIComponent(TOKEN)}/file${cleanRel ? "/" + cleanRel : ""}`;
+    return dl ? `${base}?dl=1` : base;
+  };
+
+  const thumbUrl = (rel) => {
+    const cleanRel = (rel || "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
+    return `/share/${encodeURIComponent(TOKEN)}/thumb${cleanRel ? "/" + cleanRel : ""}`;
+  };
+
+  const zipUrl = (rel) => {
+    const cleanRel = (rel || "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
+    return `/share/${encodeURIComponent(TOKEN)}/zip${cleanRel ? "/" + cleanRel : ""}`;
+  };
 
   /* ── boot ────────────────────────────────────────────── */
   async function init() {
+    if (!TOKEN) {
+      return showOnly("st-invalid");
+    }
     showOnly("st-loading");
     await loadRel("");
   }
 
   async function loadRel(rel) {
     const { status, json } = await postJSON("/api/share/meta", { token: TOKEN, rel });
-    if (status === 404 && json.error === "invalid") return showOnly("st-invalid");
-    if (status === 404 && json.error === "revoked") return showOnly("st-revoked");
-    if (status === 404 && json.error === "expired") return showOnly("st-expired");
-    if (status === 404 && (json.error === "gone" || !json.error)) return showOnly("st-gone");
+
+    if (status === 429) return showOnly("st-rate-limited");
+    if (status >= 500) return showOnly("st-error");
+    if (status === 410) {
+      if (json.error === "revoked") return showOnly("st-revoked");
+      if (json.error === "expired") return showOnly("st-expired");
+      return showOnly("st-gone");
+    }
+    if (status === 404) {
+      if (json.error === "revoked") return showOnly("st-revoked");
+      if (json.error === "expired") return showOnly("st-expired");
+      if (json.error === "gone") return showOnly("st-gone");
+      return showOnly("st-invalid");
+    }
     if (json.status === "locked") {
       $("unlock-error").classList.add("hidden");
       return showOnly("st-locked");
@@ -75,6 +108,7 @@
 
   function renderExpiry(expiresAt) {
     const chip = $("expiry-chip");
+    if (!chip) return;
     if (!expiresAt) return chip.classList.add("hidden");
     chip.textContent = `Link expires ${new Date(expiresAt * 1000).toLocaleString()}`;
     chip.classList.remove("hidden");
@@ -82,7 +116,6 @@
 
   /* ── file view ───────────────────────────────────────── */
   function iconFor(kind) {
-    // kind: image video audio pdf text folder file
     const map = {
       image: "🖼️", video: "🎬", audio: "🎵", pdf: "📕", text: "📄",
       folder: "📁", file: "📦",
@@ -96,6 +129,8 @@
   function renderFile(m) {
     $("folder-view").classList.add("hidden");
     $("crumbs").classList.add("hidden");
+    const zipBtn = $("btn-download-folder-zip");
+    if (zipBtn) zipBtn.classList.add("hidden");
     $("file-card").classList.remove("hidden");
 
     $("file-name").textContent = m.name;
@@ -112,7 +147,6 @@
       dl.title = "The owner disabled downloads for this link";
       $("perm-note").textContent = "Downloads were disabled by the owner — preview only.";
       $("perm-note").classList.remove("hidden");
-      $("perm-note").id = "perm-note";
       dl.onclick = () => showToast("Download unavailable for this link", true);
     }
 
@@ -169,6 +203,19 @@
 
     renderCrumbs(m.breadcrumbs || []);
 
+    const zipBtn = $("btn-download-folder-zip");
+    if (zipBtn) {
+      if (m.allow_download) {
+        zipBtn.classList.remove("hidden");
+        zipBtn.onclick = () => {
+          window.location.href = zipUrl(state.rel);
+          showToast("Preparing ZIP download... 📦");
+        };
+      } else {
+        zipBtn.classList.add("hidden");
+      }
+    }
+
     const list = $("listing");
     list.textContent = "";
 
@@ -176,10 +223,6 @@
     $("empty-folder").classList.toggle("hidden", children.length > 0);
 
     children.forEach((c) => {
-      const rel = c.type === "folder"
-        ? (state.rel ? `${state.rel}/${c.key}` : c.key)
-        : c.key; // files listed inside current rel are resolved as rel + key below
-
       const li = document.createElement("li");
       li.className = "row";
 
@@ -337,6 +380,12 @@
     const { status, json } = await postJSON("/api/share/unlock", { token: TOKEN, password: $("unlock-pwd").value });
     btn.disabled = false;
     btn.textContent = "Unlock";
+
+    if (status === 429) {
+      err.textContent = "Too many attempts. Please wait a minute.";
+      err.classList.remove("hidden");
+      return;
+    }
     if (status === 401 || json.error === "bad_password") {
       err.textContent = "Incorrect password. Please try again.";
       err.classList.remove("hidden");
@@ -347,10 +396,13 @@
       $("unlock-pwd").select();
       return;
     }
+    if (status === 410) {
+      err.textContent = json.error === "expired" ? "This link has expired." : "This link was revoked.";
+      err.classList.remove("hidden");
+      return;
+    }
     if (status !== 200) {
-      err.textContent = json.error === "expired" ? "This link has expired."
-        : json.error === "revoked" ? "This link was revoked."
-        : "Could not unlock this link.";
+      err.textContent = "Could not unlock this link.";
       err.classList.remove("hidden");
       return;
     }
@@ -362,3 +414,4 @@
 
   init();
 })();
+

@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
     <title>Google Drive - TG Unlimited Cloud</title>
-    <link rel="stylesheet" href="static/home.css?v=10.0" />
+    <link rel="stylesheet" href="static/home.css?v=12.0" />
 
     <!-- Google Fonts: Google Sans & Roboto -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -200,6 +200,10 @@
                 <a href="/?path=/recent" id="nav-recent" class="gd-nav-item unselected-item">
                     <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
                     <span>Recent</span>
+                </a>
+                <a href="/?path=/shared_links" id="nav-shared-links" class="gd-nav-item unselected-item">
+                    <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                    <span>Shared Links</span>
                 </a>
                 <a href="#" id="nav-sync-activity" class="gd-nav-item unselected-item">
                     <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
@@ -515,6 +519,48 @@
                     </div>
                 </div>
 
+                <!-- Shared Links Management Center View -->
+                <div id="shared-links-container" class="gd-shared-links-view" style="display: none;">
+                    <div class="gd-shared-links-header">
+                        <div class="gd-shared-header-left">
+                            <div class="gd-shared-title-row">
+                                <h2 class="gd-shared-title">🔗 Shared Links Management</h2>
+                                <button id="shared-links-refresh-btn" class="gd-tool-btn" title="Refresh shared links">
+                                    <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                                </button>
+                            </div>
+                            <p class="gd-shared-subtitle">Manage all active public links, check remaining time, and revoke access instantly.</p>
+                        </div>
+                        <div class="gd-shared-header-right">
+                            <div class="gd-shared-stats-pills">
+                                <span class="gd-stat-pill pill-total"><strong id="shared-stat-total">0</strong> Total</span>
+                                <span class="gd-stat-pill pill-active"><strong id="shared-stat-active">0</strong> Active</span>
+                                <span class="gd-stat-pill pill-expiring"><strong id="shared-stat-expiring">0</strong> Expiring Soon</span>
+                                <span class="gd-stat-pill pill-revoked"><strong id="shared-stat-revoked">0</strong> Revoked</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Search & Filter Controls -->
+                    <div class="gd-shared-toolbar">
+                        <div class="gd-shared-search-wrap">
+                            <svg viewBox="0 0 24 24" class="gd-svg-icon"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                            <input type="text" id="shared-links-search" placeholder="Search shared links by name, token, or type..." />
+                        </div>
+                        <div class="gd-shared-filter-tabs">
+                            <button class="gd-shared-tab-btn active" data-filter="all">All (<span id="count-all">0</span>)</button>
+                            <button class="gd-shared-tab-btn" data-filter="active">Active (<span id="count-active">0</span>)</button>
+                            <button class="gd-shared-tab-btn" data-filter="expiring">Expiring Soon (<span id="count-expiring">0</span>)</button>
+                            <button class="gd-shared-tab-btn" data-filter="revoked">Revoked / Expired (<span id="count-inactive">0</span>)</button>
+                        </div>
+                    </div>
+
+                    <!-- Links Cards Grid / List -->
+                    <div class="gd-shared-links-grid" id="shared-links-grid">
+                        <!-- Dynamic share cards loaded via JavaScript -->
+                    </div>
+                </div>
+
                 <!-- Desktop Context Menus Container (Separated from table DOM) -->
                 <div id="context-menus-container"></div>
             </div>
@@ -590,7 +636,8 @@
                     <div class="gd-insp-card-title">Link Sharing</div>
                     <div class="gd-link-copy-box">
                         <input type="text" id="insp-link-input" readonly />
-                        <button id="insp-copy-btn" class="gd-primary-btn-sm">Copy</button>
+                        <button id="insp-copy-btn" class="gd-secondary-btn-sm" title="Copy direct link">Copy</button>
+                        <button id="insp-share-btn" class="gd-primary-btn-sm" title="Create or manage share link">Share</button>
                     </div>
                 </div>
 
@@ -687,6 +734,10 @@
                 </div>
             </div>
             <p id="share-error" class="share-error"></p>
+            <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--gd-border-light, rgba(255,255,255,0.08)); display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.8rem; color: var(--gd-text-secondary, #9aa0a6);">Want to see all active links?</span>
+                <a href="/?path=/shared_links" id="share-view-all-links-btn" style="color: var(--gd-primary, #8ab4f8); font-size: 0.82rem; font-weight: 500; text-decoration: none; cursor: pointer;">Manage All Links →</a>
+            </div>
         </div>
         <div class="gd-modal-footer">
             <button id="share-done-btn" class="gd-secondary-btn">Close</button>
@@ -951,11 +1002,11 @@
 
     <!-- Scripts -->
 
-    <script src="static/js/extra.js?v=10.0"></script>
-    <script src="static/js/apiHandler.js?v=10.0"></script>
-    <script src="static/js/sidebar.js?v=10.0"></script>
-    <script src="static/js/fileClickHandler.js?v=10.0"></script>
-    <script src="static/js/main.js?v=10.0"></script>
+    <script src="static/js/extra.js?v=12.0"></script>
+    <script src="static/js/apiHandler.js?v=12.0"></script>
+    <script src="static/js/sidebar.js?v=12.0"></script>
+    <script src="static/js/fileClickHandler.js?v=12.0"></script>
+    <script src="static/js/main.js?v=12.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

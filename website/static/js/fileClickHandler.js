@@ -252,52 +252,11 @@ function closeAllMoreMenus() {
     });
 }
 
-function openMoreButton(div) {
-    const id = div.getAttribute('data-id');
-    if (window.innerWidth <= 768) {
-        openMobileBottomSheet(id);
-        return;
-    }
+function bindMoreMenuActions(moreDiv, id) {
+    if (!moreDiv || moreDiv.getAttribute('data-actions-bound') === 'true') return;
+    moreDiv.setAttribute('data-actions-bound', 'true');
 
-    closeAllMoreMenus();
-
-    const moreDiv = document.getElementById(`more-option-${id}`);
-    if (!moreDiv) return;
-
-    const rect = div.getBoundingClientRect();
-    const menuWidth = 200;
-    const x = Math.max(10, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12));
-    let y = rect.bottom + 4;
-    if (y + 240 > window.innerHeight) {
-        y = Math.max(10, rect.top - 240);
-    }
-
-    moreDiv.style.position = 'fixed';
-    moreDiv.style.left = `${x}px`;
-    moreDiv.style.top = `${y}px`;
-    moreDiv.style.zIndex = '1000';
-    moreDiv.style.opacity = '1';
-    moreDiv.style.pointerEvents = 'auto';
-
-    const isTrash = getCurrentPath().includes('/trash');
-
-    const focusInput = moreDiv.querySelector('.more-options-focus');
-    if (focusInput) {
-        focusInput.focus();
-        focusInput.addEventListener('blur', () => {
-            setTimeout(() => closeMoreMenu(moreDiv), 180);
-        }, { once: true });
-    }
-
-    const onDocClick = (e) => {
-        if (!moreDiv.contains(e.target) && !div.contains(e.target)) {
-            closeMoreMenu(moreDiv);
-            document.removeEventListener('click', onDocClick);
-        }
-    };
-    setTimeout(() => {
-        document.addEventListener('click', onDocClick);
-    }, 10);
+    const isTrash = (typeof getCurrentPath === 'function' ? getCurrentPath() : '').includes('/trash');
 
     if (!isTrash) {
         const dlZipOpt = moreDiv.querySelector(`#download-zip-opt-${id}`);
@@ -348,7 +307,7 @@ function openMoreButton(div) {
             detailsOpt.onclick = (e) => {
                 e.stopPropagation();
                 closeMoreMenu(moreDiv);
-                selectItem(id);
+                if (typeof selectItem === 'function') selectItem(id);
                 const inspector = document.getElementById('gd-inspector');
                 if (inspector) inspector.classList.remove('hidden');
             };
@@ -377,10 +336,10 @@ function openMoreButton(div) {
         if (trashBtn) trashBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); trashFileFolder.call(trashBtn); };
 
         const shareBtn = moreDiv.querySelector(`#share-${id}`);
-        if (shareBtn) shareBtn.onclick = (e) => { e.stopPropagation(); shareFile.call(shareBtn); };
+        if (shareBtn) shareBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); shareFile.call(shareBtn); };
 
         const folderShareBtn = moreDiv.querySelector(`#folder-share-${id}`);
-        if (folderShareBtn) folderShareBtn.onclick = (e) => { e.stopPropagation(); shareFolder.call(folderShareBtn); };
+        if (folderShareBtn) folderShareBtn.onclick = (e) => { e.stopPropagation(); closeMoreMenu(moreDiv); shareFolder.call(folderShareBtn); };
 
         const tagsOpt = moreDiv.querySelector(`#tags-opt-${id}`);
         if (tagsOpt) {
@@ -399,12 +358,132 @@ function openMoreButton(div) {
     }
 }
 
+function positionMoreMenu(moreDiv, targetX, targetY, isFromButton = false, buttonRect = null) {
+    if (!moreDiv) return;
+
+    const vpW = window.innerWidth || document.documentElement.clientWidth || 1024;
+    const vpH = window.innerHeight || document.documentElement.clientHeight || 768;
+    const pad = 10;
+    const maxMenuH = Math.max(160, vpH - (pad * 2));
+
+    // Render off-screen initially to measure exact real height
+    moreDiv.style.position = 'fixed';
+    moreDiv.style.zIndex = '999999';
+    moreDiv.style.visibility = 'hidden';
+    moreDiv.style.display = 'block';
+    moreDiv.style.opacity = '0';
+    moreDiv.style.pointerEvents = 'auto';
+    moreDiv.style.left = '0px';
+    moreDiv.style.top = '0px';
+    moreDiv.style.maxHeight = `${maxMenuH}px`;
+    moreDiv.style.overflowY = 'auto';
+    moreDiv.style.overflowX = 'hidden';
+    moreDiv.style.boxSizing = 'border-box';
+
+    const rect = moreDiv.getBoundingClientRect();
+    const menuWidth = rect.width > 0 ? rect.width : (moreDiv.offsetWidth || 215);
+    const menuHeight = rect.height > 0 ? rect.height : (moreDiv.offsetHeight || 420);
+
+    let x, y;
+
+    if (isFromButton && buttonRect) {
+        x = buttonRect.right - menuWidth;
+        if (x < pad) x = buttonRect.left;
+        x = Math.max(pad, Math.min(x, vpW - menuWidth - pad));
+
+        const spaceBelow = vpH - buttonRect.bottom - pad;
+        const spaceAbove = buttonRect.top - pad;
+
+        if (spaceBelow >= menuHeight) {
+            y = buttonRect.bottom + 4;
+        } else if (spaceAbove >= menuHeight) {
+            y = buttonRect.top - menuHeight - 4;
+        } else if (spaceBelow >= spaceAbove) {
+            y = buttonRect.bottom + 4;
+        } else {
+            y = buttonRect.top - menuHeight - 4;
+        }
+    } else {
+        x = targetX;
+        if (x + menuWidth > vpW - pad) {
+            x = targetX - menuWidth;
+        }
+        x = Math.max(pad, Math.min(x, vpW - menuWidth - pad));
+
+        const spaceBelow = vpH - targetY - pad;
+        const spaceAbove = targetY - pad;
+
+        if (spaceBelow >= menuHeight) {
+            // Enough room below cursor
+            y = targetY;
+        } else if (spaceAbove >= menuHeight) {
+            // Enough room above cursor -> flip upward
+            y = targetY - menuHeight;
+        } else if (spaceAbove > spaceBelow) {
+            // More room above than below
+            y = targetY - menuHeight;
+        } else {
+            // More room below
+            y = targetY;
+        }
+    }
+
+    // Final safety boundary clamp: ensure the menu is ALWAYS 100% within the viewport
+    if (y + menuHeight > vpH - pad) {
+        y = vpH - menuHeight - pad;
+    }
+    if (y < pad) {
+        y = pad;
+    }
+
+    moreDiv.style.left = `${Math.round(x)}px`;
+    moreDiv.style.top = `${Math.round(y)}px`;
+    moreDiv.style.visibility = 'visible';
+    moreDiv.style.opacity = '1';
+
+    const focusInput = moreDiv.querySelector('.more-options-focus');
+    if (focusInput) {
+        focusInput.focus();
+        focusInput.addEventListener('blur', () => {
+            setTimeout(() => closeMoreMenu(moreDiv), 180);
+        }, { once: true });
+    }
+
+    const onDocClick = (e) => {
+        if (!moreDiv.contains(e.target) && (!buttonRect || !e.target.closest('.more-btn'))) {
+            closeMoreMenu(moreDiv);
+            document.removeEventListener('click', onDocClick);
+        }
+    };
+    setTimeout(() => {
+        document.addEventListener('click', onDocClick);
+    }, 10);
+}
+
+function openMoreButton(div) {
+    const id = div.getAttribute('data-id');
+    if (window.innerWidth <= 768) {
+        if (typeof openMobileBottomSheet === 'function') openMobileBottomSheet(id);
+        return;
+    }
+
+    closeAllMoreMenus();
+
+    const moreDiv = document.getElementById(`more-option-${id}`);
+    if (!moreDiv) return;
+
+    bindMoreMenuActions(moreDiv, id);
+    const rect = div.getBoundingClientRect();
+    positionMoreMenu(moreDiv, 0, 0, true, rect);
+}
+
 function closeMoreMenu(moreDiv) {
     if (!moreDiv) return;
     moreDiv.style.opacity = '0';
     setTimeout(() => {
         moreDiv.style.zIndex = '-1';
-    }, 200);
+        moreDiv.style.pointerEvents = 'none';
+    }, 150);
 }
 
 // Rename File Folder Start
@@ -560,84 +639,144 @@ async function deleteFileFolder() {
     }
 }
 
-async function shareFile() {
-    const id = this.getAttribute('id').split('-')[1];
+function resolveShareItem(el, defaultType) {
+    const rawId = el ? (el.getAttribute('data-id') || el.getAttribute('id') || '') : '';
+    let id = rawId;
+    if (id.startsWith('folder-share-')) id = id.substring('folder-share-'.length);
+    else if (id.startsWith('share-')) id = id.substring('share-'.length);
+    
+    const item = (typeof DIRECTORY_ITEMS !== 'undefined' && DIRECTORY_ITEMS[id]) ||
+                 (typeof CURRENT_BOTTOM_SHEET_ITEM !== 'undefined' && CURRENT_BOTTOM_SHEET_ITEM && CURRENT_BOTTOM_SHEET_ITEM.id === id ? CURRENT_BOTTOM_SHEET_ITEM : null) ||
+                 (typeof SELECTED_ITEM_ID !== 'undefined' && typeof DIRECTORY_ITEMS !== 'undefined' && DIRECTORY_ITEMS[SELECTED_ITEM_ID] ? DIRECTORY_ITEMS[SELECTED_ITEM_ID] : null);
+
     const moreDiv = document.getElementById(`more-option-${id}`);
-    const parentPath = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) || '/';
-    const name = (this.parentElement && this.parentElement.getAttribute)
-        ? (this.parentElement.getAttribute('data-name') || '') : '';
-    openShareModal({ type: 'file', id, parentPath, name });
+    const parentPath = (item && item.path) || (moreDiv ? moreDiv.getAttribute('data-path') : (typeof getCurrentPath === 'function' ? getCurrentPath() : '/')) || '/';
+    const name = (item && item.name) || (moreDiv ? moreDiv.getAttribute('data-name') : '') || (el && el.parentElement && el.parentElement.getAttribute ? el.parentElement.getAttribute('data-name') : '') || '';
+    const itemType = (item && item.type) || defaultType || 'file';
+
+    return { id, item, parentPath, name, type: itemType };
+}
+
+async function shareFile() {
+    const info = resolveShareItem(this, 'file');
+    openShareModal(info);
 }
 
 async function shareFolder() {
-    const id = this.getAttribute('id').split('-')[2];
-    const moreDiv = document.getElementById(`more-option-${id}`);
-    const parentPath = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) || '/';
-    openShareModal({ type: 'folder', id, parentPath, name: '' });
+    const info = resolveShareItem(this, 'folder');
+    openShareModal(info);
 }
 
 // =========================================================
 // Secure Share Modal Controller
 // =========================================================
-let SHARE_STATE = { token: null, target: null };
+let SHARE_STATE = { token: null, target: null, name: '' };
 
 function openShareModal(opts) {
     const modal = document.getElementById('share-modal');
+    const bgBlur = document.getElementById('bg-blur');
     if (!modal) return;
-    SHARE_STATE = { token: null, target: `${(opts.parentPath || '/')}/${opts.id}`.replaceAll('//', '/') };
 
-    document.getElementById('share-item-name').textContent =
-        opts.name || SHARE_STATE.target.split('/').filter(Boolean).pop() || 'Item';
+    const targetPath = `${(opts.parentPath || '/')}/${opts.id}`.replaceAll('//', '/');
+    const displayName = opts.name || targetPath.split('/').filter(Boolean).pop() || 'Item';
+    SHARE_STATE = { token: null, target: targetPath, name: displayName };
+
+    const nameEl = document.getElementById('share-item-name');
+    if (nameEl) nameEl.textContent = displayName;
 
     // Reset to creation view
-    document.getElementById('share-options').style.display = '';
-    document.getElementById('share-result').style.display = 'none';
-    document.getElementById('share-create-btn').style.display = '';
-    document.getElementById('share-password').value = '';
-    document.getElementById('share-expiry').value = '168';
-    document.getElementById('share-allow-download').checked = true;
-    document.getElementById('share-allow-preview').checked = true;
-    document.getElementById('share-error').textContent = '';
+    const optsDiv = document.getElementById('share-options');
+    const resDiv = document.getElementById('share-result');
+    const createBtn = document.getElementById('share-create-btn');
+    const pwdInput = document.getElementById('share-password');
+    const expirySelect = document.getElementById('share-expiry');
+    const allowDl = document.getElementById('share-allow-download');
+    const allowPv = document.getElementById('share-allow-preview');
+    const errEl = document.getElementById('share-error');
 
+    if (optsDiv) optsDiv.style.display = '';
+    if (resDiv) resDiv.style.display = 'none';
+    if (createBtn) {
+        createBtn.style.display = '';
+        createBtn.disabled = false;
+        createBtn.textContent = 'Create Link';
+    }
+    if (pwdInput) pwdInput.value = '';
+    if (expirySelect) expirySelect.value = '168';
+    if (allowDl) allowDl.checked = true;
+    if (allowPv) allowPv.checked = true;
+    if (errEl) errEl.textContent = '';
+
+    if (bgBlur) {
+        bgBlur.style.zIndex = '100';
+        bgBlur.style.opacity = '1';
+    }
     modal.style.zIndex = '101';
     modal.style.opacity = '1';
 }
 
 function closeShareModal() {
     const modal = document.getElementById('share-modal');
-    if (!modal) return;
-    modal.style.opacity = '0';
-    modal.style.zIndex = '-1';
+    const bgBlur = document.getElementById('bg-blur');
+    if (modal) {
+        modal.style.opacity = '0';
+        setTimeout(() => { modal.style.zIndex = '-1'; }, 200);
+    }
+    if (bgBlur) {
+        bgBlur.style.opacity = '0';
+        setTimeout(() => { bgBlur.style.zIndex = '-1'; }, 200);
+    }
 }
 
 async function createShareLink() {
     const errEl = document.getElementById('share-error');
-    errEl.textContent = '';
-    const pwd = document.getElementById('share-password').value.trim();
+    const createBtn = document.getElementById('share-create-btn');
+    if (errEl) errEl.textContent = '';
+
+    const pwd = (document.getElementById('share-password')?.value || '').trim();
     if (pwd && pwd.length < 6) {
-        errEl.textContent = 'Password must be at least 6 characters.';
+        if (errEl) errEl.textContent = 'Password must be at least 6 characters.';
         return;
     }
-    const hoursVal = document.getElementById('share-expiry').value;
+    const hoursVal = document.getElementById('share-expiry')?.value;
     const body = {
         target: SHARE_STATE.target,
-        expires_in_hours: hoursVal === '' ? null : Number(hoursVal),
+        expires_in_hours: (hoursVal === '' || hoursVal === undefined) ? null : Number(hoursVal),
         password: pwd,
-        allow_download: document.getElementById('share-allow-download').checked,
-        allow_preview: document.getElementById('share-allow-preview').checked,
+        allow_download: !!document.getElementById('share-allow-download')?.checked,
+        allow_preview: !!document.getElementById('share-allow-preview')?.checked,
     };
+
+    if (createBtn) {
+        createBtn.disabled = true;
+        createBtn.textContent = 'Creating...';
+    }
+
     const json = await postJson('/api/share/create', body);
-    if (json.status !== 'ok') {
-        errEl.textContent = json.error === 'invalid_password' ? 'Password must be 6-128 characters.'
-            : json.error === 'invalid_expiry' ? 'Invalid expiry selected.'
-            : 'Could not create the link. Is the item still there?';
+
+    if (createBtn) {
+        createBtn.disabled = false;
+        createBtn.textContent = 'Create Link';
+    }
+
+    if (json.status !== 'ok' || !json.share) {
+        if (errEl) {
+            errEl.textContent = json.error === 'invalid_password' ? 'Password must be 6-128 characters.'
+                : json.error === 'invalid_expiry' ? 'Invalid expiry selected.'
+                : 'Could not create the share link. Please verify the item exists.';
+        }
         return;
     }
+
     SHARE_STATE.token = json.share.token;
-    document.getElementById('share-link-input').value = json.url;
-    document.getElementById('share-meta-line').textContent = describeShare(json.share);
+    const linkInput = document.getElementById('share-link-input');
+    if (linkInput) linkInput.value = json.url;
+
+    const metaLine = document.getElementById('share-meta-line');
+    if (metaLine) metaLine.textContent = describeShare(json.share);
+
     document.getElementById('share-options').style.display = 'none';
-    document.getElementById('share-create-btn').style.display = 'none';
+    if (createBtn) createBtn.style.display = 'none';
     document.getElementById('share-result').style.display = '';
     showToast('Secure link created 🔗');
 }
@@ -655,26 +794,43 @@ function describeShare(s) {
 
 async function copyShareLink() {
     const input = document.getElementById('share-link-input');
-    copyTextToClipboard(input.value);
-    showToast('Link copied to clipboard! 📋');
+    if (!input || !input.value) return;
+    const success = await copyTextToClipboard(input.value);
+    const copyBtn = document.getElementById('share-copy-btn');
+    if (copyBtn) {
+        const oldText = copyBtn.textContent;
+        copyBtn.textContent = 'Copied! ✓';
+        setTimeout(() => { copyBtn.textContent = oldText; }, 2000);
+    }
+    showToast(success ? 'Link copied to clipboard! 📋' : 'Link selected — press Ctrl+C to copy');
 }
 
 async function regenerateShareLink() {
     if (!SHARE_STATE.token) return;
+    const regenBtn = document.getElementById('share-regenerate-btn');
+    if (regenBtn) regenBtn.disabled = true;
     const json = await postJson('/api/share/regenerate', { token: SHARE_STATE.token });
-    if (json.status !== 'ok') {
+    if (regenBtn) regenBtn.disabled = false;
+
+    if (json.status !== 'ok' || !json.share) {
         showToast('Could not regenerate link', true);
         return;
     }
     SHARE_STATE.token = json.share.token;
-    document.getElementById('share-link-input').value = json.url;
-    document.getElementById('share-meta-line').textContent = describeShare(json.share);
+    const linkInput = document.getElementById('share-link-input');
+    if (linkInput) linkInput.value = json.url;
+    const metaLine = document.getElementById('share-meta-line');
+    if (metaLine) metaLine.textContent = describeShare(json.share);
     showToast('New link generated — previous link is now dead 🔄');
 }
 
 async function revokeShareLink() {
     if (!SHARE_STATE.token) return;
+    const revokeBtn = document.getElementById('share-revoke-btn');
+    if (revokeBtn) revokeBtn.disabled = true;
     const json = await postJson('/api/share/revoke', { token: SHARE_STATE.token });
+    if (revokeBtn) revokeBtn.disabled = false;
+
     if (json.status !== 'ok') {
         showToast('Could not revoke link', true);
         return;
@@ -693,6 +849,16 @@ async function revokeShareLink() {
     on('share-regenerate-btn', regenerateShareLink);
     on('share-revoke-btn', revokeShareLink);
     on('share-done-btn', closeShareModal);
+
+    const pwdInput = document.getElementById('share-password');
+    if (pwdInput) {
+        pwdInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                createShareLink();
+            }
+        });
+    }
 })();
 
 // =========================================================

@@ -251,6 +251,17 @@ async function getCurrentDirectory() {
     const requestId = ++window.NAV_REQUEST_ID;
     const path = getCurrentPath();
 
+    if (path === '/shared_links' || path.startsWith('/shared_links')) {
+        if (typeof window.showSharedLinksView === 'function') {
+            window.showSharedLinksView();
+            return;
+        }
+    } else {
+        if (typeof window.hideSharedLinksView === 'function' && window.CURRENT_PAGE_VIEW === 'shared_links') {
+            window.hideSharedLinksView();
+        }
+    }
+
     // Immediately trigger skeleton loader to eliminate stale folder rendering
     if (typeof showDirectorySkeleton === 'function') {
         showDirectorySkeleton();

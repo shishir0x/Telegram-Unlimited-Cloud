@@ -1194,27 +1194,58 @@ function openContextMenuAt(id, clientX, clientY) {
     const moreDiv = document.getElementById(`more-option-${id}`);
     if (!moreDiv) return;
 
-    const menuWidth = 200;
-    const menuHeight = 240;
-    const x = Math.max(10, Math.min(clientX, window.innerWidth - menuWidth - 12));
-    const y = Math.max(10, Math.min(clientY, window.innerHeight - menuHeight - 12));
+    if (typeof bindMoreMenuActions === 'function') {
+        bindMoreMenuActions(moreDiv, id);
+    }
+    if (typeof positionMoreMenu === 'function') {
+        positionMoreMenu(moreDiv, clientX, clientY, false, null);
+    } else {
+        const vpW = window.innerWidth || document.documentElement.clientWidth || 1024;
+        const vpH = window.innerHeight || document.documentElement.clientHeight || 768;
+        const pad = 10;
+        const maxMenuH = Math.max(160, vpH - (pad * 2));
 
-    moreDiv.style.position = 'fixed';
-    moreDiv.style.left = `${x}px`;
-    moreDiv.style.top = `${y}px`;
-    moreDiv.style.zIndex = '1000';
-    moreDiv.style.opacity = '1';
-    moreDiv.style.pointerEvents = 'auto';
+        moreDiv.style.position = 'fixed';
+        moreDiv.style.zIndex = '999999';
+        moreDiv.style.maxHeight = `${maxMenuH}px`;
+        moreDiv.style.overflowY = 'auto';
+        moreDiv.style.overflowX = 'hidden';
+        moreDiv.style.boxSizing = 'border-box';
 
-    const onDocClick = (e) => {
-        if (!moreDiv.contains(e.target)) {
-            if (typeof closeMoreMenu === 'function') closeMoreMenu(moreDiv);
-            document.removeEventListener('click', onDocClick);
+        const rect = moreDiv.getBoundingClientRect();
+        const menuWidth = rect.width > 0 ? rect.width : 215;
+        const menuHeight = rect.height > 0 ? rect.height : 420;
+
+        let x = clientX;
+        if (x + menuWidth > vpW - pad) {
+            x = clientX - menuWidth;
         }
-    };
-    setTimeout(() => {
-        document.addEventListener('click', onDocClick);
-    }, 10);
+        x = Math.max(pad, Math.min(x, vpW - menuWidth - pad));
+
+        const spaceBelow = vpH - clientY - pad;
+        const spaceAbove = clientY - pad;
+        let y;
+        if (spaceBelow >= menuHeight) {
+            y = clientY;
+        } else if (spaceAbove >= menuHeight) {
+            y = clientY - menuHeight;
+        } else if (spaceAbove > spaceBelow) {
+            y = clientY - menuHeight;
+        } else {
+            y = clientY;
+        }
+
+        if (y + menuHeight > vpH - pad) {
+            y = vpH - menuHeight - pad;
+        }
+        if (y < pad) y = pad;
+
+        moreDiv.style.left = `${Math.round(x)}px`;
+        moreDiv.style.top = `${Math.round(y)}px`;
+        moreDiv.style.visibility = 'visible';
+        moreDiv.style.opacity = '1';
+        moreDiv.style.pointerEvents = 'auto';
+    }
 }
 
 function updateBulkActionBar() {
@@ -2104,13 +2135,34 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Inspector Copy Link
+    // Inspector Copy Link & Share Modal
     const inspCopyBtn = document.getElementById('insp-copy-btn');
+    const inspShareBtn = document.getElementById('insp-share-btn');
     const inspLinkInput = document.getElementById('insp-link-input');
+
     if (inspCopyBtn && inspLinkInput) {
-        inspCopyBtn.addEventListener('click', () => {
-            copyTextToClipboard(inspLinkInput.value);
-            showToast('Link copied to clipboard! 📋');
+        inspCopyBtn.addEventListener('click', async () => {
+            const ok = await copyTextToClipboard(inspLinkInput.value);
+            showToast(ok ? 'Link copied to clipboard! 📋' : 'Link selected');
+        });
+    }
+
+    if (inspShareBtn) {
+        inspShareBtn.addEventListener('click', () => {
+            if (!SELECTED_ITEM_ID) {
+                showToast('Please select a file or folder first', true);
+                return;
+            }
+            const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[SELECTED_ITEM_ID] : null;
+            if (!item) return;
+            if (typeof openShareModal === 'function') {
+                openShareModal({
+                    id: item.id,
+                    parentPath: item.path || (typeof getCurrentPath === 'function' ? getCurrentPath() : '/'),
+                    name: item.name,
+                    type: item.type || 'file'
+                });
+            }
         });
     }
 
@@ -2358,6 +2410,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupDragAndDrop();
     applyViewMode(CURRENT_VIEW_MODE);
     initSyncActivityManager();
+    initSharedLinksManager();
     initCommandPalette();
 
     // Initial fetch — server enforces auth via session cookie; 401 triggers login modal
@@ -3103,6 +3156,399 @@ function initSyncActivityManager() {
     // Expose the polling hook so the sync view can request an immediate refresh
     window.syncPollHook = pollSyncStatus;
     setInterval(pollSyncStatus, 2000);
+}
+
+// ==========================================================================
+// Shared Links Management Center
+// ==========================================================================
+window.SHARED_LINKS_CACHE = [];
+window.SHARED_LINKS_FILTER = 'all';
+
+function formatRemainingTime(expiresAt, isRevoked) {
+    if (isRevoked) {
+        return { text: '🚫 Link Revoked', status: 'revoked', class: 'time-revoked' };
+    }
+    if (!expiresAt) {
+        return { text: '♾️ Permanent (No Expiration)', status: 'permanent', class: 'time-active' };
+    }
+    const now = Date.now() / 1000;
+    const diff = Number(expiresAt) - now;
+    if (diff <= 0) {
+        const expiredDate = new Date(Number(expiresAt) * 1000).toLocaleString();
+        return { text: `⚠️ Expired (${expiredDate})`, status: 'expired', class: 'time-expired' };
+    }
+    const days = Math.floor(diff / 86400);
+    const hours = Math.floor((diff % 86400) / 3600);
+    const mins = Math.floor((diff % 3600) / 60);
+
+    let timeStr = '';
+    if (days > 0) {
+        timeStr = `${days}d ${hours}h remaining`;
+    } else if (hours > 0) {
+        timeStr = `${hours}h ${mins}m remaining`;
+    } else {
+        timeStr = `${Math.max(1, mins)}m remaining`;
+    }
+
+    const isExpiringSoon = diff < 86400; // < 24 hours
+    return {
+        text: `⏳ ${timeStr}`,
+        status: isExpiringSoon ? 'expiring' : 'active',
+        class: isExpiringSoon ? 'time-expiring' : 'time-active'
+    };
+}
+
+window.showSharedLinksView = function() {
+    window.CURRENT_PAGE_VIEW = 'shared_links';
+    const listViewContainer = document.getElementById('list-view-container');
+    const gridViewContainer = document.getElementById('grid-view-container');
+    const syncViewContainer = document.getElementById('sync-view-container');
+    const sharedViewContainer = document.getElementById('shared-links-container');
+    const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navRecent = document.getElementById('nav-recent');
+    const navSharedLinks = document.getElementById('nav-shared-links');
+    const navSyncActivity = document.getElementById('nav-sync-activity');
+    const navTrash = document.getElementById('nav-trash');
+
+    if (listViewContainer) listViewContainer.style.display = 'none';
+    if (gridViewContainer) gridViewContainer.style.display = 'none';
+    if (syncViewContainer) syncViewContainer.style.display = 'none';
+    if (sharedViewContainer) sharedViewContainer.style.display = 'flex';
+
+    // Update sidebar selection
+    if (navMyDrive) navMyDrive.className = 'gd-nav-item unselected-item';
+    if (navRecent) navRecent.className = 'gd-nav-item unselected-item';
+    if (navTrash) navTrash.className = 'gd-nav-item unselected-item';
+    if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
+    if (navSharedLinks) navSharedLinks.className = 'gd-nav-item selected-item';
+
+    // Update breadcrumbs
+    if (breadcrumbsContainer) {
+        breadcrumbsContainer.innerHTML = `
+            <span class="gd-crumb gd-crumb-target" id="crumb-root-back-shared">My Drive</span>
+            <span class="gd-crumb-separator">&gt;</span>
+            <span class="gd-crumb gd-crumb-current">🔗 Shared Links</span>
+        `;
+        const rootCrumb = document.getElementById('crumb-root-back-shared');
+        if (rootCrumb) {
+            rootCrumb.addEventListener('click', (e) => {
+                e.preventDefault();
+                window.hideSharedLinksView();
+                if (typeof navigateToPath === 'function') navigateToPath('/');
+            });
+        }
+    }
+
+    fetchAndRenderSharedLinks();
+};
+
+window.hideSharedLinksView = function() {
+    window.CURRENT_PAGE_VIEW = 'drive';
+    const listViewContainer = document.getElementById('list-view-container');
+    const gridViewContainer = document.getElementById('grid-view-container');
+    const sharedViewContainer = document.getElementById('shared-links-container');
+    const navMyDrive = document.getElementById('nav-my-drive');
+    const navSharedLinks = document.getElementById('nav-shared-links');
+
+    if (sharedViewContainer) sharedViewContainer.style.display = 'none';
+    if (CURRENT_VIEW_MODE === 'grid') {
+        if (gridViewContainer) gridViewContainer.style.display = 'block';
+        if (listViewContainer) listViewContainer.style.display = 'none';
+    } else {
+        if (listViewContainer) listViewContainer.style.display = 'block';
+        if (gridViewContainer) gridViewContainer.style.display = 'none';
+    }
+    if (navSharedLinks) navSharedLinks.className = 'gd-nav-item unselected-item';
+    if (navMyDrive) navMyDrive.className = 'gd-nav-item selected-item';
+};
+
+async function fetchAndRenderSharedLinks() {
+    const grid = document.getElementById('shared-links-grid');
+    if (grid && (!window.SHARED_LINKS_CACHE || window.SHARED_LINKS_CACHE.length === 0)) {
+        grid.innerHTML = '<div class="gd-shared-empty-card"><div class="gd-shared-empty-icon">⏳</div><div class="gd-shared-empty-title">Loading shared links...</div></div>';
+    }
+
+    try {
+        const res = await postJson('/api/share/list', {});
+        if (res.status === 'ok' && Array.isArray(res.shares)) {
+            window.SHARED_LINKS_CACHE = res.shares;
+            renderSharedLinksList();
+        } else {
+            if (grid) grid.innerHTML = `<div class="gd-shared-empty-card"><div class="gd-shared-empty-icon">⚠️</div><div class="gd-shared-empty-title">Could not load shared links</div><div class="gd-shared-empty-desc">${escapeHtml(res.error || 'Server returned an error.')}</div></div>`;
+        }
+    } catch (err) {
+        if (grid) grid.innerHTML = '<div class="gd-shared-empty-card"><div class="gd-shared-empty-icon">⚠️</div><div class="gd-shared-empty-title">Network error</div><div class="gd-shared-empty-desc">Failed to connect to server.</div></div>';
+    }
+}
+
+function renderSharedLinksList() {
+    const grid = document.getElementById('shared-links-grid');
+    const searchInput = document.getElementById('shared-links-search');
+    const query = (searchInput?.value || '').trim().toLowerCase();
+    const filter = window.SHARED_LINKS_FILTER || 'all';
+
+    const shares = window.SHARED_LINKS_CACHE || [];
+    const now = Date.now() / 1000;
+
+    let total = shares.length;
+    let activeCount = 0;
+    let expiringCount = 0;
+    let revokedOrExpiredCount = 0;
+
+    shares.forEach(s => {
+        const isRev = s.revoked;
+        const isExp = s.expires_at && Number(s.expires_at) <= now;
+        const isExpiring = !isRev && s.expires_at && Number(s.expires_at) > now && (Number(s.expires_at) - now < 86400);
+
+        if (isRev || isExp) {
+            revokedOrExpiredCount++;
+        } else {
+            activeCount++;
+            if (isExpiring) expiringCount++;
+        }
+    });
+
+    // Update Header Pill Counts
+    const statTotal = document.getElementById('shared-stat-total');
+    const statActive = document.getElementById('shared-stat-active');
+    const statExpiring = document.getElementById('shared-stat-expiring');
+    const statRevoked = document.getElementById('shared-stat-revoked');
+    if (statTotal) statTotal.textContent = total;
+    if (statActive) statActive.textContent = activeCount;
+    if (statExpiring) statExpiring.textContent = expiringCount;
+    if (statRevoked) statRevoked.textContent = revokedOrExpiredCount;
+
+    // Update Tab Counts
+    const tabAll = document.getElementById('count-all');
+    const tabActive = document.getElementById('count-active');
+    const tabExpiring = document.getElementById('count-expiring');
+    const tabInactive = document.getElementById('count-inactive');
+    if (tabAll) tabAll.textContent = total;
+    if (tabActive) tabActive.textContent = activeCount;
+    if (tabExpiring) tabExpiring.textContent = expiringCount;
+    if (tabInactive) tabInactive.textContent = revokedOrExpiredCount;
+
+    // Filter Items
+    const filtered = shares.filter(s => {
+        const isRev = s.revoked;
+        const isExp = s.expires_at && Number(s.expires_at) <= now;
+        const isExpiring = !isRev && s.expires_at && Number(s.expires_at) > now && (Number(s.expires_at) - now < 86400);
+
+        if (filter === 'active' && (isRev || isExp)) return false;
+        if (filter === 'expiring' && !isExpiring) return false;
+        if (filter === 'revoked' && !isRev && !isExp) return false;
+
+        if (query) {
+            const name = (s.name || '').toLowerCase();
+            const token = (s.token || '').toLowerCase();
+            const type = (s.type || '').toLowerCase();
+            if (!name.includes(query) && !token.includes(query) && !type.includes(query)) {
+                return false;
+            }
+        }
+        return true;
+    });
+
+    if (!grid) return;
+
+    if (filtered.length === 0) {
+        grid.innerHTML = `
+            <div class="gd-shared-empty-card">
+                <div class="gd-shared-empty-icon">🔗</div>
+                <div class="gd-shared-empty-title">${query ? 'No matching shared links found' : 'No shared links in this category'}</div>
+                <div class="gd-shared-empty-desc">${query ? 'Try searching with a different name or token.' : 'Right-click any file or folder and select "Share link" to create a public link.'}</div>
+            </div>
+        `;
+        return;
+    }
+
+    grid.innerHTML = filtered.map(s => {
+        const isRev = s.revoked;
+        const isExp = s.expires_at && Number(s.expires_at) <= now;
+        const isExpiring = !isRev && s.expires_at && Number(s.expires_at) > now && (Number(s.expires_at) - now < 86400);
+
+        let badgeClass = 'badge-active';
+        let badgeText = 'ACTIVE';
+        if (isRev) {
+            badgeClass = 'badge-revoked';
+            badgeText = 'REVOKED';
+        } else if (isExp) {
+            badgeClass = 'badge-expired';
+            badgeText = 'EXPIRED';
+        } else if (isExpiring) {
+            badgeClass = 'badge-expiring';
+            badgeText = 'EXPIRING SOON';
+        }
+
+        const remaining = formatRemainingTime(s.expires_at, isRev);
+        const icon = s.type === 'folder' ? '📁' : '📄';
+        const rootOrigin = window.location.origin;
+        const shareUrl = `${rootOrigin}/s/${s.token}`;
+        const createdDate = s.created_at ? new Date(Number(s.created_at) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '--';
+
+        return `
+            <div class="gd-share-card ${isRev ? 'is-revoked' : ''} ${isExp ? 'is-expired' : ''}" data-token="${escapeHtml(s.token)}">
+                <div class="gd-share-card-top">
+                    <div class="gd-share-item-info">
+                        <div class="gd-share-item-icon">${icon}</div>
+                        <div class="gd-share-item-details">
+                            <span class="gd-share-item-name" title="${escapeHtml(s.name || 'Shared Item')}">${escapeHtml(s.name || 'Shared Item')}</span>
+                            <div class="gd-share-item-type">${escapeHtml(s.type || 'file')} • Created ${createdDate}</div>
+                        </div>
+                    </div>
+                    <span class="gd-share-status-badge ${badgeClass}">${badgeText}</span>
+                </div>
+
+                <div class="gd-share-url-row">
+                    <span class="gd-share-url-text" title="${escapeHtml(shareUrl)}">${escapeHtml(shareUrl)}</span>
+                    <button class="gd-share-url-copy-btn" onclick="copyShareUrlDirect('${escapeHtml(s.token)}')" title="Copy link to clipboard">
+                        <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                    </button>
+                </div>
+
+                <div class="gd-share-time-row ${remaining.class}">
+                    <span>${remaining.text}</span>
+                </div>
+
+                <div class="gd-share-meta-row">
+                    <span class="gd-share-tag">${s.has_password ? '🔒 Password Protected' : '🔓 No Password'}</span>
+                    <span class="gd-share-tag">${s.allow_download ? '⬇️ Download Allowed' : '🚫 No Download'}</span>
+                    <span class="gd-share-tag">${s.allow_preview ? '👁️ Preview Allowed' : '🚫 No Preview'}</span>
+                    <span class="gd-share-tag">📊 ${(s.access_count || 0)} view${(s.access_count === 1 ? '' : 's')}</span>
+                </div>
+
+                <div class="gd-share-actions-row">
+                    <button class="gd-share-action-btn btn-copy" onclick="copyShareUrlDirect('${escapeHtml(s.token)}')">
+                        <svg style="width:14px;height:14px;fill:currentColor;" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                        <span>Copy</span>
+                    </button>
+                    ${!isRev && !isExp ? `
+                    <button class="gd-share-action-btn btn-open" onclick="window.open('${escapeHtml(shareUrl)}', '_blank')">
+                        <svg style="width:14px;height:14px;fill:currentColor;" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+                        <span>Open</span>
+                    </button>
+                    ` : ''}
+                    ${!isRev ? `
+                    <button class="gd-share-action-btn btn-revoke" onclick="confirmRevokeShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')">
+                        <span>Revoke</span>
+                    </button>
+                    ` : `
+                    <button class="gd-share-action-btn btn-regenerate" onclick="confirmRegenerateShare('${escapeHtml(s.token)}', '${escapeHtml(s.name)}')">
+                        <span>Regenerate Link</span>
+                    </button>
+                    `}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+window.copyShareUrlDirect = async function(token) {
+    const url = `${window.location.origin}/s/${token}`;
+    if (typeof copyTextToClipboard === 'function') {
+        await copyTextToClipboard(url);
+    } else {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+        }
+        if (typeof showToast === 'function') showToast('Share link copied to clipboard! 📋');
+    }
+};
+
+window.confirmRevokeShare = async function(token, name) {
+    if (!confirm(`Are you sure you want to revoke the shared link for "${name || 'this item'}"?\n\nPublic visitors will immediately lose access (410 Gone).`)) {
+        return;
+    }
+    try {
+        const res = await postJson('/api/share/revoke', { token });
+        if (res.status === 'ok') {
+            if (typeof showToast === 'function') showToast(`Share link for "${name}" revoked. 🚫`);
+            // Update local cache
+            if (window.SHARED_LINKS_CACHE) {
+                const item = window.SHARED_LINKS_CACHE.find(s => s.token === token);
+                if (item) item.revoked = true;
+            }
+            renderSharedLinksList();
+        } else {
+            alert('Failed to revoke link: ' + (res.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Network error while revoking share link.');
+    }
+};
+
+window.confirmRegenerateShare = async function(token, name) {
+    if (!confirm(`Regenerate link for "${name || 'this item'}"?\n\nA new secure URL will be created and the old link will be revoked.`)) {
+        return;
+    }
+    try {
+        const res = await postJson('/api/share/regenerate', { token });
+        if (res.status === 'ok' && res.share) {
+            if (typeof showToast === 'function') showToast(`New share link generated & copied! 🔗`);
+            if (res.url && typeof copyTextToClipboard === 'function') {
+                await copyTextToClipboard(res.url);
+            }
+            fetchAndRenderSharedLinks();
+        } else {
+            alert('Failed to regenerate link: ' + (res.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Network error while regenerating share link.');
+    }
+};
+
+function initSharedLinksManager() {
+    const navSharedLinks = document.getElementById('nav-shared-links');
+    const refreshBtn = document.getElementById('shared-links-refresh-btn');
+    const searchInput = document.getElementById('shared-links-search');
+    const filterTabs = document.querySelectorAll('.gd-shared-tab-btn');
+    const viewAllModalBtn = document.getElementById('share-view-all-links-btn');
+
+    if (navSharedLinks) {
+        navSharedLinks.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            window.showSharedLinksView();
+        });
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            fetchAndRenderSharedLinks();
+        });
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            renderSharedLinksList();
+        });
+    }
+
+    filterTabs.forEach(btn => {
+        btn.addEventListener('click', () => {
+            filterTabs.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            window.SHARED_LINKS_FILTER = btn.getAttribute('data-filter') || 'all';
+            renderSharedLinksList();
+        });
+    });
+
+    if (viewAllModalBtn) {
+        viewAllModalBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (typeof closeShareModal === 'function') closeShareModal();
+            window.showSharedLinksView();
+        });
+    }
+
+    // Auto-update countdown every 30 seconds when in shared_links view
+    setInterval(() => {
+        if (window.CURRENT_PAGE_VIEW === 'shared_links' && window.SHARED_LINKS_CACHE && window.SHARED_LINKS_CACHE.length > 0) {
+            renderSharedLinksList();
+        }
+    }, 30000);
 }
 
 // Google Drive Keyboard Navigation & Shortcuts

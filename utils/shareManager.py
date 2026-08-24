@@ -417,3 +417,43 @@ def preview_kind(name: str) -> Optional[str]:
 
 def guess_mime(name: str) -> str:
     return mimetypes.guess_type(str(name))[0] or "application/octet-stream"
+
+
+def collect_share_items_for_zip(node, root_name: str = "Shared") -> Tuple[str, List[Dict]]:
+    """
+    Recursively collect all files under a scoped folder node for creating a ZIP archive.
+    Returns (suggested_name, items_list).
+    Excludes trashed items. Ensures paths are strictly relative within the archive.
+    """
+    items = []
+    
+    def _walk(curr_node, current_rel_path: str):
+        if getattr(curr_node, "trash", False):
+            return
+        node_type = getattr(curr_node, "type", "")
+        if node_type == "file":
+            fid = getattr(curr_node, "file_id", None)
+            fname = getattr(curr_node, "name", "file")
+            if fid:
+                items.append({
+                    "file_id": fid,
+                    "file_name": fname,
+                    "archive_path": f"{current_rel_path}/{fname}".strip("/"),
+                    "size": int(getattr(curr_node, "size", 0) or 0),
+                })
+        elif node_type == "folder":
+            contents = getattr(curr_node, "contents", {})
+            for cid, child in contents.items():
+                if getattr(child, "trash", False):
+                    continue
+                child_name = getattr(child, "name", cid)
+                child_type = getattr(child, "type", "")
+                if child_type == "folder":
+                    _walk(child, f"{current_rel_path}/{child_name}".strip("/"))
+                elif child_type == "file":
+                    _walk(child, current_rel_path)
+
+    base_name = getattr(node, "name", root_name) or root_name
+    _walk(node, "")
+    return base_name, items
+

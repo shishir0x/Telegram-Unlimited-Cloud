@@ -138,19 +138,24 @@ function navigateToPath(targetPath, pushState = true) {
 function updateSidebarNavSelection(path) {
     const isTrash = path && path.startsWith('/trash');
     const isRecent = path && (path === '/recent' || path.startsWith('/recent'));
+    const isSharedLinks = path && (path === '/shared_links' || path.startsWith('/shared_links')) || (window.CURRENT_PAGE_VIEW === 'shared_links');
     const isSync = (window.CURRENT_PAGE_VIEW === 'sync');
     const navMyDrive = document.getElementById('nav-my-drive');
     const navRecent = document.getElementById('nav-recent');
+    const navSharedLinks = document.getElementById('nav-shared-links');
     const navSyncActivity = document.getElementById('nav-sync-activity');
     const navTrash = document.getElementById('nav-trash');
     const newBtn = document.getElementById('new-button');
 
-    const allNavs = [navMyDrive, navRecent, navSyncActivity, navTrash];
+    const allNavs = [navMyDrive, navRecent, navSharedLinks, navSyncActivity, navTrash];
     allNavs.forEach(n => {
         if (n) n.className = 'gd-nav-item unselected-item';
     });
 
-    if (isSync) {
+    if (isSharedLinks) {
+        if (navSharedLinks) navSharedLinks.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'inline-flex';
+    } else if (isSync) {
         if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';
         if (newBtn) newBtn.style.display = 'inline-flex';
     } else if (isTrash) {
@@ -206,39 +211,46 @@ function getRootUrl() {
     return rootUrl;
 }
 
-function copyTextToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function () {
-            alert('Link copied to clipboard!');
-        }).catch(function (err) {
-            console.error('Could not copy text: ', err);
-            fallbackCopyTextToClipboard(text);
-        });
-    } else {
-        fallbackCopyTextToClipboard(text);
+async function copyTextToClipboard(text) {
+    if (!text) return false;
+    if (navigator.clipboard && window.isSecureContext && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (err) {
+            console.warn('Navigator clipboard failed, using fallback:', err);
+        }
     }
+    return fallbackCopyTextToClipboard(text);
 }
 
 function fallbackCopyTextToClipboard(text) {
-    const textArea = document.createElement('textarea');
-    textArea.value = text;
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-
+    let successful = false;
     try {
-        const successful = document.execCommand('copy');
-        if (successful) {
-            alert('Link copied to clipboard!');
-        } else {
-            alert('Failed to copy the link.');
-        }
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.top = '0';
+        textArea.style.left = '0';
+        textArea.style.width = '2em';
+        textArea.style.height = '2em';
+        textArea.style.padding = '0';
+        textArea.style.border = 'none';
+        textArea.style.outline = 'none';
+        textArea.style.boxShadow = 'none';
+        textArea.style.background = 'transparent';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
     } catch (err) {
-        console.error('Fallback: Oops, unable to copy', err);
+        console.error('Fallback clipboard copy failed:', err);
+        successful = false;
     }
-
-    document.body.removeChild(textArea);
+    return successful;
 }
+
 
 function getRandomId() {
     const length = 6;

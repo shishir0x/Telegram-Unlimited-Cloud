@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Toggle Nav Menu selection via SPA routing
     const navMyDrive = document.getElementById('nav-my-drive');
     const navRecent = document.getElementById('nav-recent');
+    const navSharedLinks = document.getElementById('nav-shared-links');
     const navTrash = document.getElementById('nav-trash');
 
     updateSidebarNavSelection(currentPath);
@@ -36,6 +37,17 @@ document.addEventListener('DOMContentLoaded', () => {
         navRecent.addEventListener('click', (e) => {
             e.preventDefault();
             navigateToPath('/recent');
+        });
+    }
+
+    if (navSharedLinks) {
+        navSharedLinks.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (typeof window.showSharedLinksView === 'function') {
+                window.showSharedLinksView();
+            } else {
+                navigateToPath('/shared_links');
+            }
         });
     }
 

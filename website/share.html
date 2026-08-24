@@ -53,6 +53,24 @@
     <p class="muted">The shared item no longer exists on the drive.</p>
   </section>
 
+  <!-- Rate Limited -->
+  <section id="st-rate-limited" class="st-card hidden">
+    <div class="st-icon warn">
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+    </div>
+    <h1>Too many attempts</h1>
+    <p class="muted">Rate limit reached. Please wait a minute and try again.</p>
+  </section>
+
+  <!-- Server Error -->
+  <section id="st-error" class="st-card hidden">
+    <div class="st-icon err">
+      <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+    </div>
+    <h1>Unable to load share</h1>
+    <p class="muted">A server error occurred while retrieving this item. Please try again later.</p>
+  </section>
+
   <!-- Password gate -->
   <section id="st-locked" class="st-card hidden">
     <div class="st-icon lock">
@@ -74,10 +92,18 @@
         <svg viewBox="0 0 24 24"><path d="M18 16.08a2.91 2.91 0 0 0-1.96.77L8.91 12.7a3.27 3.27 0 0 0 0-1.4l7.05-4.11A3 3 0 1 0 15 5a3.27 3.27 0 0 0 .05.7L8 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.82 2.82 0 0 0-.08.65A2.92 2.92 0 1 0 18 16.08z"/></svg>
         <span>TG Drive Share</span>
       </div>
-      <span id="expiry-chip" class="expiry-chip hidden"></span>
+      <div class="topbar-actions">
+        <span id="expiry-chip" class="expiry-chip hidden"></span>
+      </div>
     </header>
 
-    <nav id="crumbs" class="crumbs hidden" aria-label="Breadcrumb"></nav>
+    <div class="folder-header-bar">
+      <nav id="crumbs" class="crumbs hidden" aria-label="Breadcrumb"></nav>
+      <button id="btn-download-folder-zip" class="btn small hidden">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        <span>Download Folder (ZIP)</span>
+      </button>
+    </div>
 
     <!-- File card -->
     <article id="file-card" class="card hidden">

@@ -125,7 +125,7 @@ def main():
     # ── expiry flow ────────────────────────────────────────────────────
     rec = shareManager.create_share(str(folder.id), "folder", "ExpiredTest", expires_at=time.time() - 5)
     r = client.post("/api/share/meta", json={"token": rec["token"]})
-    check("expired link -> error expired", r.status_code == 404 and r.json()["error"] == "expired")
+    check("expired link -> 410 error expired", r.status_code == 410 and r.json()["error"] == "expired")
 
     # ── revoke & regenerate ────────────────────────────────────────────
     r = client.post("/api/share/create", json={"target": f"/{folder.id}"})
@@ -134,14 +134,20 @@ def main():
     new_tok = r.json()["share"]["token"]
     check("regenerate issues new token", r.status_code == 200 and new_tok != rtok)
     r = client.post("/api/share/meta", json={"token": rtok})
-    check("old token dead after regenerate (revoked)", r.status_code == 404 and r.json()["error"] == "revoked")
+    check("old token dead after regenerate (410 revoked)", r.status_code == 410 and r.json()["error"] == "revoked")
     r = client.post("/api/share/meta", json={"token": new_tok})
     check("new token live after regenerate", r.status_code == 200)
 
     r = client.post("/api/share/revoke", json={"token": new_tok})
     check("revoke ok", r.status_code == 200)
     r = client.post("/api/share/meta", json={"token": new_tok})
-    check("revoked -> error revoked", r.status_code == 404 and r.json()["error"] == "revoked")
+    check("revoked -> 410 error revoked", r.status_code == 410 and r.json()["error"] == "revoked")
+
+    # ── trailing slash and zip routes ─────────────────────────────────
+    r_slash = client.get(f"/s/{tok}/")
+    check("GET /s/<token>/ trailing slash works", r_slash.status_code == 200 and b"share-app" in r_slash.content)
+    r_zip = client.get(f"/share/{tok}/zip")
+    check("GET /share/<token>/zip creates zip (or 200)", r_zip.status_code in (200, 302))
 
     # ── admin list & authz ─────────────────────────────────────────────
     r = client.post("/api/share/list", json={})
