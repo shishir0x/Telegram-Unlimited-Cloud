@@ -274,6 +274,18 @@ def rate_limit_public_media(request: Request, category: str, limit: int, window_
     _check_rate_limit(category, ip, limit, window_seconds)
 
 
+def rate_limit_strict(request: Request, category: str, limit: int, window_seconds: int = 60) -> None:
+    """
+    Spoof-resistant rate limiter for security-sensitive public endpoints
+    (e.g. share password unlocks). Buckets on the raw socket peer address
+    COMBINED with any proxy-supplied IP, so clients rotating X-Forwarded-For /
+    X-Real-IP headers cannot keep resetting their own bucket.
+    """
+    socket_ip = request.client.host if request.client else "unknown"
+    identity = f"{socket_ip}|{get_client_ip(request)}"
+    _check_rate_limit(category, identity, limit, window_seconds)
+
+
 # ---------------------------------------------------------------------------
 # OTP management
 # ---------------------------------------------------------------------------

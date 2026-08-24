@@ -24,6 +24,9 @@ from utils.auth import (
     rate_limit_login,
     rate_limit_otp_request,
     rate_limit_otp_verify,
+    rate_limit_public_media,
+    rate_limit_strict,
+    is_secure_cookie,
     start_cleanup_task,
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
@@ -228,7 +231,7 @@ async def dl_file(request: Request):
             raise HTTPException(status_code=401, detail="Unauthorized access to file")
 
     try:
-        file = drive.get_file(clean_path)
+        file = drive.get_file(clean_path, is_admin=is_admin)
         return await media_streamer(STORAGE_CHANNEL, file.file_id, file.name, request)
     except Exception as e:
         logger.error(f"Error streaming file '{path}': {e}")
@@ -523,7 +526,7 @@ async def get_thumbnail(request: Request):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        file = drive.get_file(clean_path)
+        file = drive.get_file(clean_path, is_admin=is_admin)
         if not file or not file.file_id:
             raise HTTPException(status_code=404, detail="File not found")
     except Exception:
@@ -803,6 +806,19 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
     return JSONResponse({"status": "ok"})
 
 
+def _strip_internal_ids(node):
+    """Recursively remove Telegram-internal message IDs and other internal
+    metadata from serialized drive data before serving it to non-admin visitors."""
+    if isinstance(node, dict):
+        for key in ("file_id", "auth_hashes", "device", "display_path", "human_path"):
+            node.pop(key, None)
+        for v in node.values():
+            _strip_internal_ids(v)
+    elif isinstance(node, list):
+        for v in node:
+            _strip_internal_ids(v)
+
+
 @app.post("/api/getDirectory")
 async def api_get_directory(request: Request):
     from utils.directoryHandler import ensure_drive_data
@@ -864,6 +880,10 @@ async def api_get_directory(request: Request):
             folder_data, auth_home_path = res, None
         auth_home_path = auth_home_path.replace("//", "/") if auth_home_path else None
         folder_data = convert_class_to_dict(folder_data, isObject=True, showtrash=False)
+        if not is_admin:
+            _strip_internal_ids(folder_data)
+            # Never reveal drive structure above the shared scope
+            breadcrumbs = []
         return JSONResponse(
             {"status": "ok", "data": folder_data, "breadcrumbs": breadcrumbs, "auth_home_path": auth_home_path}
         )
@@ -1394,6 +1414,328 @@ async def getFolderShareAuth(request: Request, _auth: Session = Depends(require_
         return JSONResponse({"status": "ok", "auth": auth})
     except Exception:
         return JSONResponse({"status": "not found"})
+
+
+# ==========================================
+# Secure Share System (files & folders)
+# ==========================================
+
+SHARE_UNLOCK_COOKIE = "shu"
+
+
+def _share_unlock_cookie_name(token: str) -> str:
+    return f"{SHARE_UNLOCK_COOKIE}_{token[:12]}"
+
+
+def _share_base_url(request: Request) -> str:
+    host = request.headers.get("host") or request.url.netloc
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return f"{scheme}://{host}"
+
+
+def _validate_or_none(token: str):
+    from utils import shareManager
+    return shareManager.validate_share(token)
+
+
+@app.post("/api/share/create")
+async def api_share_create(request: Request, _auth: Session = Depends(require_auth)):
+    """Create a secure share link for a file or folder (admin only)."""
+    from utils import shareManager
+    from utils.auth import hash_password
+    from utils.directoryHandler import ensure_drive_data
+
+    data = await request.json()
+    target_id_path = sanitize_path(str(data.get("target", ""))).strip("/")
+    if not target_id_path:
+        return JSONResponse({"status": "error", "error": "invalid_target"}, status_code=400)
+
+    drive = ensure_drive_data()
+    parts = [p for p in target_id_path.split("/") if p]
+    node, parent = drive.contents.get("/"), None
+    for seg in parts:
+        nxt = getattr(node, "contents", {}).get(seg)
+        if nxt is None or getattr(nxt, "trash", False):
+            return JSONResponse({"status": "error", "error": "target_not_found"}, status_code=404)
+        parent, node = node, nxt
+
+    item_type = getattr(node, "type", "")
+    if item_type not in ("file", "folder"):
+        return JSONResponse({"status": "error", "error": "unsupported_target"}, status_code=400)
+
+    # Expiry
+    expires_at = None
+    hours = data.get("expires_in_hours")
+    if hours not in (None, "", 0, "0"):
+        try:
+            h = float(hours)
+            if h <= 0 or h > 87600:  # cap at 10 years
+                raise ValueError
+            expires_at = time.time() + h * 3600
+        except (ValueError, TypeError):
+            return JSONResponse({"status": "error", "error": "invalid_expiry"}, status_code=400)
+
+    # Optional password (stored as PBKDF2 hash — never plaintext)
+    password_hash = None
+    raw_pwd = str(data.get("password") or "").strip()
+    if raw_pwd:
+        if len(raw_pwd) < 6 or len(raw_pwd) > 128:
+            return JSONResponse({"status": "error", "error": "invalid_password"}, status_code=400)
+        password_hash = hash_password(raw_pwd)
+
+    rec = shareManager.create_share(
+        target_id_path="/".join(parts),
+        item_type=item_type,
+        name=getattr(node, "name", parts[-1]),
+        expires_at=expires_at,
+        password_hash=password_hash,
+        allow_download=bool(data.get("allow_download", True)),
+        allow_preview=bool(data.get("allow_preview", True)),
+    )
+
+    url = f"{_share_base_url(request)}/s/{rec['token']}"
+    logger.info(f"Share created type={item_type} name={rec['name']} expiry={expires_at}")
+    return JSONResponse({"status": "ok", "url": url, "share": shareManager.public_record(rec, include_token=True)})
+
+
+@app.post("/api/share/revoke")
+async def api_share_revoke(request: Request, _auth: Session = Depends(require_auth)):
+    """Permanently revoke a share link."""
+    from utils import shareManager
+    data = await request.json()
+    token = str(data.get("token", "")).strip()
+    if not token:
+        return JSONResponse({"status": "error", "error": "missing_token"}, status_code=400)
+    ok = shareManager.revoke_share(token)
+    if not ok:
+        return JSONResponse({"status": "error", "error": "not_found"}, status_code=404)
+    resp = JSONResponse({"status": "ok"})
+    resp.delete_cookie(_share_unlock_cookie_name(token), path="/")
+    return resp
+
+
+@app.post("/api/share/regenerate")
+async def api_share_regenerate(request: Request, _auth: Session = Depends(require_auth)):
+    """Rotate a share onto a brand-new unguessable token; the old link dies instantly."""
+    from utils import shareManager
+    data = await request.json()
+    token = str(data.get("token", "")).strip()
+    rec = shareManager.regenerate_share(token)
+    if not rec:
+        return JSONResponse({"status": "error", "error": "not_found"}, status_code=404)
+    resp = JSONResponse({
+        "status": "ok",
+        "url": f"{_share_base_url(request)}/s/{rec['token']}",
+        "share": shareManager.public_record(rec, include_token=True),
+    })
+    resp.delete_cookie(_share_unlock_cookie_name(token), path="/")
+    return resp
+
+
+@app.post("/api/share/list")
+async def api_share_list(request: Request, _auth: Session = Depends(require_auth)):
+    """List every active share (admin manage panel)."""
+    from utils import shareManager
+    return JSONResponse({"status": "ok", "shares": shareManager.list_shares()})
+
+
+@app.get("/s/{token}")
+async def shared_item_page(token: str):
+    """Dedicated public page for a shared file or folder."""
+    return FileResponse("website/share.html")
+
+
+def _share_state_payload(rec: dict, rel: str = ""):
+    """Build the public payload for an unlocked share. No Telegram IDs are included."""
+    from utils import shareManager
+    if rec.get("type") == "folder":
+        node, parent = shareManager.resolve_within_scope(rec, rel)
+        if node is None or getattr(node, "type", "") != "folder":
+            return None
+        children = shareManager.list_folder_children(node, rel) if rel else shareManager.list_folder_children(node, "")
+        crumbs = shareManager.build_breadcrumbs(rec, rel)
+        return {
+            "type": "folder",
+            "name": getattr(node, "name", rec.get("name")),
+            "rel": rel,
+            "children": children,
+            "breadcrumbs": crumbs,
+            "allow_download": bool(rec.get("allow_download")),
+            "allow_preview": bool(rec.get("allow_preview")),
+            "expires_at": rec.get("expires_at"),
+        }
+    else:
+        node, parent = shareManager.resolve_scope_root(rec)
+        if node is None or getattr(node, "type", "") != "file":
+            return None
+        name = getattr(node, "name", rec.get("name"))
+        return {
+            "type": "file",
+            "name": name,
+            "size": int(getattr(node, "size", 0) or 0),
+            "date": getattr(node, "upload_date", ""),
+            "preview_kind": shareManager.preview_kind(name),
+            "mime": shareManager.guess_mime(name),
+            "allow_download": bool(rec.get("allow_download")),
+            "allow_preview": bool(rec.get("allow_preview")),
+            "expires_at": rec.get("expires_at"),
+        }
+
+
+@app.post("/api/share/meta")
+async def api_share_meta(request: Request):
+    """Public metadata for a share token. Handles locked / invalid / revoked / expired states."""
+    from utils import shareManager
+    rate_limit_public_media(request, "share_meta", 120, 60)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    token = str(data.get("token", "")).strip()
+    rel = str(data.get("rel", ""))
+
+    rec, err = _validate_or_none(token)
+    if err:
+        return JSONResponse({"status": "error", "error": err}, status_code=404)
+
+    # Reject unsafe relative paths outright (fail closed, never fall back to root)
+    if rel and not shareManager.sanitize_rel(rel):
+        return JSONResponse({"status": "error", "error": "gone"}, status_code=404)
+
+    if rec.get("password_hash"):
+        cookie_val = request.cookies.get(_share_unlock_cookie_name(token))
+        if not shareManager.verify_unlock_cookie(token, cookie_val):
+            return JSONResponse({
+                "status": "locked",
+                "type": rec.get("type"),
+                "has_password": True,
+                "expires_at": rec.get("expires_at"),
+            })
+
+    payload = _share_state_payload(rec, rel)
+    if payload is None:
+        return JSONResponse({"status": "error", "error": "gone"}, status_code=404)
+    payload["status"] = "ok"
+    shareManager.touch_access(rec)
+    return JSONResponse(payload)
+
+
+@app.post("/api/share/unlock")
+async def api_share_unlock(request: Request):
+    """Verify the password for a protected share and set a signed unlock cookie."""
+    from utils import shareManager
+    from utils.auth import verify_password
+    # Spoof-resistant limiter: header rotation cannot reset the brute-force bucket
+    rate_limit_strict(request, "share_unlock", 10, 60)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    token = str(data.get("token", "")).strip()
+    password = str(data.get("password", ""))
+
+    rec, err = _validate_or_none(token)
+    if err:
+        return JSONResponse({"status": "error", "error": err}, status_code=404)
+    if not rec.get("password_hash"):
+        return JSONResponse({"status": "ok"})
+
+    if not verify_password(password, rec["password_hash"]):
+        return JSONResponse({"status": "error", "error": "bad_password"}, status_code=401)
+
+    resp = JSONResponse({"status": "ok"})
+    cookie_value = shareManager.make_unlock_cookie_value(token)
+    if cookie_value:
+        resp.set_cookie(
+            _share_unlock_cookie_name(token),
+            cookie_value,
+            max_age=shareManager.UNLOCK_COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=is_secure_cookie(request),
+            path="/",
+        )
+    logger.info(f"Share unlocked: {rec.get('name')}")
+    return resp
+
+
+@app.get("/share/{token}/file")
+@app.get("/share/{token}/file/{rel:path}")
+async def share_file_stream(request: Request, token: str, rel: str = ""):
+    """Stream a shared file inline (preview) or as attachment (download).
+    The Telegram message ID stays entirely server-side."""
+    from utils import shareManager
+    rate_limit_public_media(request, "share_file", 120, 60)
+
+    rec, err = _validate_or_none(token)
+    if err:
+        raise HTTPException(status_code=404, detail=f"Link {err}")
+    if rec.get("password_hash"):
+        cookie_val = request.cookies.get(_share_unlock_cookie_name(token))
+        if not shareManager.verify_unlock_cookie(token, cookie_val):
+            raise HTTPException(status_code=401, detail="Password required")
+
+    wants_download = request.query_params.get("dl") in ("1", "true", "yes")
+    if wants_download and not rec.get("allow_download"):
+        raise HTTPException(status_code=403, detail="Download unavailable")
+    if not wants_download and not rec.get("allow_preview"):
+        raise HTTPException(status_code=403, detail="Preview unavailable")
+
+    node, _parent = shareManager.resolve_within_scope(rec, rel)
+    if node is None or getattr(node, "type", "") != "file" or getattr(node, "trash", False):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_id = getattr(node, "file_id", None)
+    if not file_id:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    name = getattr(node, "name", "file")
+    response = await media_streamer(STORAGE_CHANNEL, file_id, name, request)
+    disposition = "attachment" if wants_download else "inline"
+    # Never render active content (SVG/HTML/XML/JS) same-origin from shares —
+    # force download so stored markup can never execute on the app origin.
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext in ("svg", "html", "htm", "xhtml", "xml", "js"):
+        disposition = "attachment"
+        response.headers["Content-Type"] = "application/octet-stream"
+    quoted = urllib.parse.quote(name)
+    response.headers["Content-Disposition"] = f"{disposition}; filename*=utf-8''{quoted}; filename=\"{quoted}\""
+    shareManager.touch_access(rec)
+    return response
+
+
+@app.get("/share/{token}/thumb")
+@app.get("/share/{token}/thumb/{rel:path}")
+async def share_file_thumb(request: Request, token: str, rel: str = ""):
+    """Thumbnail for shared items (preview permission required)."""
+    from utils import shareManager
+    rate_limit_public_media(request, "share_thumb", 600, 60)
+
+    rec, err = _validate_or_none(token)
+    if err:
+        raise HTTPException(status_code=404, detail=f"Link {err}")
+    if rec.get("password_hash"):
+        cookie_val = request.cookies.get(_share_unlock_cookie_name(token))
+        if not shareManager.verify_unlock_cookie(token, cookie_val):
+            raise HTTPException(status_code=401, detail="Password required")
+    if not rec.get("allow_preview"):
+        raise HTTPException(status_code=403, detail="Preview unavailable")
+
+    node, _parent = shareManager.resolve_within_scope(rec, rel)
+    if node is None or getattr(node, "type", "") != "file" or getattr(node, "trash", False):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    thumb_data = await THUMB_SERVICE.get_or_fetch(getattr(node, "file_id", 0), getattr(node, "name", ""))
+    if not thumb_data:
+        raise HTTPException(status_code=404, detail="No thumbnail")
+
+    return Response(
+        content=thumb_data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 # ==========================================

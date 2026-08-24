@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Shared File</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/static/assets/link-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/css/share.css?v=1.0">
+</head>
+<body>
+<main id="share-app" class="share-app">
+
+  <!-- Loading -->
+  <section id="st-loading" class="st-card hidden">
+    <div class="spinner"></div>
+    <p class="muted">Loading shared item…</p>
+  </section>
+
+  <!-- Invalid -->
+  <section id="st-invalid" class="st-card hidden">
+    <div class="st-icon err">
+      <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+    </div>
+    <h1>Link not found</h1>
+    <p class="muted">This share link doesn't exist or was mistyped.<br>Ask the sender for a fresh link.</p>
+  </section>
+
+  <!-- Revoked -->
+  <section id="st-revoked" class="st-card hidden">
+    <div class="st-icon err">
+      <svg viewBox="0 0 24 24"><path d="M17.7 3a.996.996 0 0 0 0 1.41L18.59 6l-8.3 8.29-3.29-3.3a.996.996 0 1 0-1.41 1.41l4 4c.39.39 1.02.39 1.41 0l9-9a.996.996 0 0 0 0-1.41L19.11 3a.996.996 0 0 0-1.41 0zM3.01 21H21v-6h-8.66l-2.34 2.34L7.66 15H3v6h.01z"/></svg>
+    </div>
+    <h1>Link revoked</h1>
+    <p class="muted">The owner has revoked access to this item.</p>
+  </section>
+
+  <!-- Expired -->
+  <section id="st-expired" class="st-card hidden">
+    <div class="st-icon warn">
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7z"/></svg>
+    </div>
+    <h1>Link expired</h1>
+    <p class="muted">This share link has passed its expiration date and is no longer available.</p>
+  </section>
+
+  <!-- Gone (target deleted) -->
+  <section id="st-gone" class="st-card hidden">
+    <div class="st-icon warn">
+      <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+    </div>
+    <h1>Content unavailable</h1>
+    <p class="muted">The shared item no longer exists on the drive.</p>
+  </section>
+
+  <!-- Password gate -->
+  <section id="st-locked" class="st-card hidden">
+    <div class="st-icon lock">
+      <svg viewBox="0 0 24 24"><path d="M18 8h-1V6a5 5 0 0 0-10 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM9 6a3 3 0 0 1 6 0v2H9V6zm3 12a2 2 0 1 1 2-2 2 2 0 0 1-2 2z"/></svg>
+    </div>
+    <h1>Password required</h1>
+    <p class="muted">Enter the password the owner gave you to open this share.</p>
+    <form id="unlock-form" autocomplete="off">
+      <input type="password" id="unlock-pwd" placeholder="Password" maxlength="128" autofocus>
+      <button type="submit" id="unlock-btn" class="btn primary">Unlock</button>
+    </form>
+    <p id="unlock-error" class="err-msg hidden">Incorrect password. Please try again.</p>
+  </section>
+
+  <!-- Main content -->
+  <section id="st-main" class="hidden">
+    <header class="topbar">
+      <div class="brand" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M18 16.08a2.91 2.91 0 0 0-1.96.77L8.91 12.7a3.27 3.27 0 0 0 0-1.4l7.05-4.11A3 3 0 1 0 15 5a3.27 3.27 0 0 0 .05.7L8 9.81A3 3 0 1 0 8 14.19l7.12 4.16a2.82 2.82 0 0 0-.08.65A2.92 2.92 0 1 0 18 16.08z"/></svg>
+        <span>TG Drive Share</span>
+      </div>
+      <span id="expiry-chip" class="expiry-chip hidden"></span>
+    </header>
+
+    <nav id="crumbs" class="crumbs hidden" aria-label="Breadcrumb"></nav>
+
+    <!-- File card -->
+    <article id="file-card" class="card hidden">
+      <div id="file-preview-area" class="preview-area"></div>
+      <div class="file-meta-row">
+        <img id="file-icon" alt="" aria-hidden="true">
+        <div class="file-text">
+          <h2 id="file-name"></h2>
+          <p class="muted"><span id="file-size"></span><span id="file-date"></span></p>
+          <p id="perm-note" class="perm-note hidden"></p>
+        </div>
+        <button id="btn-download" class="btn primary">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          <span>Download</span>
+        </button>
+      </div>
+    </article>
+
+    <!-- Folder listing -->
+    <article id="folder-view" class="hidden">
+      <ul id="listing" class="listing"></ul>
+      <p id="empty-folder" class="muted center hidden">This folder is empty.</p>
+    </article>
+
+    <!-- Preview overlay -->
+    <div id="pv-overlay" class="pv-overlay hidden" role="dialog" aria-modal="true">
+      <div class="pv-bar">
+        <span id="pv-title" class="pv-title"></span>
+        <div class="pv-actions">
+          <a id="pv-download" class="btn small" download>
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Download
+          </a>
+          <button id="pv-close" class="btn small" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div id="pv-body" class="pv-body"></div>
+    </div>
+  </section>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
+</main>
+<script src="/static/js/share.js?v=1.0"></script>
+</body>
+</html>

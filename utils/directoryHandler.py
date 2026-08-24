@@ -397,7 +397,7 @@ class NewDriveData:
         logger.info(f"Authorization hash generated for path '{clean}'.")
         return auth
 
-    def get_file(self, path: str) -> File:
+    def get_file(self, path: str, is_admin: bool = True) -> File:
         clean = (path or "").replace("/share_", "").replace("share_", "").strip("/")
         if "/" in clean:
             folder_path = "/" + "/".join(clean.split("/")[:-1])
@@ -417,7 +417,12 @@ class NewDriveData:
                     if getattr(item, "type", "") == "file" and getattr(item, "name", "") == file_id_or_name:
                         return item
 
-        # Recursive fallback search by file_id or name
+        # Recursive fallback search by file_id or name.
+        # SECURITY: skipped for non-admin (share-visitor) requests — otherwise a
+        # valid token for folder A could fetch ANY same-named file drive-wide.
+        if not is_admin:
+            raise KeyError(f"File not found: {path}")
+
         def find_file(folder):
             if hasattr(folder, "contents"):
                 if file_id_or_name in folder.contents and getattr(folder.contents[file_id_or_name], "type", None) == "file":

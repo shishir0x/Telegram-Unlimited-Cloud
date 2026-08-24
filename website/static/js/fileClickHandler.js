@@ -561,41 +561,139 @@ async function deleteFileFolder() {
 }
 
 async function shareFile() {
-    const fileName = (this.parentElement.getAttribute('data-name') || '').toLowerCase();
     const id = this.getAttribute('id').split('-')[1];
     const moreDiv = document.getElementById(`more-option-${id}`);
-    const filePath = ((moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id).replaceAll('//', '/');
-    let auth = getFolderAuthFromPath();
-
-    if (!auth) {
-        const parentFolderPath = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) || '/';
-        auth = await getFolderShareAuth(parentFolderPath);
-    }
-
-    const isMedia = fileName.endsWith('.mp4') || fileName.endsWith('.mkv') || fileName.endsWith('.webm') || fileName.endsWith('.mov') || fileName.endsWith('.avi') || fileName.endsWith('.ts') || fileName.endsWith('.ogv');
-    let link = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath, isMedia) : `${getRootUrl()}/file?path=${encodeURIComponent(filePath)}`;
-    if (auth && !link.includes('auth=')) {
-        link += (link.includes('?') ? '&' : '?') + `auth=${encodeURIComponent(auth)}`;
-    }
-
-    copyTextToClipboard(link);
-    showToast('File share link copied to clipboard! 📋');
+    const parentPath = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) || '/';
+    const name = (this.parentElement && this.parentElement.getAttribute)
+        ? (this.parentElement.getAttribute('data-name') || '') : '';
+    openShareModal({ type: 'file', id, parentPath, name });
 }
 
 async function shareFolder() {
     const id = this.getAttribute('id').split('-')[2];
     const moreDiv = document.getElementById(`more-option-${id}`);
-    let path = ((moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) + '/' + id).replaceAll('//', '/');
-    const root_url = getRootUrl();
-
-    const auth = await getFolderShareAuth(path);
-    if (!auth) return;
-    path = path.replace(/^\/+/, '');
-
-    let link = `${root_url}/?path=/share_${path}&auth=${auth}`;
-    copyTextToClipboard(link);
-    showToast('Folder share link copied to clipboard! 📋');
+    const parentPath = (moreDiv ? moreDiv.getAttribute('data-path') : getCurrentPath()) || '/';
+    openShareModal({ type: 'folder', id, parentPath, name: '' });
 }
+
+// =========================================================
+// Secure Share Modal Controller
+// =========================================================
+let SHARE_STATE = { token: null, target: null };
+
+function openShareModal(opts) {
+    const modal = document.getElementById('share-modal');
+    if (!modal) return;
+    SHARE_STATE = { token: null, target: `${(opts.parentPath || '/')}/${opts.id}`.replaceAll('//', '/') };
+
+    document.getElementById('share-item-name').textContent =
+        opts.name || SHARE_STATE.target.split('/').filter(Boolean).pop() || 'Item';
+
+    // Reset to creation view
+    document.getElementById('share-options').style.display = '';
+    document.getElementById('share-result').style.display = 'none';
+    document.getElementById('share-create-btn').style.display = '';
+    document.getElementById('share-password').value = '';
+    document.getElementById('share-expiry').value = '168';
+    document.getElementById('share-allow-download').checked = true;
+    document.getElementById('share-allow-preview').checked = true;
+    document.getElementById('share-error').textContent = '';
+
+    modal.style.zIndex = '101';
+    modal.style.opacity = '1';
+}
+
+function closeShareModal() {
+    const modal = document.getElementById('share-modal');
+    if (!modal) return;
+    modal.style.opacity = '0';
+    modal.style.zIndex = '-1';
+}
+
+async function createShareLink() {
+    const errEl = document.getElementById('share-error');
+    errEl.textContent = '';
+    const pwd = document.getElementById('share-password').value.trim();
+    if (pwd && pwd.length < 6) {
+        errEl.textContent = 'Password must be at least 6 characters.';
+        return;
+    }
+    const hoursVal = document.getElementById('share-expiry').value;
+    const body = {
+        target: SHARE_STATE.target,
+        expires_in_hours: hoursVal === '' ? null : Number(hoursVal),
+        password: pwd,
+        allow_download: document.getElementById('share-allow-download').checked,
+        allow_preview: document.getElementById('share-allow-preview').checked,
+    };
+    const json = await postJson('/api/share/create', body);
+    if (json.status !== 'ok') {
+        errEl.textContent = json.error === 'invalid_password' ? 'Password must be 6-128 characters.'
+            : json.error === 'invalid_expiry' ? 'Invalid expiry selected.'
+            : 'Could not create the link. Is the item still there?';
+        return;
+    }
+    SHARE_STATE.token = json.share.token;
+    document.getElementById('share-link-input').value = json.url;
+    document.getElementById('share-meta-line').textContent = describeShare(json.share);
+    document.getElementById('share-options').style.display = 'none';
+    document.getElementById('share-create-btn').style.display = 'none';
+    document.getElementById('share-result').style.display = '';
+    showToast('Secure link created 🔗');
+}
+
+function describeShare(s) {
+    const bits = [];
+    bits.push(s.type === 'folder' ? 'Folder link' : 'File link');
+    if (s.has_password) bits.push('password protected');
+    if (s.expires_at) bits.push(`expires ${new Date(s.expires_at * 1000).toLocaleString()}`);
+    else bits.push('never expires');
+    if (!s.allow_download) bits.push('preview only');
+    else if (!s.allow_preview) bits.push('download only');
+    return bits.join(' • ');
+}
+
+async function copyShareLink() {
+    const input = document.getElementById('share-link-input');
+    copyTextToClipboard(input.value);
+    showToast('Link copied to clipboard! 📋');
+}
+
+async function regenerateShareLink() {
+    if (!SHARE_STATE.token) return;
+    const json = await postJson('/api/share/regenerate', { token: SHARE_STATE.token });
+    if (json.status !== 'ok') {
+        showToast('Could not regenerate link', true);
+        return;
+    }
+    SHARE_STATE.token = json.share.token;
+    document.getElementById('share-link-input').value = json.url;
+    document.getElementById('share-meta-line').textContent = describeShare(json.share);
+    showToast('New link generated — previous link is now dead 🔄');
+}
+
+async function revokeShareLink() {
+    if (!SHARE_STATE.token) return;
+    const json = await postJson('/api/share/revoke', { token: SHARE_STATE.token });
+    if (json.status !== 'ok') {
+        showToast('Could not revoke link', true);
+        return;
+    }
+    showToast('Link revoked — access removed 🚫');
+    closeShareModal();
+}
+
+(function wireShareModal() {
+    const on = (id, fn) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', fn);
+    };
+    on('share-create-btn', createShareLink);
+    on('share-copy-btn', copyShareLink);
+    on('share-regenerate-btn', regenerateShareLink);
+    on('share-revoke-btn', revokeShareLink);
+    on('share-done-btn', closeShareModal);
+})();
 
 // =========================================================
 // Move Item Modal Controller
