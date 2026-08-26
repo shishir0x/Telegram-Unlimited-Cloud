@@ -1625,7 +1625,7 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                             _BACKUP_AUTHOR_CLIENT_ID = cid
                             break
 
-                    # Fallback: check pinned message in storage channel if configured ID is missing or empty
+                    # Fallback 1: check pinned message in storage channel
                     if not msg:
                         try:
                             chat = await candidate_client.get_chat(config.STORAGE_CHANNEL)
@@ -1635,6 +1635,21 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                                     config.DATABASE_BACKUP_MSG_ID = chat.pinned_message.id
                                 _BACKUP_AUTHOR_CLIENT_ID = cid
                                 break
+                        except Exception:
+                            pass
+
+                    # Fallback 2: scan recent messages in storage channel for backup document
+                    if not msg:
+                        try:
+                            async for hist_msg in candidate_client.get_chat_history(config.STORAGE_CHANNEL, limit=20):
+                                if hist_msg and hist_msg.document and (
+                                    hist_msg.document.file_name == "drive.data" or
+                                    (hist_msg.caption and "TG Drive Data Backup File" in hist_msg.caption)
+                                ):
+                                    msg = hist_msg
+                                    config.DATABASE_BACKUP_MSG_ID = hist_msg.id
+                                    _BACKUP_AUTHOR_CLIENT_ID = cid
+                                    break
                         except Exception:
                             pass
                 except Exception:
@@ -1703,6 +1718,28 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
             return False
 
 
+def _persist_backup_msg_id(msg_id: int):
+    """Safely updates DATABASE_BACKUP_MSG_ID in .env file if it exists."""
+    env_file = Path(".env")
+    if not env_file.is_file():
+        return
+    try:
+        content = env_file.read_text(encoding="utf-8")
+        if "DATABASE_BACKUP_MSG_ID=" in content:
+            new_lines = []
+            for line in content.splitlines():
+                if line.strip().startswith("DATABASE_BACKUP_MSG_ID="):
+                    new_lines.append(f"DATABASE_BACKUP_MSG_ID={msg_id}")
+                else:
+                    new_lines.append(line)
+            env_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        else:
+            with open(env_file, "a", encoding="utf-8") as f:
+                f.write(f"\nDATABASE_BACKUP_MSG_ID={msg_id}\n")
+    except Exception as e:
+        logger.debug(f"Could not persist DATABASE_BACKUP_MSG_ID to .env: {e}")
+
+
 async def auto_sync_telegram_loop():
     """Periodic background task that checks Telegram for remote metadata updates every 15 seconds."""
     logger.info("Starting Telegram metadata auto-sync loop (15s interval).")
@@ -1726,8 +1763,8 @@ async def _execute_backup() -> bool:
     if not drive or not getattr(drive, "isUpdated", False):
         return False
 
-    if not config.STORAGE_CHANNEL or not config.DATABASE_BACKUP_MSG_ID:
-        logger.warning("Telegram backup skipped: STORAGE_CHANNEL or DATABASE_BACKUP_MSG_ID not configured.")
+    if not config.STORAGE_CHANNEL:
+        logger.warning("Telegram backup skipped: STORAGE_CHANNEL not configured.")
         return False
 
     logger.info("Backing up drive data to Telegram.")
@@ -1756,37 +1793,62 @@ async def _execute_backup() -> bool:
     msg = None
     last_author_err = None
 
-    for cid, candidate_client in client_candidates:
-        try:
-            msg = await candidate_client.edit_message_media(
-                config.STORAGE_CHANNEL,
-                config.DATABASE_BACKUP_MSG_ID,
-                media=media_doc,
-            )
-            _BACKUP_AUTHOR_CLIENT_ID = cid
-            break
-        except FloodWait as fw:
-            wait_time = fw.value + 1
-            logger.warning(f"Backup FloodWait: sleeping {wait_time}s before next candidate.")
-            # Share the cooldown with all other Telegram senders (uploads, etc.)
+    # Step 1: If DATABASE_BACKUP_MSG_ID is known, try editing existing message
+    if config.DATABASE_BACKUP_MSG_ID:
+        for cid, candidate_client in client_candidates:
             try:
-                from utils import tg_gate
-                tg_gate.note_flood(cid, float(fw.value))
-            except Exception:
-                pass
-            await asyncio.sleep(wait_time)
-            # Try a different client after flood wait
-            continue
-        except Exception as edit_err:
-            if "MESSAGE_AUTHOR_REQUIRED" in str(edit_err):
-                last_author_err = edit_err
+                msg = await candidate_client.edit_message_media(
+                    config.STORAGE_CHANNEL,
+                    config.DATABASE_BACKUP_MSG_ID,
+                    media=media_doc,
+                )
+                _BACKUP_AUTHOR_CLIENT_ID = cid
+                break
+            except FloodWait as fw:
+                wait_time = fw.value + 1
+                logger.warning(f"Backup FloodWait: sleeping {wait_time}s before next candidate.")
+                try:
+                    from utils import tg_gate
+                    tg_gate.note_flood(cid, float(fw.value))
+                except Exception:
+                    pass
+                await asyncio.sleep(wait_time)
                 continue
-            raise edit_err
+            except Exception as edit_err:
+                if "MESSAGE_AUTHOR_REQUIRED" in str(edit_err):
+                    last_author_err = edit_err
+                    continue
+                # If message not found or deleted, break to send a new message
+                break
+
+    # Step 2: If message doesn't exist or edit failed, create a fresh backup message
+    if not msg:
+        for cid, candidate_client in client_candidates:
+            try:
+                msg = await candidate_client.send_document(
+                    config.STORAGE_CHANNEL,
+                    document=str(drive_cache_path.resolve()),
+                    caption=caption,
+                    file_name="drive.data"
+                )
+                if msg:
+                    config.DATABASE_BACKUP_MSG_ID = msg.id
+                    _BACKUP_AUTHOR_CLIENT_ID = cid
+                    _persist_backup_msg_id(msg.id)
+                    try:
+                        await msg.pin()
+                    except Exception:
+                        pass
+                    logger.info(f"✨ Created new Telegram backup message ID: {msg.id}")
+                    break
+            except Exception as send_err:
+                logger.warning(f"Failed to send fresh backup message via client {cid}: {send_err}")
+                continue
 
     if not msg:
         if last_author_err:
             raise last_author_err
-        raise RuntimeError("Failed to edit Telegram backup message with any connected client.")
+        raise RuntimeError("Failed to backup Telegram drive.data with any connected client.")
 
     if msg and msg.document:
         LAST_REMOTE_BACKUP_FILE_ID = msg.document.file_id

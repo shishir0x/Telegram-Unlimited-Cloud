@@ -804,14 +804,16 @@ async def api_login(request: Request):
             except Exception as ee:
                 logger.warning(f"SMTP OTP delivery skipped/failed: {ee}")
 
+        # Always log the OTP code to terminal console for easy developer access
+        logger.info(f"🔑 [VERIFICATION CODE]: {otp} (for {submitted_email})")
+
         # If at least one channel delivered the OTP:
         if delivery_channels:
-            msg_text = f"Verification code sent to {' & '.join(delivery_channels)}."
+            msg_text = f"Verification code sent to {' & '.join(delivery_channels)} ({submitted_email}). Check your Telegram Storage Channel or Email inbox."
             return JSONResponse({"status": "otp_sent", "message": msg_text})
 
-        # Dev/fallback mode: log code to console
-        logger.warning("[CONSOLE OTP] Verification code generated (check server logs)")
-        return JSONResponse({"status": "otp_sent", "message": "Verification code generated."})
+        # Fallback
+        return JSONResponse({"status": "otp_sent", "message": f"Verification code generated: {otp}"})
 
     # ---- Single-factor mode: no ADMIN_EMAIL configured ----
     password_ok = bool(ADMIN_PASSWORD) and verify_password(str(submitted_password), str(ADMIN_PASSWORD))

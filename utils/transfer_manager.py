@@ -239,6 +239,15 @@ class TransferStore:
             logger.info(f"Loaded {len(self.transfers)} transfer items from {self.filepath}.")
         except Exception as e:
             logger.error(f"Failed to read transfers persistence file: {e}")
+            try:
+                # Backup corrupted file so it does not block future runs
+                corrupt_backup = self.filepath.with_suffix(f".corrupt_{int(time.time())}")
+                if self.filepath.exists():
+                    self.filepath.rename(corrupt_backup)
+                    logger.info(f"Moved corrupted transfers file to {corrupt_backup}")
+            except Exception as ren_e:
+                logger.debug(f"Could not rename corrupted transfers file: {ren_e}")
+            self.transfers = {}
 
     async def save(self, force: bool = False):
         async with self._lock:
