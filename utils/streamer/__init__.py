@@ -141,3 +141,121 @@ async def media_streamer(channel: int, message_id: int, file_name: str, request)
         },
         media_type=mime_type,
     )
+
+
+async def local_file_streamer(file_path: str, file_name: str, request) -> Response:
+    """
+    High-performance async streaming response for physical local files with:
+      - Full HTTP Range support (206 Partial Content) for seeking media / PDFs
+      - 304 Not Modified caching with strong ETags
+      - MIME-type detection with safe inline preview & XSS hardening
+      - Unicode Content-Disposition headers (RFC 6266 / RFC 5987)
+    """
+    import os
+    from pathlib import Path
+    import aiofiles
+
+    p = Path(file_path)
+    if not p.is_file():
+        logger.error(f"Local file not found on disk: {file_path}")
+        raise Exception("FileNotFound")
+
+    stat = p.stat()
+    file_size = stat.st_size
+    mtime = int(stat.st_mtime)
+    etag = f'"{file_size}-{mtime}"'
+
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=3600"})
+
+    range_header = request.headers.get("Range", 0)
+
+    if range_header:
+        try:
+            range_spec = str(range_header).replace("bytes=", "").split(",")[0]
+            from_bytes_str, until_bytes_str = range_spec.split("-", 1)
+            from_bytes = int(from_bytes_str) if from_bytes_str else 0
+            until_bytes = int(until_bytes_str) if until_bytes_str else file_size - 1
+        except (ValueError, TypeError):
+            return Response(
+                status_code=416,
+                content="416: Range not satisfiable",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+    else:
+        from_bytes = 0
+        until_bytes = file_size - 1
+
+    if (until_bytes >= file_size) or (from_bytes < 0) or (until_bytes < from_bytes):
+        return Response(
+            status_code=416,
+            content="416: Range not satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    req_length = until_bytes - from_bytes + 1
+    chunk_size = 256 * 1024
+
+    async def file_chunk_generator(start: int, length: int):
+        async with aiofiles.open(p, "rb") as f:
+            await f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk_to_read = min(chunk_size, remaining)
+                data = await f.read(chunk_to_read)
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    disposition = "attachment"
+    mime_type = mimetypes.guess_type(file_name.lower())[0] or "application/octet-stream"
+
+    safe_previewable_exts = (
+        ".pdf", ".txt", ".md", ".py", ".ts", ".css",
+        ".json", ".csv", ".tsv", ".log", ".yaml", ".yml", ".sh", ".bat",
+        ".c", ".cpp", ".h", ".java", ".rs", ".go", ".sql", ".ini", ".env", ".cfg"
+    )
+
+    is_media = (
+        "video/" in mime_type
+        or "audio/" in mime_type
+        or ("image/" in mime_type and not file_name.lower().endswith(".svg"))
+        or "application/pdf" in mime_type
+        or file_name.lower().endswith(safe_previewable_exts)
+    )
+
+    if is_media:
+        disposition = "inline"
+        if file_name.lower().endswith((".txt", ".log", ".ini", ".env", ".cfg")):
+            mime_type = "text/plain; charset=utf-8"
+        elif file_name.lower().endswith((".py", ".sh", ".bat", ".c", ".cpp", ".h", ".java", ".rs", ".go", ".sql", ".yaml", ".yml", ".ts", ".css")):
+            mime_type = "text/plain; charset=utf-8"
+        elif file_name.lower().endswith(".md"):
+            mime_type = "text/markdown; charset=utf-8"
+        elif file_name.lower().endswith(".pdf"):
+            mime_type = "application/pdf"
+
+    ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
+    if ext in ("svg", "html", "htm", "xhtml", "xml", "js"):
+        disposition = "attachment"
+        mime_type = "application/octet-stream"
+
+    safe_ascii = file_name.encode("ascii", "replace").decode("ascii").replace('"', '\\"')
+    quoted_utf8 = quote(file_name)
+
+    return StreamingResponse(
+        status_code=206 if range_header else 200,
+        content=file_chunk_generator(from_bytes, req_length),
+        headers={
+            "Content-Type": f"{mime_type}",
+            "Content-Range": f"bytes {from_bytes}-{until_bytes}/{file_size}",
+            "Content-Length": str(req_length),
+            "Content-Disposition": f'{disposition}; filename="{safe_ascii}"; filename*=UTF-8\'\'{quoted_utf8}',
+            "Accept-Ranges": "bytes",
+            "ETag": etag,
+            "X-Content-Type-Options": "nosniff",
+        },
+        media_type=mime_type,
+    )
+

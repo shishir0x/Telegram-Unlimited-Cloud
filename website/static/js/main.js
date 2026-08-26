@@ -6,6 +6,12 @@ let SELECTED_ITEM_ID = null;
 let CURRENT_VIEW_MODE = localStorage.getItem('gd_view_mode') || 'list'; // 'list' or 'grid'
 window.DRAGGED_DRIVE_ITEM = null;
 
+// Multi-Select & Bulk Actions State Management (Initialized globally at top of script)
+window.SELECTED_ITEMS = window.SELECTED_ITEMS || new Map();
+window.LAST_SELECTED_ID = window.LAST_SELECTED_ID || null;
+window.CURRENT_SORT = window.CURRENT_SORT || { key: 'name', order: 'asc' };
+window.CURRENT_FILTER = window.CURRENT_FILTER || 'all';
+
 // Google-Grade Lazy Thumbnail Batch Observer (Max 6 concurrent HTTP/MTProto requests)
 const THUMB_QUEUE = [];
 let THUMB_ACTIVE_COUNT = 0;
@@ -407,9 +413,18 @@ function handleFolderDrop(e) {
         }
         moveFileFolder(draggedItem.path, targetFolderPath);
         clearDraggedItem();
-    } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        showToast(`Uploading ${e.dataTransfer.files.length} file(s) into "${folderItem.name}"...`);
-        uploadFilesQueue(e.dataTransfer.files, targetFolderPath);
+    } else if (e.dataTransfer) {
+        if (typeof scanDataTransferItems === 'function') {
+            scanDataTransferItems(e.dataTransfer).then(scanRes => {
+                if (scanRes.files.length > 0 || scanRes.emptyFolders.length > 0) {
+                    showToast(`Uploading into "${folderItem.name}"...`);
+                    uploadFilesQueue(scanRes.files, targetFolderPath, { emptyFolders: scanRes.emptyFolders });
+                }
+            });
+        } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            showToast(`Uploading ${e.dataTransfer.files.length} file(s) into "${folderItem.name}"...`);
+            uploadFilesQueue(e.dataTransfer.files, targetFolderPath);
+        }
     }
 }
 
@@ -758,9 +773,9 @@ function getItemProvenance(item) {
 
         // Table Row
         tableHtml += `
-            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}">
+            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr folder-tr ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'is-selected' : ''}">
                 <td class="col-select-td" onclick="event.stopPropagation();">
-                    <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''} />
+                    <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'checked' : ''} />
                 </td>
                 <td class="col-name-td">
                     <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
@@ -790,13 +805,13 @@ function getItemProvenance(item) {
 
         // Grid Folder Chip
         const folderChip = document.createElement('div');
-        folderChip.className = `gd-folder-chip folder-tr ${isSearch ? 'is-search-mode' : ''} ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}`;
+        folderChip.className = `gd-folder-chip folder-tr ${isSearch ? 'is-search-mode' : ''} ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'is-selected' : ''}`;
         folderChip.setAttribute('draggable', 'false');
         folderChip.setAttribute('data-id', item.id);
         folderChip.setAttribute('data-path', item.path);
         folderChip.setAttribute('data-name', item.name);
         folderChip.innerHTML = `
-            <div class="gd-card-select-btn ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''}" data-id="${item.id}" title="Select">
+            <div class="gd-card-select-btn ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'checked' : ''}" data-id="${item.id}" title="Select">
                 <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
             </div>
             <div class="gd-folder-chip-left">
@@ -840,9 +855,9 @@ function getItemProvenance(item) {
 
         // Table Row
         tableHtml += `
-            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}">
+            <tr draggable="false" data-path="${item.path}" data-id="${item.id}" data-name="${escapeHtml(item.name)}" class="body-tr file-tr ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'is-selected' : ''}">
                 <td class="col-select-td" onclick="event.stopPropagation();">
-                    <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''} />
+                    <input type="checkbox" class="gd-checkbox item-select-checkbox" data-id="${item.id}" ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'checked' : ''} />
                 </td>
                 <td class="col-name-td">
                     <div class="td-align file-name-cell" style="${isSearch ? 'flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;' : ''}">
@@ -872,7 +887,7 @@ function getItemProvenance(item) {
 
         // Grid File Card
         const fileCard = document.createElement('div');
-        fileCard.className = `gd-file-card file-tr ${window.SELECTED_ITEMS.has(item.id) ? 'is-selected' : ''}`;
+        fileCard.className = `gd-file-card file-tr ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'is-selected' : ''}`;
         fileCard.setAttribute('draggable', 'false');
         fileCard.setAttribute('data-id', item.id);
         fileCard.setAttribute('data-path', item.path);
@@ -906,7 +921,7 @@ function getItemProvenance(item) {
 
         fileCard.innerHTML = `
             <div class="gd-file-card-preview">
-                <div class="gd-card-select-btn ${window.SELECTED_ITEMS.has(item.id) ? 'checked' : ''}" data-id="${item.id}" title="Select">
+                <div class="gd-card-select-btn ${(window.SELECTED_ITEMS && window.SELECTED_ITEMS.has(item.id)) ? 'checked' : ''}" data-id="${item.id}" title="Select">
                     <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                 </div>
                 ${previewInnerHtml}
@@ -1030,13 +1045,13 @@ function updateSidebarStorageStats(stats) {
     }
 }
 
-// Select Item and Populate Inspector Panel (Only opens when explicitly pressed)
-function selectItem(id) {
+// Select Item and Populate Inspector Panel with Google Drive-style Details & Activity
+async function selectItem(id) {
     SELECTED_ITEM_ID = id;
     const item = DIRECTORY_ITEMS[id];
     if (!item) return;
 
-    // Highlight row
+    // Highlight active row/card
     document.querySelectorAll('.body-tr, .gd-folder-chip, .gd-file-card').forEach(el => {
         if (el.getAttribute('data-id') === id) {
             el.classList.add('selected');
@@ -1045,10 +1060,10 @@ function selectItem(id) {
         }
     });
 
-    // Populate Inspector
     const isFolder = item.type === 'folder';
     const rootUrl = getRootUrl();
     const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+    const authParam = new URLSearchParams(window.location.search).get('auth');
     const directUrl = (typeof buildFileUrl === 'function') ? buildFileUrl(filePath) : `${rootUrl}/file?path=${encodeURIComponent(filePath)}`;
 
     // Build human-readable location path
@@ -1062,6 +1077,7 @@ function selectItem(id) {
         readableLocation = CURRENT_BREADCRUMBS.map(c => c.name).join(' / ');
     }
 
+    // Header & Banner
     const headerTitle = document.getElementById('insp-header-title');
     if (headerTitle) headerTitle.innerText = isFolder ? 'Folder Details' : 'File Details';
 
@@ -1069,14 +1085,33 @@ function selectItem(id) {
     if (filenameEl) filenameEl.innerText = item.name;
     const bigIconEl = document.getElementById('insp-big-icon');
     if (bigIconEl) bigIconEl.innerText = getBigIconEmoji(item);
+
+    const chipsEl = document.getElementById('insp-meta-chips');
+    if (chipsEl) {
+        let chipsHtml = `<span class="gd-meta-chip">${escapeHtml(item.category || (isFolder ? 'Folder' : 'File'))}</span>`;
+        if (item.size !== undefined) chipsHtml += `<span class="gd-meta-chip">${convertBytes(item.size)}</span>`;
+        chipsEl.innerHTML = chipsHtml;
+    }
+
+    // Access Row
+    const ownerEl = document.getElementById('insp-prop-owner');
+    if (ownerEl) ownerEl.innerText = item.owner || 'Admin (You)';
+    const accessNameEl = document.getElementById('insp-access-name');
+    if (accessNameEl) accessNameEl.innerText = `${item.owner || 'Admin'} (You)`;
+    const accessRoleEl = document.getElementById('insp-access-role');
+    if (accessRoleEl) accessRoleEl.innerText = 'Owner • Private';
+
+    // General Information
     const propTypeEl = document.getElementById('insp-prop-type');
     if (propTypeEl) propTypeEl.innerText = item.category || (isFolder ? 'Folder' : 'File');
+    const propMimeEl = document.getElementById('insp-prop-mime');
+    if (propMimeEl) propMimeEl.innerText = isFolder ? 'inode/directory' : (item.mime_type || '--');
     const propSizeEl = document.getElementById('insp-prop-size');
     if (propSizeEl) {
         if (isFolder) {
             const fSize = item.size || 0;
             const fCount = item.file_count || 0;
-            propSizeEl.innerText = `${convertBytes(fSize)} (${fSize.toLocaleString()} bytes • ${fCount} file${fCount === 1 ? '' : 's'})`;
+            propSizeEl.innerText = `${convertBytes(fSize)} (${fSize.toLocaleString()} bytes • ${fCount} item${fCount === 1 ? '' : 's'})`;
         } else {
             propSizeEl.innerText = `${convertBytes(item.size)} (${(item.size || 0).toLocaleString()} bytes)`;
         }
@@ -1085,20 +1120,250 @@ function selectItem(id) {
     if (propStorageEl) {
         propStorageEl.innerText = isFolder 
             ? ((item.size || 0) > 0 ? convertBytes(item.size) : '0 bytes (virtual)') 
-            : convertBytes(item.size);
+            : `${convertBytes(item.size)} (Telegram Cloud)`;
     }
     const propLocationEl = document.getElementById('insp-prop-location');
     if (propLocationEl) propLocationEl.innerText = readableLocation;
-    const propOwnerEl = document.getElementById('insp-prop-owner');
-    if (propOwnerEl) propOwnerEl.innerText = item.owner || 'Admin (You)';
+
+    // Timestamps initial populate
+    const propCreatedEl = document.getElementById('insp-prop-created');
+    if (propCreatedEl) propCreatedEl.innerText = item.created_at ? new Date(item.created_at * 1000).toLocaleString() : (item.upload_date || '--');
     const propDateEl = document.getElementById('insp-prop-date');
     if (propDateEl) propDateEl.innerText = item.upload_date || '--';
-    const propMsgIdEl = document.getElementById('insp-prop-msg-id');
-    if (propMsgIdEl) propMsgIdEl.innerText = item.file_id ? `#${item.file_id}` : (isFolder ? 'Virtual' : '--');
+    const propModifiedEl = document.getElementById('insp-prop-modified');
+    if (propModifiedEl) propModifiedEl.innerText = item.modified_at ? new Date(item.modified_at * 1000).toLocaleString() : (item.upload_date || '--');
+    const propAccessedEl = document.getElementById('insp-prop-accessed');
+    if (propAccessedEl) propAccessedEl.innerText = item.accessed_at ? new Date(item.accessed_at * 1000).toLocaleString() : '--';
 
+    // Technical IDs
+    const propMsgIdEl = document.getElementById('insp-prop-msg-id');
+    if (propMsgIdEl) propMsgIdEl.innerText = item.file_id ? `#${item.file_id}` : (isFolder ? 'Virtual Folder' : '--');
+    const propItemIdEl = document.getElementById('insp-prop-item-id');
+    if (propItemIdEl) propItemIdEl.innerText = item.id || id;
+    const propChannelIdEl = document.getElementById('insp-prop-channel-id');
+    if (propChannelIdEl) propChannelIdEl.innerText = '--';
+
+    // Checksum Box
+    const checksumCard = document.getElementById('insp-card-checksum');
+    const propSha256El = document.getElementById('insp-prop-sha256');
+    if (checksumCard && propSha256El) {
+        if (isFolder) {
+            checksumCard.style.display = 'none';
+        } else {
+            checksumCard.style.display = '';
+            propSha256El.innerText = item.sha256 || 'Not computed yet';
+        }
+    }
+
+    // Link Input
     const linkInput = document.getElementById('insp-link-input');
     if (linkInput) {
         linkInput.value = isFolder ? `${rootUrl}/?path=${filePath}` : directUrl;
+    }
+
+    // Reset Content details container
+    const contentPropsBody = document.getElementById('insp-content-props-body');
+    const contentTitle = document.getElementById('insp-content-title');
+    if (contentPropsBody) {
+        contentPropsBody.innerHTML = isFolder
+            ? '<div class="gd-insp-prop-row"><span class="prop-label">Stats Status</span><span class="prop-val" id="insp-folder-stats-status">Calculating recursive statistics... ⏳</span></div>'
+            : '<div class="gd-insp-prop-row"><span class="prop-label">Status</span><span class="prop-val">Loading metadata... ⏳</span></div>';
+    }
+
+    // Reset activity timeline
+    const timelineEl = document.getElementById('insp-activity-timeline');
+    if (timelineEl) {
+        timelineEl.innerHTML = '<div class="gd-activity-empty">Loading activity history... ⏳</div>';
+    }
+
+    // Async Fetch Detailed Properties
+    try {
+        const propsPromise = isFolder 
+            ? (typeof fetchFolderProperties === 'function' ? fetchFolderProperties(id, authParam) : null)
+            : (typeof fetchFileProperties === 'function' ? fetchFileProperties(id, authParam) : null);
+
+        const activityPromise = isFolder
+            ? (typeof fetchFolderActivity === 'function' ? fetchFolderActivity(id) : null)
+            : (typeof fetchFileActivity === 'function' ? fetchFileActivity(id) : null);
+
+        const [propsRes, actRes] = await Promise.allSettled([propsPromise, activityPromise]);
+
+        if (SELECTED_ITEM_ID !== id) return; // Discard if user switched selection
+
+        // Render Properties Result
+        if (propsRes.status === 'fulfilled' && propsRes.value) {
+            const data = propsRes.value;
+
+            // Update Timestamps with formatted strings
+            if (data.timestamps) {
+                if (propCreatedEl) propCreatedEl.innerText = data.timestamps.created_at_formatted || '--';
+                if (propDateEl) propDateEl.innerText = data.timestamps.uploaded_at_formatted || '--';
+                if (propModifiedEl) propModifiedEl.innerText = data.timestamps.modified_at_formatted || '--';
+                if (propAccessedEl) propAccessedEl.innerText = data.timestamps.accessed_at_formatted || '--';
+            }
+
+            // Update Access / Sharing
+            if (data.sharing && accessRoleEl) {
+                const isShared = data.sharing.is_shared;
+                accessRoleEl.innerText = isShared ? `Owner • Shared (${data.sharing.share_links_count} active link${data.sharing.share_links_count === 1 ? '' : 's'})` : 'Owner • Private';
+            }
+
+            // Update Storage & Tech
+            if (data.storage) {
+                if (propMsgIdEl) propMsgIdEl.innerText = data.storage.message_ids ? data.storage.message_ids.join(', ') : (isFolder ? 'Virtual' : '--');
+                if (propChannelIdEl && data.storage.telegram_channel_id) propChannelIdEl.innerText = data.storage.telegram_channel_id;
+            }
+
+            // Update Checksum
+            if (data.checksums && propSha256El) {
+                propSha256El.innerText = data.checksums.sha256 || 'Not computed yet';
+            }
+
+            // Render Content / Folder Breakdown
+            if (contentPropsBody) {
+                let html = '';
+                if (isFolder && data.folder_stats) {
+                    if (contentTitle) contentTitle.innerText = 'Folder Statistics & Breakdown';
+                    const stats = data.folder_stats;
+                    const isCalc = stats.calculation_status === 'calculating';
+
+                    html += `
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Total Items</span>
+                            <span class="prop-val">${stats.total_files || 0} file(s), ${stats.total_folders || 0} folder(s)</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Total Size</span>
+                            <span class="prop-val"><strong>${stats.total_size_formatted || convertBytes(stats.total_size_bytes || 0)}</strong> (${(stats.total_size_bytes || 0).toLocaleString()} bytes)</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Direct Items</span>
+                            <span class="prop-val">${stats.direct_files || 0} file(s), ${stats.direct_folders || 0} folder(s)</span>
+                        </div>
+                    `;
+
+                    if (stats.largest_file_name) {
+                        html += `
+                            <div class="gd-insp-prop-row">
+                                <span class="prop-label">Largest File</span>
+                                <span class="prop-val" title="${escapeHtml(stats.largest_file_name)}">${escapeHtml(stats.largest_file_name)} (${stats.largest_file_size_formatted})</span>
+                            </div>
+                        `;
+                    }
+
+                    if (stats.media_breakdown) {
+                        const mb = stats.media_breakdown;
+                        html += `
+                            <div style="margin-top: 10px; font-size: 0.78rem; font-weight: 600; color: var(--gd-text-secondary);">Media Breakdown:</div>
+                            <div class="gd-folder-breakdown-grid">
+                                ${mb.images ? `<div class="gd-breakdown-chip"><span>📷 Images</span><span class="chip-count">${mb.images}</span></div>` : ''}
+                                ${mb.videos ? `<div class="gd-breakdown-chip"><span>🎥 Videos</span><span class="chip-count">${mb.videos}</span></div>` : ''}
+                                ${mb.audio ? `<div class="gd-breakdown-chip"><span>🎵 Audio</span><span class="chip-count">${mb.audio}</span></div>` : ''}
+                                ${mb.documents ? `<div class="gd-breakdown-chip"><span>📄 Documents</span><span class="chip-count">${mb.documents}</span></div>` : ''}
+                                ${mb.spreadsheets ? `<div class="gd-breakdown-chip"><span>📊 Sheets</span><span class="chip-count">${mb.spreadsheets}</span></div>` : ''}
+                                ${mb.presentations ? `<div class="gd-breakdown-chip"><span>📑 Slides</span><span class="chip-count">${mb.presentations}</span></div>` : ''}
+                                ${mb.archives ? `<div class="gd-breakdown-chip"><span>📦 Archives</span><span class="chip-count">${mb.archives}</span></div>` : ''}
+                                ${mb.code ? `<div class="gd-breakdown-chip"><span>💻 Code</span><span class="chip-count">${mb.code}</span></div>` : ''}
+                                ${mb.others ? `<div class="gd-breakdown-chip"><span>📁 Others</span><span class="chip-count">${mb.others}</span></div>` : ''}
+                            </div>
+                        `;
+                    }
+                } else if (!isFolder && data.content) {
+                    if (contentTitle) contentTitle.innerText = 'Content & Media Details';
+                    const c = data.content;
+                    let hasMediaProps = false;
+
+                    if (c.dimensions) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Dimensions</span><span class="prop-val font-mono">${c.dimensions} (${c.width} × ${c.height} px)</span></div>`;
+                    }
+                    if (c.color_mode) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Color Mode</span><span class="prop-val font-mono">${c.color_mode}</span></div>`;
+                    }
+                    if (c.duration_formatted) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Duration</span><span class="prop-val">${c.duration_formatted}</span></div>`;
+                    }
+                    if (c.video_codec) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Video Codec</span><span class="prop-val font-mono">${c.video_codec}</span></div>`;
+                    }
+                    if (c.audio_codec) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Audio Codec</span><span class="prop-val font-mono">${c.audio_codec}</span></div>`;
+                    }
+                    if (c.bitrate_formatted) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Bitrate</span><span class="prop-val font-mono">${c.bitrate_formatted}</span></div>`;
+                    }
+                    if (c.sample_rate_formatted) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Sample Rate</span><span class="prop-val font-mono">${c.sample_rate_formatted}</span></div>`;
+                    }
+                    if (c.page_count !== undefined) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Pages</span><span class="prop-val">${c.page_count} page${c.page_count === 1 ? '' : 's'}</span></div>`;
+                    }
+                    if (c.archive_file_count !== undefined) {
+                        hasMediaProps = true;
+                        html += `<div class="gd-insp-prop-row"><span class="prop-label">Archive TOC</span><span class="prop-val">${c.archive_file_count} entries (${convertBytes(c.archive_uncompressed_size || 0)} uncompressed)</span></div>`;
+                    }
+
+                    if (!hasMediaProps) {
+                        html = '<div class="gd-insp-prop-row"><span class="prop-label">Content</span><span class="prop-val">Standard binary document</span></div>';
+                    }
+                }
+                contentPropsBody.innerHTML = html;
+            }
+        }
+
+        // Render Activity Result
+        if (actRes.status === 'fulfilled' && actRes.value && actRes.value.activity && timelineEl) {
+            const actGroups = actRes.value.activity;
+            if (!actGroups || actGroups.length === 0) {
+                timelineEl.innerHTML = '<div class="gd-activity-empty">No activity recorded yet for this item.</div>';
+            } else {
+                let actHtml = '';
+                for (const group of actGroups) {
+                    actHtml += `<div class="gd-activity-date-group">`;
+                    actHtml += `<div class="gd-activity-date-header">${escapeHtml(group.date_label || 'History')}</div>`;
+                    for (const ev of group.events || []) {
+                        const iconMap = {
+                            'created': '✨',
+                            'uploaded': '📤',
+                            'downloaded': '⬇️',
+                            'previewed': '👁️',
+                            'renamed': '✏️',
+                            'moved': '📁',
+                            'copied': '📑',
+                            'trashed': '🗑️',
+                            'restored': '♻️',
+                            'shared': '🔗'
+                        };
+                        const icon = iconMap[ev.action] || '📌';
+                        const actionName = ev.action.charAt(0).toUpperCase() + ev.action.slice(1);
+                        actHtml += `
+                            <div class="gd-activity-event">
+                                <div class="gd-activity-icon-bubble">${icon}</div>
+                                <div class="gd-activity-event-body">
+                                    <div class="gd-activity-action-line">
+                                        <span class="gd-activity-actor">${escapeHtml(ev.actor || 'User')}</span>
+                                        <span class="gd-activity-action">${escapeHtml(actionName)} this ${isFolder ? 'folder' : 'file'}</span>
+                                    </div>
+                                    ${ev.details ? `<div class="gd-activity-details">${escapeHtml(ev.details)}</div>` : ''}
+                                    <div class="gd-activity-time" title="${escapeHtml(ev.timestamp_formatted || '')}">${escapeHtml(ev.time_ago || '')}</div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    actHtml += `</div>`;
+                }
+                timelineEl.innerHTML = actHtml;
+            }
+        }
+    } catch (e) {
+        console.warn('Properties fetch note:', e);
     }
 }
 
@@ -1148,10 +1413,10 @@ function copyPreviewText() {
 }
 
 // Multi-Select & Bulk Actions State Management
-window.SELECTED_ITEMS = new Map();
-window.LAST_SELECTED_ID = null;
-window.CURRENT_SORT = { key: 'name', order: 'asc' };
-window.CURRENT_FILTER = 'all';
+window.SELECTED_ITEMS = window.SELECTED_ITEMS || new Map();
+window.LAST_SELECTED_ID = window.LAST_SELECTED_ID || null;
+window.CURRENT_SORT = window.CURRENT_SORT || { key: 'name', order: 'asc' };
+window.CURRENT_FILTER = window.CURRENT_FILTER || 'all';
 
 function setDirectorySort(key, order) {
     if (order) {
@@ -1557,10 +1822,16 @@ function renderPreviewItem(item) {
                             <button class="gd-preview-speed-btn" data-speed="2.0">2.0x</button>
                             <button class="gd-preview-tool-btn" id="video-pip-btn" title="Picture in Picture">📺 PiP</button>
                         </div>
-                        <video id="preview-active-video" controls autoplay playsinline style="max-width:88vw; max-height:76vh; border-radius: 8px;">
+                        <video id="preview-active-video" controls autoplay playsinline style="max-width:88vw; max-height:76vh; border-radius: 8px;"
+                            onerror="const errWrap = document.getElementById('preview-video-err'); if (errWrap) { this.style.display='none'; errWrap.style.display='block'; }">
                             <source src="${directUrl}">
                             Your browser does not support video playback.
                         </video>
+                        <div id="preview-video-err" style="display:none; text-align:center; color:#fff; padding:30px;">
+                            <div style="font-size:2.5rem; margin-bottom:10px;">⚠️</div>
+                            <p>Video playback unavailable or format not supported by browser.</p>
+                            <a href="${directUrl}" download="${escapeHtml(item.name)}" class="gd-primary-btn" style="margin-top:12px; display:inline-block;">Download Video</a>
+                        </div>
                     </div>`;
 
                 const videoEl = document.getElementById('preview-active-video');
@@ -1634,8 +1905,15 @@ function renderPreviewItem(item) {
                         <pre class="gd-preview-code"><code id="preview-text-code">Loading content...</code></pre>
                     </div>`;
                 fetch(directUrl, { credentials: 'same-origin' })
-                    .then(res => {
-                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                    .then(async res => {
+                        if (!res.ok) {
+                            let msg = 'HTTP ' + res.status;
+                            try {
+                                const j = await res.json();
+                                if (j.detail) msg = j.detail;
+                            } catch (_) {}
+                            throw new Error(msg);
+                        }
                         return res.text();
                     })
                     .then(text => {
@@ -1715,7 +1993,7 @@ function setupDragAndDrop() {
         }
     });
 
-    window.addEventListener('drop', (e) => {
+    window.addEventListener('drop', async (e) => {
         dragCounter = 0;
         if (dropOverlay) dropOverlay.classList.remove('active');
 
@@ -1731,8 +2009,15 @@ function setupDragAndDrop() {
 
         e.preventDefault();
 
-        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            uploadFilesQueue(e.dataTransfer.files, getCurrentPath());
+        if (e.dataTransfer) {
+            if (typeof scanDataTransferItems === 'function') {
+                const scanRes = await scanDataTransferItems(e.dataTransfer);
+                if (scanRes.files.length > 0 || scanRes.emptyFolders.length > 0) {
+                    uploadFilesQueue(scanRes.files, getCurrentPath(), { emptyFolders: scanRes.emptyFolders });
+                }
+            } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                uploadFilesQueue(e.dataTransfer.files, getCurrentPath());
+            }
         }
     });
 
@@ -1752,13 +2037,20 @@ function setupDragAndDrop() {
             navMyDrive.classList.remove('gd-nav-drop-hover');
         });
 
-        navMyDrive.addEventListener('drop', (e) => {
+        navMyDrive.addEventListener('drop', async (e) => {
             e.preventDefault();
             e.stopPropagation();
             navMyDrive.classList.remove('gd-nav-drop-hover');
 
-            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                uploadFilesQueue(e.dataTransfer.files, '/');
+            if (e.dataTransfer) {
+                if (typeof scanDataTransferItems === 'function') {
+                    const scanRes = await scanDataTransferItems(e.dataTransfer);
+                    if (scanRes.files.length > 0 || scanRes.emptyFolders.length > 0) {
+                        uploadFilesQueue(scanRes.files, '/', { emptyFolders: scanRes.emptyFolders });
+                    }
+                } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    uploadFilesQueue(e.dataTransfer.files, '/');
+                }
             }
         });
     }
@@ -2214,6 +2506,85 @@ document.addEventListener('DOMContentLoaded', () => {
         closeInspBtn.addEventListener('click', () => {
             inspector.classList.add('hidden');
             inspector.classList.remove('mobile-open');
+        });
+    }
+
+    // Inspector Tab Switching (Details, Activity, Storage & Tech)
+    document.querySelectorAll('.gd-insp-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.gd-insp-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.gd-insp-tab-panel').forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            const targetId = tab.getAttribute('data-target');
+            if (targetId) {
+                const targetPanel = document.getElementById(targetId);
+                if (targetPanel) targetPanel.classList.add('active');
+            }
+        });
+    });
+
+    // Inspector Copy SHA-256 Button
+    const inspCopyShaBtn = document.getElementById('insp-copy-sha256-btn');
+    const inspShaText = document.getElementById('insp-prop-sha256');
+    if (inspCopyShaBtn && inspShaText) {
+        inspCopyShaBtn.addEventListener('click', async () => {
+            const hash = inspShaText.innerText.trim();
+            if (hash && hash !== '--' && hash !== 'Not computed yet') {
+                const ok = await copyTextToClipboard(hash);
+                showToast(ok ? 'SHA-256 copied to clipboard! 📋' : 'SHA-256 selected');
+            } else {
+                showToast('No SHA-256 hash available yet', true);
+            }
+        });
+    }
+
+    // Inspector Top Manage Access Button
+    const inspShareTopBtn = document.getElementById('insp-share-btn-top');
+    if (inspShareTopBtn) {
+        inspShareTopBtn.addEventListener('click', () => {
+            if (!SELECTED_ITEM_ID) {
+                showToast('Please select a file or folder first', true);
+                return;
+            }
+            const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[SELECTED_ITEM_ID] : null;
+            if (!item) return;
+            if (typeof openShareModal === 'function') {
+                openShareModal({
+                    id: item.id,
+                    parentPath: item.path || (typeof getCurrentPath === 'function' ? getCurrentPath() : '/'),
+                    name: item.name,
+                    type: item.type || 'file'
+                });
+            }
+        });
+    }
+
+    // Inspector Re-enrich Metadata Button
+    const inspEnrichBtn = document.getElementById('insp-enrich-btn');
+    if (inspEnrichBtn) {
+        inspEnrichBtn.addEventListener('click', async () => {
+            if (!SELECTED_ITEM_ID) {
+                showToast('Please select an item first', true);
+                return;
+            }
+            inspEnrichBtn.disabled = true;
+            inspEnrichBtn.innerText = 'Enriching... ⏳';
+            showToast('Extracting rich metadata... ⚡');
+            try {
+                if (typeof enrichItemMetadata === 'function') {
+                    await enrichItemMetadata(SELECTED_ITEM_ID);
+                }
+                setTimeout(async () => {
+                    await selectItem(SELECTED_ITEM_ID);
+                    showToast('Metadata enrichment complete! ✨');
+                    inspEnrichBtn.disabled = false;
+                    inspEnrichBtn.innerText = '⚡ Re-enrich Metadata';
+                }, 1200);
+            } catch (err) {
+                showToast('Enrichment error: ' + err.message, true);
+                inspEnrichBtn.disabled = false;
+                inspEnrichBtn.innerText = '⚡ Re-enrich Metadata';
+            }
         });
     }
 

@@ -5,8 +5,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
-    <title>Google Drive - TG Unlimited Cloud</title>
     <link rel="stylesheet" href="static/home.css?v=14.0" />
+    <link rel="stylesheet" href="static/css/duplicates.css?v=14.0" />
 
     <!-- Google Fonts: Google Sans & Roboto -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -184,6 +184,11 @@
                         <span>File upload</span>
                     </div>
                     <input type="file" id="fileInput" multiple style="display: none;" />
+                    <div id="folder-upload-btn" class="gd-dropdown-item">
+                        <svg viewBox="0 0 24 24" class="gd-dropdown-svg"><path d="M20 6h-8l-2-2H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3V9h2v3h3v2z"/></svg>
+                        <span>Folder upload</span>
+                    </div>
+                    <input type="file" id="folderInput" webkitdirectory directory multiple style="display: none;" />
                     <div id="url-upload-btn" class="gd-dropdown-item">
                         <svg viewBox="0 0 24 24" class="gd-dropdown-svg"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
                         <span>URL / Remote upload</span>
@@ -204,6 +209,10 @@
                 <a href="/?path=/shared_links" id="nav-shared-links" class="gd-nav-item unselected-item">
                     <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
                     <span>Shared Links</span>
+                </a>
+                <a href="/?path=/duplicates" id="nav-duplicates" class="gd-nav-item unselected-item">
+                    <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                    <span>Duplicates</span>
                 </a>
                 <a href="#" id="nav-sync-activity" class="gd-nav-item unselected-item">
                     <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
@@ -594,6 +603,89 @@
                     </div>
                 </div>
 
+                <!-- Duplicate Files Detection & Storage Recovery View -->
+                <div class="gd-duplicates-container" id="duplicates-view-container" style="display: none;">
+                    <!-- Top Summary Banner -->
+                    <div class="dup-summary-banner">
+                        <div class="dup-summary-left">
+                            <div class="dup-badge-group">
+                                <span class="dup-stat-badge dup-stat-storage">
+                                    <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+                                    <span id="dup-recoverable-text">0 B Recoverable</span>
+                                </span>
+                                <span class="dup-stat-badge dup-stat-count" id="dup-count-badge">0 Duplicate Groups</span>
+                            </div>
+                            <p class="dup-summary-desc">Detect exact duplicate files using cryptographic SHA-256 streaming hashes. Originals are automatically protected.</p>
+                        </div>
+                        <div class="dup-summary-right">
+                            <button class="dup-btn dup-btn-primary" id="dup-scan-btn" onclick="startDuplicateScan()">
+                                <svg viewBox="0 0 24 24" class="dup-btn-svg"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                                <span id="dup-scan-btn-text">Scan for Duplicates</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Scan Progress Bar -->
+                    <div class="dup-progress-wrap" id="dup-progress-wrap" style="display: none;">
+                        <div class="dup-progress-info">
+                            <span id="dup-progress-status-text">Scanning and hashing files in background...</span>
+                            <span id="dup-progress-count-text">0 / 0</span>
+                        </div>
+                        <div class="dup-progress-track">
+                            <div class="dup-progress-bar" id="dup-progress-bar" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Filter & Search Toolbar -->
+                    <div class="dup-toolbar">
+                        <div class="dup-search-box">
+                            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                            <input type="text" id="dup-search-input" placeholder="Search duplicates by name or path..." />
+                        </div>
+                        <div class="dup-category-chips">
+                            <button class="dup-chip active" data-cat="all" onclick="filterDuplicateCategory('all', this)">All Types</button>
+                            <button class="dup-chip" data-cat="image" onclick="filterDuplicateCategory('image', this)">Images</button>
+                            <button class="dup-chip" data-cat="video" onclick="filterDuplicateCategory('video', this)">Videos</button>
+                            <button class="dup-chip" data-cat="audio" onclick="filterDuplicateCategory('audio', this)">Audio</button>
+                            <button class="dup-chip" data-cat="pdf" onclick="filterDuplicateCategory('pdf', this)">PDFs</button>
+                            <button class="dup-chip" data-cat="archive" onclick="filterDuplicateCategory('archive', this)">Archives</button>
+                            <button class="dup-chip" data-cat="code" onclick="filterDuplicateCategory('code', this)">Documents</button>
+                        </div>
+                        <div class="dup-sort-wrap">
+                            <select id="dup-sort-select" onchange="onDuplicateSortChange(this.value)">
+                                <option value="recoverable_size">Largest Recoverable</option>
+                                <option value="file_size">Largest File Size</option>
+                                <option value="copies">Most Copies</option>
+                                <option value="name">File Name</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Batch Selection Bar -->
+                    <div class="dup-selection-bar" id="dup-selection-bar">
+                        <div class="dup-sel-left">
+                            <button class="dup-btn-sm" onclick="selectAllDuplicatesKeepOriginals()">
+                                <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; fill: currentColor;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10H7v-2h10v2z"/></svg>
+                                Select All Duplicates (Keep Originals)
+                            </button>
+                            <button class="dup-btn-sm dup-btn-ghost" onclick="deselectAllDuplicates()">Deselect All</button>
+                            <span class="dup-selected-count" id="dup-selected-count-label">0 items selected</span>
+                        </div>
+                        <div class="dup-sel-right">
+                            <button class="dup-btn-sm dup-btn-danger" id="dup-delete-btn" disabled onclick="confirmDeleteDuplicates(false)">
+                                <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; fill: currentColor;"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                                Move Selected to Trash
+                            </button>
+                            <button class="dup-btn-sm dup-btn-danger-outline" id="dup-perm-delete-btn" disabled onclick="confirmDeleteDuplicates(true)">
+                                Permanently Delete
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Duplicate Groups List Container -->
+                    <div class="dup-groups-list" id="dup-groups-list"></div>
+                </div>
+
                 <!-- Desktop Context Menus Container (Separated from table DOM) -->
                 <div id="context-menus-container"></div>
             </div>
@@ -607,74 +699,162 @@
                     <button class="gd-icon-btn close-btn" id="close-inspector-btn">&times;</button>
                 </div>
                 <div class="gd-inspector-tabs">
-                    <button class="gd-insp-tab active" id="tab-details">Details</button>
-                    <button class="gd-insp-tab" id="tab-activity">Activity</button>
+                    <button class="gd-insp-tab active" id="tab-details" data-target="insp-panel-details">Details</button>
+                    <button class="gd-insp-tab" id="tab-activity" data-target="insp-panel-activity">Activity</button>
+                    <button class="gd-insp-tab" id="tab-storage" data-target="insp-panel-storage">Storage & Tech</button>
                 </div>
             </div>
 
             <div class="gd-inspector-body" id="inspector-body">
-                <!-- Preview / Icon Banner -->
-                <div class="gd-insp-banner" id="insp-banner">
-                    <div class="gd-insp-big-icon" id="insp-big-icon">📄</div>
-                    <div class="gd-insp-filename" id="insp-filename">Select a file</div>
-                </div>
+                <!-- Panel 1: Details -->
+                <div class="gd-insp-tab-panel active" id="insp-panel-details">
+                    <!-- Preview / Icon Banner -->
+                    <div class="gd-insp-banner" id="insp-banner">
+                        <div class="gd-insp-big-icon" id="insp-big-icon">📄</div>
+                        <div class="gd-insp-filename" id="insp-filename">Select a file</div>
+                        <div class="gd-insp-meta-chips" id="insp-meta-chips"></div>
+                    </div>
 
-                <!-- Who has access -->
-                <div class="gd-insp-card">
-                    <div class="gd-insp-card-title">Who has access</div>
-                    <div class="gd-insp-access-row">
-                        <div class="gd-avatar-sm">A</div>
-                        <div class="gd-access-info">
-                            <span class="gd-access-name">Admin (You)</span>
-                            <span class="gd-access-role">Owner</span>
+                    <!-- Who has access -->
+                    <div class="gd-insp-card">
+                        <div class="gd-insp-card-title-row">
+                            <div class="gd-insp-card-title">Who has access</div>
+                            <button id="insp-share-btn-top" class="gd-icon-link-btn" title="Manage sharing">Manage</button>
+                        </div>
+                        <div class="gd-insp-access-row">
+                            <div class="gd-avatar-sm" id="insp-avatar">A</div>
+                            <div class="gd-access-info">
+                                <span class="gd-access-name" id="insp-access-name">Admin (You)</span>
+                                <span class="gd-access-role" id="insp-access-role">Owner • Private</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System Properties -->
+                    <div class="gd-insp-card">
+                        <div class="gd-insp-card-title">General Information</div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Type</span>
+                            <span class="prop-val" id="insp-prop-type">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row" id="row-prop-mime">
+                            <span class="prop-label">MIME Type</span>
+                            <span class="prop-val font-mono" id="insp-prop-mime">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Size</span>
+                            <span class="prop-val" id="insp-prop-size">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row" id="row-prop-storage">
+                            <span class="prop-label">Storage used</span>
+                            <span class="prop-val" id="insp-prop-storage">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Location</span>
+                            <span class="prop-val" id="insp-prop-location">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Owner</span>
+                            <span class="prop-val" id="insp-prop-owner">Admin</span>
+                        </div>
+                    </div>
+
+                    <!-- Content & Media Metadata (dynamic) -->
+                    <div class="gd-insp-card" id="insp-card-content">
+                        <div class="gd-insp-card-title" id="insp-content-title">Content & Media Details</div>
+                        <div id="insp-content-props-body">
+                            <!-- Populated dynamically: dimensions, duration, bitrate, pages, archive count, etc. -->
+                        </div>
+                    </div>
+
+                    <!-- Dates and Timestamps -->
+                    <div class="gd-insp-card">
+                        <div class="gd-insp-card-title">Dates & Timestamps</div>
+                        <div class="gd-insp-prop-row" id="row-prop-created">
+                            <span class="prop-label">Created</span>
+                            <span class="prop-val" id="insp-prop-created">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Uploaded</span>
+                            <span class="prop-val" id="insp-prop-date">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row" id="row-prop-modified">
+                            <span class="prop-label">Modified</span>
+                            <span class="prop-val" id="insp-prop-modified">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row" id="row-prop-accessed">
+                            <span class="prop-label">Last accessed</span>
+                            <span class="prop-val" id="insp-prop-accessed">--</span>
+                        </div>
+                    </div>
+
+                    <!-- Checksum & Security -->
+                    <div class="gd-insp-card" id="insp-card-checksum">
+                        <div class="gd-insp-card-title">Integrity & Checksum</div>
+                        <div class="gd-insp-prop-row" style="grid-template-columns: 1fr;">
+                            <span class="prop-label" style="margin-bottom: 4px;">SHA-256 Checksum:</span>
+                            <div class="gd-checksum-chip" id="insp-prop-sha256-box">
+                                <span class="font-mono" id="insp-prop-sha256" style="font-size:0.72rem; word-break:break-all;">--</span>
+                                <button class="gd-secondary-btn-xs" id="insp-copy-sha256-btn" title="Copy SHA-256">Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Direct Link Action -->
+                    <div class="gd-insp-card">
+                        <div class="gd-insp-card-title">Link Sharing</div>
+                        <div class="gd-link-copy-box">
+                            <input type="text" id="insp-link-input" readonly />
+                            <button id="insp-copy-btn" class="gd-secondary-btn-sm" title="Copy link">Copy</button>
+                            <button id="insp-share-btn" class="gd-primary-btn-sm" title="Share modal">Share</button>
                         </div>
                     </div>
                 </div>
 
-                <!-- System Properties -->
-                <div class="gd-insp-card">
-                    <div class="gd-insp-card-title">System Properties</div>
-                    <div class="gd-insp-prop-row">
-                        <span class="prop-label">Type</span>
-                        <span class="prop-val" id="insp-prop-type">--</span>
+                <!-- Panel 2: Activity Timeline -->
+                <div class="gd-insp-tab-panel" id="insp-panel-activity">
+                    <div class="gd-activity-header">
+                        <span class="gd-activity-title">Activity Timeline</span>
                     </div>
-                    <div class="gd-insp-prop-row">
-                        <span class="prop-label">Size</span>
-                        <span class="prop-val" id="insp-prop-size">--</span>
-                    </div>
-                    <div class="gd-insp-prop-row">
-                        <span class="prop-label">Storage used</span>
-                        <span class="prop-val" id="insp-prop-storage">--</span>
-                    </div>
-                    <div class="gd-insp-prop-row">
-                        <span class="prop-label">Location</span>
-                        <span class="prop-val" id="insp-prop-location">--</span>
-                    </div>
-                    <div class="gd-insp-prop-row">
-                        <span class="prop-label">Owner</span>
-                        <span class="prop-val" id="insp-prop-owner">Admin</span>
-                    </div>
-                    <div class="gd-insp-prop-row">
-                        <span class="prop-label">Modified</span>
-                        <span class="prop-val" id="insp-prop-date">--</span>
-                    </div>
-                    <div class="gd-insp-prop-row">
-                        <span class="prop-label">Telegram Msg</span>
-                        <span class="prop-val font-mono" id="insp-prop-msg-id">--</span>
+                    <div class="gd-activity-timeline" id="insp-activity-timeline">
+                        <div class="gd-activity-empty">Select an item to view activity history</div>
                     </div>
                 </div>
 
-                <!-- Direct Link Action -->
-                <div class="gd-insp-card">
-                    <div class="gd-insp-card-title">Link Sharing</div>
-                    <div class="gd-link-copy-box">
-                        <input type="text" id="insp-link-input" readonly />
-                        <button id="insp-copy-btn" class="gd-secondary-btn-sm" title="Copy direct link">Copy</button>
-                        <button id="insp-share-btn" class="gd-primary-btn-sm" title="Create or manage share link">Share</button>
+                <!-- Panel 3: Storage & Technical -->
+                <div class="gd-insp-tab-panel" id="insp-panel-storage">
+                    <div class="gd-insp-card">
+                        <div class="gd-insp-card-title">Telegram Cloud Storage</div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Storage Backend</span>
+                            <span class="prop-val">Telegram Cloud (Encrypted)</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Message ID(s)</span>
+                            <span class="prop-val font-mono" id="insp-prop-msg-id">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row" id="row-prop-channel-id">
+                            <span class="prop-label">Channel ID</span>
+                            <span class="prop-val font-mono" id="insp-prop-channel-id">--</span>
+                        </div>
+                        <div class="gd-insp-prop-row">
+                            <span class="prop-label">Item ID</span>
+                            <span class="prop-val font-mono" id="insp-prop-item-id">--</span>
+                        </div>
+                    </div>
+
+                    <div class="gd-insp-card">
+                        <div class="gd-insp-card-title">Metadata Operations</div>
+                        <p style="font-size:0.78rem; color:var(--gd-text-secondary); margin-bottom:10px;">
+                            Extract high-precision media codecs, audio bitrates, PDF page count, or folder tree metrics.
+                        </p>
+                        <button id="insp-enrich-btn" class="gd-secondary-btn" style="width:100%;">
+                            ⚡ Re-enrich Metadata
+                        </button>
                     </div>
                 </div>
 
-                <!-- Action Buttons -->
+                <!-- Bottom Action Buttons -->
                 <div class="gd-insp-actions">
                     <button id="insp-open-btn" class="gd-primary-btn">Preview</button>
                     <button id="insp-download-btn" class="gd-secondary-btn">Download</button>
@@ -867,8 +1047,55 @@
         </div>
     </div>
 
-    <!-- Google Drive Floating Upload Status Card (Bottom Right) -->
-    <div id="file-uploader" class="gd-upload-floating-card">
+    <!-- Google Drive-Style Production Transfer Manager Dock & Drawer -->
+    <div id="transfer-dock-pill" class="gd-transfer-dock-pill" style="display: none;">
+        <div class="gd-dock-left">
+            <span id="dock-spinner-icon" class="gd-dock-spinner">🔄</span>
+            <span id="dock-status-label" class="gd-dock-title">Transfers</span>
+        </div>
+        <div class="gd-dock-right">
+            <span id="dock-speed-badge" class="gd-dock-speed" style="display: none;">0 B/s</span>
+            <span class="gd-dock-chevron">▲</span>
+        </div>
+    </div>
+
+    <div id="transfer-manager-drawer" class="gd-transfer-drawer">
+        <div class="gd-tm-header">
+            <div class="gd-tm-title-group">
+                <span class="gd-tm-title">Transfers</span>
+                <span id="tm-header-count" class="gd-tm-badge">0</span>
+            </div>
+            <div class="gd-tm-header-actions">
+                <button id="tm-clear-btn" class="gd-tm-btn-clear" title="Clear finished transfers">Clear finished</button>
+                <button id="tm-minimize-btn" class="gd-tm-icon-btn" title="Minimize drawer">—</button>
+                <button id="tm-close-btn" class="gd-tm-icon-btn" title="Close">✕</button>
+            </div>
+        </div>
+
+        <div class="gd-tm-tabs-bar">
+            <button class="gd-tm-tab active" data-tab="all">All (<span id="tm-tab-count-all">0</span>)</button>
+            <button class="gd-tm-tab" data-tab="upload">Uploads (<span id="tm-tab-count-upload">0</span>)</button>
+            <button class="gd-tm-tab" data-tab="download">Downloads (<span id="tm-tab-count-download">0</span>)</button>
+            <button class="gd-tm-tab" data-tab="active">Active (<span id="tm-tab-count-active">0</span>)</button>
+        </div>
+
+        <div id="tm-batch-section" class="gd-tm-batch-section" style="display: none;">
+            <div class="gd-tm-batch-meta">
+                <span id="tm-batch-text">Transferring items...</span>
+                <span id="tm-batch-speed">0 B/s</span>
+            </div>
+            <div class="gd-tm-batch-bar-track">
+                <div id="tm-batch-fill" class="gd-tm-batch-bar-fill" style="width: 0%;"></div>
+            </div>
+        </div>
+
+        <div id="tm-items-container" class="gd-tm-items-list">
+            <!-- Rendered by transferManager.js -->
+        </div>
+    </div>
+
+    <!-- Legacy hidden upload card for strict backward compatibility -->
+    <div id="file-uploader" class="gd-upload-floating-card" style="display: none !important;">
         <div class="gd-upload-card-header">
             <span class="gd-upload-title" id="upload-status">Uploading items...</span>
             <button id="cancel-file-upload" class="gd-upload-close-btn">&times;</button>
@@ -946,6 +1173,10 @@
             <div class="gd-bs-item" id="mob-file-upload">
                 <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
                 <span>Upload file</span>
+            </div>
+            <div class="gd-bs-item" id="mob-folder-upload">
+                <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M20 6h-8l-2-2H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3V9h2v3h3v2z"/></svg>
+                <span>Upload folder</span>
             </div>
             <div class="gd-bs-item" id="mob-url-upload">
                 <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
@@ -1098,6 +1329,8 @@
     <script src="static/js/apiHandler.js?v=14.0"></script>
     <script src="static/js/sidebar.js?v=14.0"></script>
     <script src="static/js/fileClickHandler.js?v=14.0"></script>
+    <script src="static/js/transferManager.js?v=14.0"></script>
+    <script src="static/js/duplicates.js?v=14.0"></script>
     <script src="static/js/main.js?v=14.0"></script>
     <script>
         if ('serviceWorker' in navigator) {

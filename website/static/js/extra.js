@@ -118,11 +118,17 @@ function navigateToPath(targetPath, pushState = true) {
 
     // Reset views when navigating
     if (cleanPath === '/shared_links' || cleanPath.startsWith('/shared_links')) {
-        if (typeof window.hideSyncActivityView === 'function') {
-            window.hideSyncActivityView();
-        }
+        if (typeof window.hideSyncActivityView === 'function') window.hideSyncActivityView();
+        if (typeof window.hideDuplicatesView === 'function') window.hideDuplicatesView();
         if (typeof window.showSharedLinksView === 'function') {
             window.showSharedLinksView(false);
+            return;
+        }
+    } else if (cleanPath === '/duplicates' || cleanPath.startsWith('/duplicates')) {
+        if (typeof window.hideSyncActivityView === 'function') window.hideSyncActivityView();
+        if (typeof window.hideSharedLinksView === 'function') window.hideSharedLinksView();
+        if (typeof window.showDuplicatesView === 'function') {
+            window.showDuplicatesView(false);
             return;
         }
     } else {
@@ -131,6 +137,9 @@ function navigateToPath(targetPath, pushState = true) {
         }
         if (typeof window.hideSyncActivityView === 'function') {
             window.hideSyncActivityView();
+        }
+        if (typeof window.hideDuplicatesView === 'function') {
+            window.hideDuplicatesView();
         }
     }
 
@@ -152,21 +161,26 @@ function updateSidebarNavSelection(path) {
     const isTrash = path && path.startsWith('/trash');
     const isRecent = path && (path === '/recent' || path.startsWith('/recent'));
     const isSharedLinks = path && (path === '/shared_links' || path.startsWith('/shared_links')) || (window.CURRENT_PAGE_VIEW === 'shared_links');
+    const isDuplicates = path && (path === '/duplicates' || path.startsWith('/duplicates')) || (window.CURRENT_PAGE_VIEW === 'duplicates');
     const isSync = (window.CURRENT_PAGE_VIEW === 'sync');
     const navMyDrive = document.getElementById('nav-my-drive');
     const navRecent = document.getElementById('nav-recent');
     const navSharedLinks = document.getElementById('nav-shared-links');
+    const navDuplicates = document.getElementById('nav-duplicates');
     const navSyncActivity = document.getElementById('nav-sync-activity');
     const navTrash = document.getElementById('nav-trash');
     const newBtn = document.getElementById('new-button');
 
-    const allNavs = [navMyDrive, navRecent, navSharedLinks, navSyncActivity, navTrash];
+    const allNavs = [navMyDrive, navRecent, navSharedLinks, navDuplicates, navSyncActivity, navTrash];
     allNavs.forEach(n => {
         if (n) n.className = 'gd-nav-item unselected-item';
     });
 
     if (isSharedLinks) {
         if (navSharedLinks) navSharedLinks.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'inline-flex';
+    } else if (isDuplicates) {
+        if (navDuplicates) navDuplicates.className = 'gd-nav-item selected-item';
         if (newBtn) newBtn.style.display = 'inline-flex';
     } else if (isSync) {
         if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';

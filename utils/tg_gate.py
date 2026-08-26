@@ -43,7 +43,7 @@ MAX_GLOBAL_WAIT = float(os.getenv("TG_MAX_WAIT", "900"))  # give up waiting afte
 # State (single event loop -> plain attrs are safe)
 # ---------------------------------------------------------------------------
 _semaphore: asyncio.Semaphore | None = None     # lazily bound to running loop
-_flood_until: dict = {}                          # client_key -> epoch ts
+_flood_until: dict = {}                          # client_key (str) -> epoch ts
 _global_until: float = 0.0                       # epoch ts everyone must wait until
 _last_send_ts: float = 0.0                       # last completed/started channel send
 _pace: float = 0.0                               # current adaptive extra delay
@@ -51,30 +51,38 @@ _pace: float = 0.0                               # current adaptive extra delay
 
 def _sem() -> asyncio.Semaphore:
     global _semaphore
-    if _semaphore is None:
+    try:
+        cur_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        cur_loop = None
+    if _semaphore is None or (_semaphore._loop if hasattr(_semaphore, "_loop") else None) != cur_loop:
         _semaphore = asyncio.Semaphore(SEND_CONCURRENCY)
     return _semaphore
 
 
-def note_flood(client_key=None, wait_seconds: float = 0.0) -> None:
+def note_flood(client_key=None, wait_seconds: float = 0.0, has_alternatives: bool = False) -> None:
     """
     Report a Telegram FloodWait.
-        client_key  — id(client) of the offending client (None => unknown source)
-        wait_seconds — Telegram's requested wait (fw.value)
+        client_key       — identifier of the offending client (str/int/Client)
+        wait_seconds     — Telegram's requested wait (fw.value)
+        has_alternatives — whether other active clients can immediately take over
     """
     global _global_until, _pace
     now = time.monotonic()
     wait_s = max(1.0, float(wait_seconds))
 
     if client_key is not None:
-        _flood_until[client_key] = now + wait_s + CLIENT_BUFFER + random.uniform(0.5, 2.0)
+        key = str(client_key)
+        _flood_until[key] = now + wait_s + CLIENT_BUFFER + random.uniform(0.2, 1.0)
 
-    # Global gate: pause every sender a bit longer than the flood itself,
-    # so queued workers don't re-trigger the same limit one after another.
-    global_pause = now + min(wait_s * 0.6 + random.uniform(0.5, 1.5), wait_s)
+    if has_alternatives:
+        # Other bots are ready: brief 0.2s pause so next bot claims the slot smoothly
+        global_pause = now + 0.2
+    else:
+        # All bots rate-limited: pause queue until earliest bot cooldown expires
+        global_pause = now + min(wait_s + 0.5, wait_s * 0.8 + 1.0)
+
     _global_until = max(_global_until, global_pause)
-
-    # Adaptive pacing ramps up aggressively but stays bounded
     _pace = min(PACING_MAX, _pace + FLOOD_STEP)
 
 
@@ -86,13 +94,26 @@ def note_success() -> None:
 
 def client_available(client_key) -> bool:
     """True if this client's per-client cooldown has expired."""
-    return time.monotonic() >= _flood_until.get(client_key, 0.0)
+    key = str(client_key)
+    return time.monotonic() >= _flood_until.get(key, 0.0)
+
+
+def get_client_cooldown(client_key) -> float:
+    """Remaining cooldown in seconds for a specific client."""
+    key = str(client_key)
+    return max(0.0, _flood_until.get(key, 0.0) - time.monotonic())
 
 
 def next_client_wake(keys) -> float:
     """Earliest monotonic time any of the given client keys becomes usable."""
-    times = [_flood_until[k] for k in keys if k in _flood_until]
+    str_keys = [str(k) for k in keys]
+    times = [_flood_until[k] for k in str_keys if k in _flood_until]
     return min(times) if times else time.monotonic()
+
+
+def get_global_cooldown() -> float:
+    """Remaining global pause duration in seconds."""
+    return max(0.0, _global_until - time.monotonic())
 
 
 async def wait_turn() -> None:
@@ -113,8 +134,8 @@ async def wait_turn() -> None:
         remaining = wake - now
         if remaining <= 0:
             break
-        # Jitter: ±15% so concurrent workers don't wake in lockstep
-        await asyncio.sleep(min(remaining, 30) * random.uniform(0.85, 1.15))
+        # Jitter: ±10% so concurrent workers don't wake in lockstep
+        await asyncio.sleep(min(remaining, 30) * random.uniform(0.9, 1.1))
 
     _last_send_ts = time.monotonic()
 

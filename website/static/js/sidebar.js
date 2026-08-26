@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const navMyDrive = document.getElementById('nav-my-drive');
     const navRecent = document.getElementById('nav-recent');
     const navSharedLinks = document.getElementById('nav-shared-links');
+    const navDuplicates = document.getElementById('nav-duplicates');
     const navTrash = document.getElementById('nav-trash');
 
     updateSidebarNavSelection(currentPath);
@@ -51,6 +52,17 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    if (navDuplicates) {
+        navDuplicates.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (typeof window.showDuplicatesView === 'function') {
+                window.showDuplicatesView();
+            } else {
+                navigateToPath('/duplicates');
+            }
+        });
+    }
+
     if (navTrash) {
         navTrash.addEventListener('click', (e) => {
             e.preventDefault();
@@ -82,6 +94,16 @@ document.addEventListener('DOMContentLoaded', () => {
         fileUploadBtn.addEventListener('click', () => {
             newUploadDropdown.classList.remove('active');
             fileInput.click();
+        });
+    }
+
+    // Folder Upload Button
+    const folderUploadBtn = document.getElementById('folder-upload-btn');
+    const folderInput = document.getElementById('folderInput');
+    if (folderUploadBtn && folderInput) {
+        folderUploadBtn.addEventListener('click', () => {
+            newUploadDropdown.classList.remove('active');
+            folderInput.click();
         });
     }
 
@@ -303,6 +325,14 @@ document.addEventListener('DOMContentLoaded', () => {
         mobFileUpload.addEventListener('click', () => {
             closeFabBottomSheet();
             fileInput.click();
+        });
+    }
+
+    const mobFolderUpload = document.getElementById('mob-folder-upload');
+    if (mobFolderUpload && folderInput) {
+        mobFolderUpload.addEventListener('click', () => {
+            closeFabBottomSheet();
+            folderInput.click();
         });
     }
 

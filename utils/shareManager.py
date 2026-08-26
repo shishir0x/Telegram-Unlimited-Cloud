@@ -321,6 +321,39 @@ def public_record(rec: dict, include_token: bool = False) -> dict:
     return out
 
 
+def get_share_by_token(token: str) -> Optional[dict]:
+    """Validates and returns active share record or None."""
+    rec, reason = validate_share(token)
+    if not rec:
+        return None
+    # Attach computed target_id_path and target_id for consistency
+    rec_copy = dict(rec)
+    target = rec.get("target", "").strip("/")
+    rec_copy["target_id_path"] = "/" + target if target else "/"
+    rec_copy["target_id"] = target.split("/")[-1] if target else ""
+    return rec_copy
+
+
+def get_active_shares_for_target(target_id_path: str) -> List[dict]:
+    """Returns all non-expired, non-revoked shares pointing to target_id_path or target_id."""
+    shares = _load_shares()
+    now = time.time()
+    results = []
+    clean_target = target_id_path.strip("/")
+    target_id = clean_target.split("/")[-1] if clean_target else ""
+
+    for tok, rec in shares.items():
+        if rec.get("revoked"):
+            continue
+        exp = rec.get("expires_at")
+        if exp and now > float(exp):
+            continue
+        rec_target = str(rec.get("target", "")).strip("/")
+        if rec_target == clean_target or (target_id and rec_target.endswith(target_id)):
+            results.append(dict(rec))
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Scoped subtree resolution (pure ID-walk — no name guessing, no escape)
 # ---------------------------------------------------------------------------
@@ -492,12 +525,16 @@ def collect_share_items_for_zip(node, root_name: str = "Shared") -> Tuple[str, L
         if node_type == "file":
             fid = getattr(curr_node, "file_id", None)
             fname = getattr(curr_node, "name", "file")
-            if fid:
+            from utils.directoryHandler import ensure_drive_data
+            drive = ensure_drive_data()
+            local_path = drive.resolve_local_file_path(curr_node)
+            if fid or (local_path and os.path.isfile(local_path)):
                 items.append({
-                    "file_id": fid,
+                    "file_id": fid or 0,
                     "file_name": fname,
                     "archive_path": f"{current_rel_path}/{fname}".strip("/"),
                     "size": int(getattr(curr_node, "size", 0) or 0),
+                    "local_path": local_path,
                 })
         elif node_type == "folder":
             contents = getattr(curr_node, "contents", {})

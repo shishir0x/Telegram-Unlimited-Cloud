@@ -669,10 +669,11 @@ class TGDriveBackupClient:
 
             # Poll for Telegram upload completion with real-time progress bar
             at_100_count = 0
-            max_poll_seconds = max(20, min(180, int(file_size / (100 * 1024)) + 15))
-            max_iterations = int(max_poll_seconds / 0.4)
+            max_poll_seconds = max(30, min(300, int(file_size / (50 * 1024)) + 30))
+            poll_deadline = time.time() + max_poll_seconds
+            cooldown_ticks = 0
 
-            for _ in range(max_iterations):
+            while time.time() < poll_deadline:
                 time.sleep(0.4)
                 try:
                     prog_res = self.session.post(
@@ -692,12 +693,28 @@ class TGDriveBackupClient:
                             speed_str = f"{format_size(int(speed))}/s"
 
                             if status == "waiting":
-                                # Telegram rate-limit pause: server will resume
-                                # automatically. Extend patience instead of timing out.
-                                max_poll_seconds += 5
-                                print(f"\r    ⏳ Telegram rate-limit pause — server resuming automatically... ", end="")
+                                # Telegram rate-limit pause: server is in cooldown and will resume automatically.
+                                poll_deadline = max(poll_deadline, time.time() + 45)
+                                cooldown_ticks += 1
+                                transfer_meta = prog_data.get("transfer", {})
+                                rem_cooldown = transfer_meta.get("cooldown_remaining")
+                                if rem_cooldown is not None and rem_cooldown > 0:
+                                    msg = f"cooling down (resumes in {int(rem_cooldown)}s)..."
+                                else:
+                                    err_reason = transfer_meta.get("error_reason", "")
+                                    import re
+                                    wait_match = re.search(r"(\d+)\s*s", err_reason)
+                                    if wait_match:
+                                        initial_wait = int(wait_match.group(1))
+                                        rem_cooldown = max(1, initial_wait - int(cooldown_ticks * 0.4))
+                                        msg = f"cooling down (resumes in ~{rem_cooldown}s)..."
+                                    else:
+                                        msg = "server resuming automatically..."
+                                sys.stdout.write(f"\r    ⏳ Telegram rate-limit {msg:<60}")
+                                sys.stdout.flush()
                                 continue
 
+                            cooldown_ticks = 0
                             if status == "running":
                                 print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
                                 self.push_web_sync_status({
@@ -711,11 +728,13 @@ class TGDriveBackupClient:
                                         print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                                         fhash = compute_fast_file_hash(local_file_path)
                                         self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
+                                        time.sleep(0.15)
                                         return True
                             elif status == "completed":
                                 print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                                 fhash = compute_fast_file_hash(local_file_path)
                                 self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
+                                time.sleep(0.15)
                                 return True
                             elif status == "error":
                                 print(f"\n    ⚠️ Upload error reported. Skipping '{file_name}' to continue queue.")
@@ -786,10 +805,11 @@ class TGDriveBackupClient:
 
             # Poll for Telegram upload completion with real-time progress bar
             at_100_count = 0
-            max_poll_seconds = max(20, min(180, int(file_size / (100 * 1024)) + 15))
-            max_iterations = int(max_poll_seconds / 0.4)
+            max_poll_seconds = max(30, min(300, int(file_size / (50 * 1024)) + 30))
+            poll_deadline = time.time() + max_poll_seconds
+            cooldown_ticks = 0
 
-            for _ in range(max_iterations):
+            while time.time() < poll_deadline:
                 time.sleep(0.4)
                 try:
                     prog_res = self.session.post(
@@ -810,10 +830,27 @@ class TGDriveBackupClient:
 
                             if status == "waiting":
                                 # Telegram rate-limit pause: extend patience.
-                                max_poll_seconds += 5
-                                print(f"\r    ⏳ Telegram rate-limit pause — server resuming automatically... ", end="")
+                                poll_deadline = max(poll_deadline, time.time() + 45)
+                                cooldown_ticks += 1
+                                transfer_meta = prog_data.get("transfer", {})
+                                rem_cooldown = transfer_meta.get("cooldown_remaining")
+                                if rem_cooldown is not None and rem_cooldown > 0:
+                                    msg = f"cooling down (resumes in {int(rem_cooldown)}s)..."
+                                else:
+                                    err_reason = transfer_meta.get("error_reason", "")
+                                    import re
+                                    wait_match = re.search(r"(\d+)\s*s", err_reason)
+                                    if wait_match:
+                                        initial_wait = int(wait_match.group(1))
+                                        rem_cooldown = max(1, initial_wait - int(cooldown_ticks * 0.4))
+                                        msg = f"cooling down (resumes in ~{rem_cooldown}s)..."
+                                    else:
+                                        msg = "server resuming automatically..."
+                                sys.stdout.write(f"\r    ⏳ Telegram rate-limit {msg:<60}")
+                                sys.stdout.flush()
                                 continue
 
+                            cooldown_ticks = 0
                             if status == "running":
                                 print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
                                 self.push_web_sync_status({
@@ -827,11 +864,13 @@ class TGDriveBackupClient:
                                         print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                                         h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
                                         self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
+                                        time.sleep(0.15)
                                         return True
                             elif status == "completed":
                                 print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                                 h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
                                 self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)
+                                time.sleep(0.15)
                                 return True
                             elif status == "error":
                                 print(f"\n    ⚠️ Upload error reported. Skipping '{file_name}' to continue queue.")

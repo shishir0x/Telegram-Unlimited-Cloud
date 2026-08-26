@@ -3,6 +3,7 @@ from utils.downloader import (
     get_file_info_from_url,
 )
 import os
+from typing import Optional, List, Dict, Any, Union
 import asyncio
 import secrets
 import time
@@ -69,6 +70,20 @@ async def lifespan(app: FastAPI):
     # Start background session/OTP cleanup task
     start_cleanup_task()
 
+    # Start background metadata enrichment worker
+    try:
+        from utils.properties import MetadataWorker
+        await MetadataWorker.start()
+    except Exception as e:
+        logger.warning(f"Metadata worker startup note: {e}")
+
+    # Start background Transfer Manager subsystem
+    try:
+        from utils.transfer_manager import transfer_manager
+        await transfer_manager.start()
+    except Exception as e:
+        logger.warning(f"Transfer manager startup note: {e}")
+
     import socket
     lan_ips = []
     try:
@@ -92,7 +107,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Graceful shutdown: cleanly disconnect Telegram clients
+    # Graceful shutdown: cleanly disconnect Telegram clients & TransferManager
+    try:
+        from utils.transfer_manager import transfer_manager
+        await transfer_manager.shutdown()
+    except Exception as e:
+        logger.warning(f"Transfer manager shutdown error: {e}")
+
     try:
         from utils.clients import stop_clients
         await stop_clients()
@@ -241,10 +262,42 @@ async def dl_file(request: Request):
 
     try:
         file = drive.get_file(clean_path, is_admin=is_admin)
-        return await media_streamer(STORAGE_CHANNEL, file.file_id, file.name, request)
+        try:
+            from utils.properties import ActivityTracker
+            import time
+            is_preview = bool(request.query_params.get("preview"))
+            action = "previewed" if is_preview else "downloaded"
+            actor = "Admin" if is_admin else "Shared link user"
+            ActivityTracker.record_activity(file, action, actor=actor)
+            setattr(file, "accessed_at", time.time())
+            if is_preview:
+                setattr(file, "viewed_at", time.time())
+            else:
+                setattr(file, "downloaded_at", time.time())
+        except Exception:
+            pass
+
+        # 1. Direct local file streaming with HTTP Range support
+        local_path = drive.resolve_local_file_path(file)
+        if local_path and os.path.isfile(local_path):
+            from utils.streamer import local_file_streamer
+            return await local_file_streamer(local_path, file.name, request)
+
+        # 2. Telegram cloud streaming via MTProto
+        if getattr(file, "file_id", 0) and int(file.file_id) > 0:
+            return await media_streamer(STORAGE_CHANNEL, file.file_id, file.name, request)
+
+        # 3. File metadata exists but source is offline / pending sync
+        raise HTTPException(
+            status_code=404,
+            detail=f"File '{file.name}' is currently offline on local disk and has not yet been synced to Telegram cloud.",
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error streaming file '{path}': {e}")
         raise HTTPException(status_code=404, detail="File not found")
+
 
 
 @app.get("/downloadZip")
@@ -366,25 +419,25 @@ except ImportError:
 
 class ThumbnailService:
     def __init__(self, max_ram_items: int = 500, max_disk_mb: int = int(os.getenv("THUMB_CACHE_MAX_MB", "500"))):
-        self.ram_cache: collections.OrderedDict[int, bytes] = collections.OrderedDict()
+        self.ram_cache: collections.OrderedDict[Union[int, str], bytes] = collections.OrderedDict()
         self.max_ram_items = max_ram_items
         self.max_disk_bytes = max_disk_mb * 1024 * 1024
         self.cache_dir = Path("./cache/thumbs")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.semaphore = asyncio.Semaphore(4)
-        self.in_flight: dict[int, asyncio.Future] = {}
+        self.in_flight: dict[Union[int, str], asyncio.Future] = {}
         # Initial disk prune check on startup
         self.prune_disk_if_needed()
 
-    def get_ram(self, file_id: int) -> bytes | None:
-        if file_id in self.ram_cache:
-            self.ram_cache.move_to_end(file_id)
-            return self.ram_cache[file_id]
+    def get_ram(self, key: Union[int, str]) -> bytes | None:
+        if key in self.ram_cache:
+            self.ram_cache.move_to_end(key)
+            return self.ram_cache[key]
         return None
 
-    def put_ram(self, file_id: int, data: bytes):
-        self.ram_cache[file_id] = data
-        self.ram_cache.move_to_end(file_id)
+    def put_ram(self, key: Union[int, str], data: bytes):
+        self.ram_cache[key] = data
+        self.ram_cache.move_to_end(key)
         if len(self.ram_cache) > self.max_ram_items:
             self.ram_cache.popitem(last=False)
 
@@ -397,9 +450,7 @@ class ThumbnailService:
             total_size = sum(f.stat().st_size for f in files if f.exists())
             if total_size > self.max_disk_bytes:
                 logger.info(f"Thumbnail cache ({total_size / (1024*1024):.1f}MB) exceeded limit ({self.max_disk_bytes / (1024*1024):.1f}MB). Auto-pruning oldest files...")
-                # Sort by last modified time (oldest first)
                 files.sort(key=lambda f: f.stat().st_mtime)
-                # Remove oldest 30% of thumbnails to bring disk space safely below threshold
                 target_delete_count = max(1, int(len(files) * 0.3))
                 for f in files[:target_delete_count]:
                     try:
@@ -409,6 +460,61 @@ class ThumbnailService:
                 logger.info(f"Auto-pruned {target_delete_count} oldest thumbnails from disk.")
         except Exception as e:
             logger.warning(f"Error during thumbnail disk pruning: {e}")
+
+    async def get_or_generate_local(self, local_path: str, cache_key: str) -> bytes | None:
+        """
+        Fast on-the-fly thumbnail generation for physical files on local disk.
+        Caches results in RAM and on disk under cache/thumbs/{cache_key}.jpg.
+        """
+        if not PIL_AVAILABLE:
+            return None
+
+        # 1. RAM cache
+        ram_data = self.get_ram(cache_key)
+        if ram_data:
+            return ram_data
+
+        # 2. Disk cache
+        disk_file = self.cache_dir / f"{cache_key}.jpg"
+        if disk_file.exists() and disk_file.stat().st_size > 0:
+            try:
+                data = disk_file.read_bytes()
+                self.put_ram(cache_key, data)
+                return data
+            except Exception:
+                pass
+
+        # 3. Generate thumbnail from local image
+        try:
+            p = Path(local_path)
+            if not p.is_file():
+                return None
+            ext = p.suffix.lower().lstrip(".")
+            if ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "ico", "tiff", "tif", "avif"]:
+                with Image.open(local_path) as img:
+                    if img.mode in ("RGBA", "LA", "P"):
+                        bg = Image.new("RGB", img.size, (255, 255, 255))
+                        if img.mode == "P":
+                            img = img.convert("RGBA")
+                        if "A" in img.mode:
+                            bg.paste(img, mask=img.split()[-1])
+                        else:
+                            bg.paste(img)
+                        img = bg
+                    elif img.mode != "RGB":
+                        img = img.convert("RGB")
+                    img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                    out_buf = io.BytesIO()
+                    img.save(out_buf, format="JPEG", quality=80, optimize=True)
+                    thumb_bytes = out_buf.getvalue()
+                    self.cache_dir.mkdir(parents=True, exist_ok=True)
+                    disk_file.write_bytes(thumb_bytes)
+                    self.put_ram(cache_key, thumb_bytes)
+                    self.prune_disk_if_needed()
+                    return thumb_bytes
+        except Exception as e:
+            logger.warning(f"Failed local thumbnail generation for {local_path}: {e}")
+        return None
 
     async def get_or_fetch(self, file_id: int, file_name: str) -> bytes | None:
         file_id = int(file_id)
@@ -546,25 +652,42 @@ async def get_thumbnail(request: Request):
 
     try:
         file = drive.get_file(clean_path, is_admin=is_admin)
-        if not file or not file.file_id:
+        if not file:
             raise HTTPException(status_code=404, detail="File not found")
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
 
-    etag = f'"thumb-{file.file_id}"'
+    cache_identifier = str(file.file_id) if (getattr(file, "file_id", 0) and file.file_id > 0) else getattr(file, "id", "thumb")
+    etag = f'"thumb-{cache_identifier}"'
     if request.headers.get("If-None-Match") == etag:
         return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=31536000, immutable"})
 
-    thumb_data = await THUMB_SERVICE.get_or_fetch(file.file_id, file.name)
-    if thumb_data:
-        return Response(
-            content=thumb_data,
-            media_type="image/jpeg",
-            headers={
-                "ETag": etag,
-                "Cache-Control": "public, max-age=31536000, immutable"
-            }
-        )
+    # 1. Try Telegram thumbnail if valid message ID
+    if getattr(file, "file_id", 0) and int(file.file_id) > 0:
+        thumb_data = await THUMB_SERVICE.get_or_fetch(file.file_id, file.name)
+        if thumb_data:
+            return Response(
+                content=thumb_data,
+                media_type="image/jpeg",
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                },
+            )
+
+    # 2. Try local image thumbnail
+    local_path = drive.resolve_local_file_path(file)
+    if local_path and os.path.isfile(local_path):
+        thumb_data = await THUMB_SERVICE.get_or_generate_local(local_path, getattr(file, "id", cache_identifier))
+        if thumb_data:
+            return Response(
+                content=thumb_data,
+                media_type="image/jpeg",
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                },
+            )
 
     raise HTTPException(status_code=404, detail="Thumbnail not available")
 
@@ -968,27 +1091,36 @@ async def copy_file_folder_api(request: Request, _auth: Session = Depends(requir
 
 
 @app.post("/api/checkFileExists")
-async def api_check_file_exists(request: Request, _auth: Session = Depends(require_auth)):
+async def check_file_exists(request: Request, _auth: Session = Depends(require_auth)):
     """
     Checks if a file with the given name already exists in the target folder.
     Used for pre-upload conflict resolution prompts (Replace vs Keep Both vs Cancel).
     """
     from utils.directoryHandler import ensure_drive_data
     drive = ensure_drive_data()
-
-    try:
-        data = await request.json()
-    except Exception:
-        return JSONResponse({"status": "Invalid payload"}, status_code=400)
-
+    data = await request.json()
     target_path = sanitize_path(data.get("path", "/"))
     filename = str(data.get("filename", "")).strip()
+    relative_path = data.get("relative_path")
+
+    if relative_path and str(relative_path).strip():
+        clean_rel = str(relative_path).replace("\\", "/").strip("/")
+        parts = [p for p in clean_rel.split("/") if p and p not in (".", "..")]
+        if len(parts) > 1:
+            dir_chain = "/".join(parts[:-1])
+            folder_res = drive.get_directory(f"{target_path.rstrip('/')}/{dir_chain}", is_admin=True)
+            folder_obj = folder_res[0] if isinstance(folder_res, tuple) else folder_res
+        else:
+            folder_res = drive.get_directory(target_path, is_admin=True)
+            folder_obj = folder_res[0] if isinstance(folder_res, tuple) else folder_res
+        if parts and parts[-1]:
+            filename = parts[-1]
+    else:
+        folder_res = drive.get_directory(target_path, is_admin=True)
+        folder_obj = folder_res[0] if isinstance(folder_res, tuple) else folder_res
 
     if not filename:
         return JSONResponse({"exists": False})
-
-    folder_res = drive.get_directory(target_path, is_admin=True)
-    folder_obj = folder_res[0] if isinstance(folder_res, tuple) else folder_res
 
     exists = False
     existing_size = 0
@@ -1012,6 +1144,26 @@ async def api_check_file_exists(request: Request, _auth: Session = Depends(requi
     })
 
 
+@app.post("/api/createFolderTree")
+async def create_folder_tree(request: Request, _auth: Session = Depends(require_auth)):
+    """Pre-creates a nested folder hierarchy (including empty directories) under a base path."""
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+    data = await request.json()
+    base_path = sanitize_path(data.get("base_path", "/"))
+    folder_paths = data.get("folders", [])
+
+    if not isinstance(folder_paths, list):
+        folder_paths = [str(folder_paths)] if folder_paths else []
+
+    created_paths = drive.ensure_folder_tree(base_path, folder_paths)
+    return JSONResponse({
+        "status": "ok",
+        "created_count": len(created_paths),
+        "paths": created_paths
+    })
+
+
 SAVE_PROGRESS = {}
 
 
@@ -1023,19 +1175,37 @@ async def upload_file(
     id: str = Form(...),
     total_size: str = Form(...),
     conflict: str = Form("keep_both"),
+    relative_path: Optional[str] = Form(None),
+    batch_id: Optional[str] = Form(None),
     _auth: Session = Depends(require_auth),
 ):
     global SAVE_PROGRESS
 
     safe_path = sanitize_path(path)
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+
+    raw_filename = file.filename or "uploaded_file"
+    safe_filename = "".join(c for c in raw_filename if c not in ('\x00', '\r', '\n', '/', '\\')).strip()
+
+    # Handle relative_path for nested folder tree preservation
+    clean_rel_path = None
+    if relative_path and str(relative_path).strip():
+        clean_rel = str(relative_path).replace("\\", "/").strip("/")
+        parts = [p for p in clean_rel.split("/") if p and p not in (".", "..")]
+        if parts:
+            clean_rel_path = "/".join(parts)
+            if len(parts) > 1:
+                dir_chain = "/".join(parts[:-1])
+                safe_path = drive.resolve_or_create_folder_hierarchy(safe_path, dir_chain)
+            if parts[-1]:
+                safe_filename = "".join(c for c in parts[-1] if c not in ('\x00', '\r', '\n', '/', '\\')).strip() or safe_filename
 
     # Sanitize upload ID and file extensions to prevent path traversal
     safe_id = "".join(c for c in str(id) if c.isalnum() or c in ("-", "_"))[:64]
     if not safe_id:
         safe_id = getRandomID()
 
-    raw_filename = file.filename or "uploaded_file"
-    safe_filename = "".join(c for c in raw_filename if c not in ('\x00', '\r', '\n', '/', '\\')).strip()
     ext = (safe_filename.rsplit(".", 1)[-1] if "." in safe_filename else "bin").lower()
     ext = "".join(c for c in ext if c.isalnum())[:16] or "bin"
 
@@ -1079,11 +1249,20 @@ async def upload_file(
 
     SAVE_PROGRESS[safe_id] = ("completed", file_size, file_size)
 
-    asyncio.create_task(
-        start_file_uploader(file_location, safe_id, safe_path, safe_filename, file_size, conflict=conflict)
+    # Queue in TransferManager (handles bounded concurrency, retry, persistence, speed/ETA tracking)
+    from utils.transfer_manager import transfer_manager
+    await transfer_manager.queue_upload(
+        file_path=str(file_location),
+        id=safe_id,
+        target_path=safe_path,
+        filename=safe_filename,
+        file_size=file_size,
+        conflict=conflict,
+        relative_path=clean_rel_path,
+        batch_id=batch_id,
     )
 
-    return JSONResponse({"id": safe_id, "status": "ok"})
+    return JSONResponse({"id": safe_id, "status": "ok", "target_path": safe_path})
 
 
 @app.post("/api/getSaveProgress")
@@ -1103,13 +1282,32 @@ async def get_save_progress(request: Request, _auth: Session = Depends(require_a
 @app.post("/api/getUploadProgress")
 async def get_upload_progress(request: Request, _auth: Session = Depends(require_auth)):
     from utils.uploader import PROGRESS_CACHE
+    from utils.transfer_manager import transfer_manager
 
     data = await request.json()
+    item_id = str(data.get("id", ""))
+    logger.info(f"getUploadProgress id={item_id}")
 
-    logger.info(f"getUploadProgress id={data.get('id')}")
+    # Check TransferManager first for richer metrics
+    transfer_info = transfer_manager.get_transfer(item_id)
+    if transfer_info:
+        # Compatibility tuple: (status, current, total, filename)
+        compat_tuple = (
+            "running" if transfer_info["state"] in ("queued", "preparing", "uploading") else (
+                "completed" if transfer_info["state"] == "completed" else (
+                    "cancelled" if transfer_info["state"] == "cancelled" else (
+                        "waiting" if transfer_info["state"] == "retrying" else "error"
+                    )
+                )
+            ),
+            transfer_info["transferred"],
+            transfer_info["size"],
+            transfer_info["filename"]
+        )
+        return JSONResponse({"status": "ok", "data": compat_tuple, "transfer": transfer_info})
 
     try:
-        progress = PROGRESS_CACHE[data["id"]]
+        progress = PROGRESS_CACHE[item_id]
         return JSONResponse({"status": "ok", "data": progress})
     except Exception:
         return JSONResponse({"status": "not found"})
@@ -1117,28 +1315,49 @@ async def get_upload_progress(request: Request, _auth: Session = Depends(require
 
 @app.post("/api/getActiveUploads")
 async def get_active_uploads(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.transfer_manager import transfer_manager
     from utils.uploader import PROGRESS_CACHE
 
+    all_data = transfer_manager.get_all_transfers(filter_type="upload")
     active = []
-    for upload_id, prog in list(PROGRESS_CACHE.items()):
-        status = prog[0]
-        current = prog[1]
-        total = prog[2]
-        filename = prog[3] if len(prog) > 3 else "File"
-        if status in ("running", "waiting"):
+    for t in all_data.get("transfers", []):
+        if t["state"] in ("queued", "preparing", "uploading", "retrying"):
             active.append({
-                "id": upload_id,
-                "status": status,
-                "current": current,
-                "total": total,
-                "filename": filename
+                "id": t["id"],
+                "status": "waiting" if t["state"] == "retrying" else "running",
+                "current": t["transferred"],
+                "total": t["size"],
+                "filename": t["filename"],
+                "speed": t["speed"],
+                "speed_formatted": t["speed_formatted"],
+                "eta": t["eta"],
+                "eta_formatted": t["eta_formatted"],
+                "percentage": t["percentage"],
+                "state": t["state"]
             })
 
-    return JSONResponse({"status": "ok", "active": active})
+    # Fallback to PROGRESS_CACHE if transfer manager has no active uploads
+    if not active:
+        for upload_id, prog in list(PROGRESS_CACHE.items()):
+            status = prog[0]
+            current = prog[1]
+            total = prog[2]
+            filename = prog[3] if len(prog) > 3 else "File"
+            if status in ("running", "waiting"):
+                active.append({
+                    "id": upload_id,
+                    "status": status,
+                    "current": current,
+                    "total": total,
+                    "filename": filename
+                })
+
+    return JSONResponse({"status": "ok", "active": active, "stats": all_data.get("stats", {})})
 
 
 @app.post("/api/cancelUpload")
 async def cancel_upload(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.transfer_manager import transfer_manager
     from utils.uploader import STOP_TRANSMISSION
     from utils.downloader import STOP_DOWNLOAD
 
@@ -1151,6 +1370,7 @@ async def cancel_upload(request: Request, _auth: Session = Depends(require_auth)
     logger.info(f"cancelUpload id={upload_id}")
     STOP_TRANSMISSION.append(upload_id)
     STOP_DOWNLOAD.append(upload_id)
+    await transfer_manager.cancel_transfer(upload_id)
     return JSONResponse({"status": "ok"})
 
 
@@ -1383,6 +1603,8 @@ async def getFileInfoFromUrl(request: Request, _auth: Session = Depends(require_
 
 @app.post("/api/startFileDownloadFromUrl")
 async def startFileDownloadFromUrl(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.transfer_manager import transfer_manager
+
     data = await request.json()
     url = str(data.get("url") or "").strip()
     if not url:
@@ -1395,8 +1617,12 @@ async def startFileDownloadFromUrl(request: Request, _auth: Session = Depends(re
     logger.info(f"startFileDownloadFromUrl filename={safe_name} path={safe_path}")
     try:
         id = getRandomID()
-        asyncio.create_task(
-            download_file(url, id, safe_path, safe_name, single_threaded)
+        await transfer_manager.queue_download(
+            url=url,
+            id=id,
+            target_path=safe_path,
+            filename=safe_name,
+            single_threaded=single_threaded,
         )
         return JSONResponse({"status": "ok", "id": id})
     except Exception as e:
@@ -1406,16 +1632,179 @@ async def startFileDownloadFromUrl(request: Request, _auth: Session = Depends(re
 @app.post("/api/getFileDownloadProgress")
 async def getFileDownloadProgress(request: Request, _auth: Session = Depends(require_auth)):
     from utils.downloader import DOWNLOAD_PROGRESS
+    from utils.transfer_manager import transfer_manager
 
     data = await request.json()
+    item_id = str(data.get("id", ""))
+    logger.info(f"getFileDownloadProgress id={item_id}")
 
-    logger.info(f"getFileDownloadProgress id={data.get('id')}")
+    transfer_info = transfer_manager.get_transfer(item_id)
+    if transfer_info:
+        compat_tuple = (
+            "running" if transfer_info["state"] in ("queued", "preparing", "downloading") else (
+                "completed" if transfer_info["state"] == "completed" else (
+                    "cancelled" if transfer_info["state"] == "cancelled" else (
+                        "waiting" if transfer_info["state"] == "retrying" else "error"
+                    )
+                )
+            ),
+            transfer_info["transferred"],
+            transfer_info["size"],
+        )
+        return JSONResponse({"status": "ok", "data": compat_tuple, "transfer": transfer_info})
 
     try:
-        progress = DOWNLOAD_PROGRESS[data["id"]]
+        progress = DOWNLOAD_PROGRESS[item_id]
         return JSONResponse({"status": "ok", "data": progress})
     except Exception:
         return JSONResponse({"status": "not found"})
+
+
+# ---------------------------------------------------------------------------
+# Transfer Manager Dedicated REST APIs
+# ---------------------------------------------------------------------------
+
+@app.get("/api/transfers")
+@app.post("/api/getTransfers")
+async def api_get_transfers(request: Request, _auth: Session = Depends(require_auth)):
+    """Returns all active, queued, and historical transfers with real-time stats."""
+    from utils.transfer_manager import transfer_manager
+    filter_type = request.query_params.get("type")
+    filter_state = request.query_params.get("state")
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            filter_type = filter_type or body.get("type")
+            filter_state = filter_state or body.get("state")
+        except Exception:
+            pass
+
+    return JSONResponse(transfer_manager.get_all_transfers(filter_type=filter_type, filter_state=filter_state))
+
+
+@app.get("/api/transfers/{transfer_id}")
+async def api_get_single_transfer(transfer_id: str, request: Request, _auth: Session = Depends(require_auth)):
+    """Returns detailed real-time state for a specific transfer ID."""
+    from utils.transfer_manager import transfer_manager
+    info = transfer_manager.get_transfer(transfer_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    return JSONResponse({"status": "ok", "transfer": info})
+
+
+@app.post("/api/transfers/{transfer_id}/cancel")
+async def api_cancel_single_transfer(transfer_id: str, request: Request, _auth: Session = Depends(require_auth)):
+    """Cancels an active or queued transfer."""
+    from utils.transfer_manager import transfer_manager
+    success = await transfer_manager.cancel_transfer(transfer_id)
+    if not success:
+        return JSONResponse({"status": "Transfer not found or already terminated"}, status_code=404)
+    return JSONResponse({"status": "ok", "message": f"Transfer {transfer_id} cancelled"})
+
+
+@app.post("/api/transfers/{transfer_id}/retry")
+async def api_retry_single_transfer(transfer_id: str, request: Request, _auth: Session = Depends(require_auth)):
+    """Retries a failed or cancelled transfer."""
+    from utils.transfer_manager import transfer_manager
+    item = await transfer_manager.retry_transfer(transfer_id)
+    if not item:
+        return JSONResponse({"status": "Transfer not found"}, status_code=404)
+    return JSONResponse({"status": "ok", "transfer": item.to_dict()})
+
+
+@app.post("/api/transfers/{transfer_id}/remove")
+async def api_remove_single_transfer(transfer_id: str, request: Request, _auth: Session = Depends(require_auth)):
+    """Removes a transfer from history."""
+    from utils.transfer_manager import transfer_manager
+    success = await transfer_manager.remove_transfer(transfer_id)
+    if not success:
+        return JSONResponse({"status": "Transfer not found"}, status_code=404)
+    return JSONResponse({"status": "ok", "message": f"Transfer {transfer_id} removed from history"})
+
+
+@app.post("/api/transfers/clear")
+async def api_clear_finished_transfers(request: Request, _auth: Session = Depends(require_auth)):
+    """Clears all completed, failed, and cancelled transfers from history."""
+    from utils.transfer_manager import transfer_manager
+    count = await transfer_manager.clear_finished_transfers()
+    return JSONResponse({"status": "ok", "cleared_count": count})
+
+
+# ---------------------------------------------------------------------------
+# Duplicate Detection & Management API
+# ---------------------------------------------------------------------------
+
+@app.api_route("/api/duplicates/status", methods=["GET", "POST"])
+async def api_duplicates_status(request: Request, _auth: Session = Depends(require_auth)):
+    """Returns duplicate scan status, progress, and recoverable storage statistics."""
+    from utils.duplicate_manager import duplicate_manager
+    return JSONResponse(duplicate_manager.get_status())
+
+
+@app.post("/api/duplicates/scan")
+async def api_duplicates_trigger_scan(request: Request, _auth: Session = Depends(require_auth)):
+    """Initiates an asynchronous background duplicate hash scan."""
+    from utils.duplicate_manager import duplicate_manager
+    started = duplicate_manager.start_background_scan()
+    status = duplicate_manager.get_status()
+    return JSONResponse({
+        "status": "ok" if started else "already_running",
+        "message": "Duplicate scan started in background" if started else "Duplicate scan is already running",
+        "scan_status": status
+    })
+
+
+@app.post("/api/duplicates/list")
+async def api_duplicates_list(request: Request, _auth: Session = Depends(require_auth)):
+    """Returns grouped duplicate files matching search query and category filters."""
+    from utils.duplicate_manager import duplicate_manager
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    query = str(data.get("query", "") or "").strip()
+    category = str(data.get("category", "all") or "all").strip().lower()
+    sort_by = str(data.get("sort_by", "recoverable_size") or "recoverable_size").strip()
+
+    result = duplicate_manager.get_duplicate_groups(
+        query=query,
+        mime_category=category,
+        sort_by=sort_by
+    )
+    return JSONResponse(result)
+
+
+@app.post("/api/duplicates/delete")
+async def api_duplicates_delete(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Safely deletes or trashes selected duplicate files.
+    Enforces the retention safety invariant (cannot delete all copies of a duplicate group).
+    """
+    from utils.duplicate_manager import duplicate_manager
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    target_uuids = data.get("target_uuids", [])
+    if not isinstance(target_uuids, list) or not target_uuids:
+        raise HTTPException(status_code=400, detail="target_uuids list is required")
+
+    soft_delete = not bool(data.get("permanent", False))
+
+    try:
+        result = duplicate_manager.delete_duplicates(
+            target_file_uuids=target_uuids,
+            soft_delete=soft_delete
+        )
+        return JSONResponse(result)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Duplicate deletion error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete duplicates: {e}")
+
 
 
 @app.post("/api/getFolderShareAuth")
@@ -1433,6 +1822,197 @@ async def getFolderShareAuth(request: Request, _auth: Session = Depends(require_
         return JSONResponse({"status": "ok", "auth": auth})
     except Exception:
         return JSONResponse({"status": "not found"})
+
+
+# ---------------------------------------------------------------------------
+# Properties & Details REST APIs
+# ---------------------------------------------------------------------------
+
+@app.get("/api/files/{file_id}/properties")
+@app.post("/api/getFileProperties")
+async def api_get_file_properties(request: Request, file_id: Optional[str] = None):
+    from utils.directoryHandler import ensure_drive_data
+    from utils.properties import PropertiesFormatter
+    drive = ensure_drive_data()
+    is_admin = is_admin_authenticated(request)
+
+    target_id = file_id
+    if not target_id:
+        try:
+            body = await request.json()
+            target_id = body.get("id") or body.get("file_id")
+        except Exception:
+            pass
+    if not target_id:
+        target_id = request.query_params.get("id") or request.query_params.get("file_id")
+
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Missing file ID")
+
+    auth_token = request.query_params.get("auth") or request.query_params.get("token")
+    if not is_admin and not auth_token:
+        try:
+            body = await request.json()
+            auth_token = body.get("auth") or body.get("token")
+        except Exception:
+            pass
+
+    file_obj = drive.find_item_by_id(target_id)
+    if not file_obj or getattr(file_obj, "type", "") != "file":
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not is_admin:
+        if not auth_token:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        from utils.shareManager import get_share_by_token
+        share_rec = get_share_by_token(auth_token)
+        if not share_rec:
+            raise HTTPException(status_code=401, detail="Invalid or expired share token")
+        share_target = share_rec.get("target_id_path", "")
+        file_full_path = (getattr(file_obj, "path", "").rstrip("/") + "/" + file_obj.id).replace("//", "/")
+        if not file_full_path.startswith(share_target) and file_obj.id != share_rec.get("target_id"):
+            raise HTTPException(status_code=401, detail="File not accessible with this share token")
+
+    props = PropertiesFormatter.get_file_properties(file_obj, drive, is_admin=is_admin, request_base_url=str(request.base_url))
+    return JSONResponse(props)
+
+
+@app.get("/api/folders/{folder_id}/properties")
+@app.post("/api/getFolderProperties")
+async def api_get_folder_properties(request: Request, folder_id: Optional[str] = None):
+    from utils.directoryHandler import ensure_drive_data
+    from utils.properties import PropertiesFormatter
+    drive = ensure_drive_data()
+    is_admin = is_admin_authenticated(request)
+
+    target_id = folder_id
+    if not target_id:
+        try:
+            body = await request.json()
+            target_id = body.get("id") or body.get("folder_id")
+        except Exception:
+            pass
+    if not target_id:
+        target_id = request.query_params.get("id") or request.query_params.get("folder_id")
+
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Missing folder ID")
+
+    auth_token = request.query_params.get("auth") or request.query_params.get("token")
+    if not is_admin and not auth_token:
+        try:
+            body = await request.json()
+            auth_token = body.get("auth") or body.get("token")
+        except Exception:
+            pass
+
+    folder_obj = drive.find_item_by_id(target_id)
+    if not folder_obj or getattr(folder_obj, "type", "") != "folder":
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    if not is_admin:
+        if not auth_token:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        from utils.shareManager import get_share_by_token
+        share_rec = get_share_by_token(auth_token)
+        if not share_rec:
+            raise HTTPException(status_code=401, detail="Invalid or expired share token")
+        share_target = share_rec.get("target_id_path", "")
+        folder_full_path = (getattr(folder_obj, "path", "").rstrip("/") + "/" + folder_obj.id).replace("//", "/")
+        if not folder_full_path.startswith(share_target) and folder_obj.id != share_rec.get("target_id"):
+            raise HTTPException(status_code=401, detail="Folder not accessible with this share token")
+
+    props = PropertiesFormatter.get_folder_properties(folder_obj, drive, is_admin=is_admin, request_base_url=str(request.base_url))
+    return JSONResponse(props)
+
+
+@app.get("/api/files/{file_id}/activity")
+@app.post("/api/getFileActivity")
+async def api_get_file_activity(request: Request, file_id: Optional[str] = None):
+    from utils.directoryHandler import ensure_drive_data
+    from utils.properties import ActivityTracker
+    drive = ensure_drive_data()
+    is_admin = is_admin_authenticated(request)
+
+    target_id = file_id
+    if not target_id:
+        try:
+            body = await request.json()
+            target_id = body.get("id") or body.get("file_id")
+        except Exception:
+            pass
+    if not target_id:
+        target_id = request.query_params.get("id") or request.query_params.get("file_id")
+
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Missing file ID")
+
+    if not is_admin:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    file_obj = drive.find_item_by_id(target_id)
+    if not file_obj or getattr(file_obj, "type", "") != "file":
+        raise HTTPException(status_code=404, detail="File not found")
+
+    timeline = ActivityTracker.get_grouped_timeline(file_obj)
+    return JSONResponse({"id": target_id, "type": "file", "activity": timeline})
+
+
+@app.get("/api/folders/{folder_id}/activity")
+@app.post("/api/getFolderActivity")
+async def api_get_folder_activity(request: Request, folder_id: Optional[str] = None):
+    from utils.directoryHandler import ensure_drive_data
+    from utils.properties import ActivityTracker
+    drive = ensure_drive_data()
+    is_admin = is_admin_authenticated(request)
+
+    target_id = folder_id
+    if not target_id:
+        try:
+            body = await request.json()
+            target_id = body.get("id") or body.get("folder_id")
+        except Exception:
+            pass
+    if not target_id:
+        target_id = request.query_params.get("id") or request.query_params.get("folder_id")
+
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Missing folder ID")
+
+    if not is_admin:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    folder_obj = drive.find_item_by_id(target_id)
+    if not folder_obj or getattr(folder_obj, "type", "") != "folder":
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    timeline = ActivityTracker.get_grouped_timeline(folder_obj)
+    return JSONResponse({"id": target_id, "type": "folder", "activity": timeline})
+
+
+@app.post("/api/properties/enrich")
+async def api_enrich_properties(request: Request, _auth: Session = Depends(require_auth)):
+    from utils.directoryHandler import ensure_drive_data
+    from utils.properties import MetadataWorker
+    drive = ensure_drive_data()
+    data = await request.json()
+    item_id = data.get("id")
+    if not item_id:
+        raise HTTPException(status_code=400, detail="Missing item ID")
+
+    item = drive.find_item_by_id(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    if getattr(item, "type", "") == "file":
+        dl_path = Path(f"./downloads/{item.file_id}_{item.name}")
+        if dl_path.exists():
+            MetadataWorker._process_item(item, dl_path)
+            drive.save()
+        else:
+            MetadataWorker.enqueue(item)
+
+    return JSONResponse({"status": "ok", "message": "Enrichment scheduled"})
 
 
 # ==========================================
@@ -1782,15 +2362,22 @@ async def share_file_stream(request: Request, token: str, rel: str = ""):
         raise HTTPException(status_code=404, detail="File not found")
 
     file_id = getattr(node, "file_id", None)
-    if not file_id:
-        raise HTTPException(status_code=404, detail="File not found")
-
     name = getattr(node, "name", "file")
-    try:
-        response = await media_streamer(STORAGE_CHANNEL, file_id, name, request)
-    except Exception as e:
-        logger.error(f"Error streaming shared file '{name}' (msg {file_id}): {e}")
-        raise HTTPException(status_code=404, detail="File unavailable on Telegram")
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data()
+    local_path = drive.resolve_local_file_path(node)
+
+    if local_path and os.path.isfile(local_path):
+        from utils.streamer import local_file_streamer
+        response = await local_file_streamer(local_path, name, request)
+    elif file_id and int(file_id) > 0:
+        try:
+            response = await media_streamer(STORAGE_CHANNEL, file_id, name, request)
+        except Exception as e:
+            logger.error(f"Error streaming shared file '{name}' (msg {file_id}): {e}")
+            raise HTTPException(status_code=404, detail="File unavailable on Telegram")
+    else:
+        raise HTTPException(status_code=404, detail="File source offline or not synced")
 
     disposition = "attachment" if wants_download else "inline"
     # Never render active content (SVG/HTML/XML/JS) same-origin from shares —
@@ -1831,11 +2418,20 @@ async def share_file_thumb(request: Request, token: str, rel: str = ""):
     if node is None or getattr(node, "type", "") != "file" or getattr(node, "trash", False):
         raise HTTPException(status_code=404, detail="Not found")
 
-    try:
-        thumb_data = await THUMB_SERVICE.get_or_fetch(getattr(node, "file_id", 0), getattr(node, "name", ""))
-    except Exception as e:
-        logger.warning(f"Failed to fetch thumb for shared node {getattr(node, 'name', '')}: {e}")
-        thumb_data = None
+    thumb_data = None
+    file_id = getattr(node, "file_id", 0)
+    if file_id and int(file_id) > 0:
+        try:
+            thumb_data = await THUMB_SERVICE.get_or_fetch(int(file_id), getattr(node, "name", ""))
+        except Exception as e:
+            logger.warning(f"Failed to fetch thumb for shared node {getattr(node, 'name', '')}: {e}")
+
+    if not thumb_data:
+        from utils.directoryHandler import ensure_drive_data
+        drive = ensure_drive_data()
+        local_path = drive.resolve_local_file_path(node)
+        if local_path and os.path.isfile(local_path):
+            thumb_data = await THUMB_SERVICE.get_or_generate_local(local_path, getattr(node, "id", "share_thumb"))
 
     if not thumb_data:
         raise HTTPException(status_code=404, detail="No thumbnail")
@@ -2100,7 +2696,322 @@ async def api_admin_integrity_report(session: Session = Depends(require_auth)):
     })
 
 
+@app.post("/api/admin/reloadDriveData")
+async def api_admin_reload_drive_data(_session: Session = Depends(require_auth)):
+    """Forces in-memory DRIVE_DATA reload from the disk cache (cache/drive.data)."""
+    from utils.directoryHandler import ensure_drive_data
+    drive = ensure_drive_data(force_reload=True)
+    try:
+        from utils.properties import FolderStatsCalculator
+        FolderStatsCalculator.invalidate_cache()
+    except Exception:
+        pass
+    root_items = [c.name for c in drive.contents.get("/", getattr(drive, "contents", {})).contents.values()]
+    return JSONResponse({"status": "ok", "message": "Drive data reloaded from disk", "roots": root_items})
+
+
+@app.get("/api/admin/scanChannelMessages")
+async def api_admin_scan_channel_messages(_session: Session = Depends(require_auth)):
+    from utils.clients import multi_clients, get_client
+    from config import STORAGE_CHANNEL
+    client = get_client()
+    messages = []
+    try:
+        msg_ids = list(range(1, 50))
+        res = await client.get_messages(STORAGE_CHANNEL, msg_ids)
+        for msg in res:
+            if not msg or getattr(msg, "empty", False):
+                continue
+            media = getattr(msg, "document", None) or getattr(msg, "photo", None) or getattr(msg, "video", None) or getattr(msg, "audio", None)
+            fname = getattr(media, "file_name", None) if media else None
+            fsize = getattr(media, "file_size", 0) if media else 0
+            messages.append({
+                "id": msg.id,
+                "date": str(msg.date),
+                "media_type": type(media).__name__ if media else None,
+                "file_name": fname,
+                "file_size": fsize
+            })
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    return JSONResponse({"status": "ok", "count": len(messages), "messages": messages})
+
+
+@app.post("/api/admin/restoreFromManifest")
+async def api_admin_restore_from_manifest(_session: Session = Depends(require_auth)):
+    """Restores full drives, folders, and files hierarchy from the latest sync manifest."""
+    import utils.directoryHandler as dh
+    from utils.directoryHandler import Folder, File, NewDriveData, sanitize_name
+
+    manifest_path = Path.home() / ".tgdrive_sync_manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="Backup manifest not found")
+
+    import json
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    verified_folders = manifest.get("__verified_folders__", [])
+    file_entries = {k: v for k, v in manifest.items() if k != "__verified_folders__"}
+
+    root_folder = Folder("/", "/")
+    root_folder.id = "root"
+    used_ids = ["root"]
+    drive = NewDriveData({"/": root_folder}, used_ids)
+    folder_cache = {"": root_folder, "/": root_folder}
+
+    def get_or_create_folder(folder_path_str: str) -> Folder:
+        clean = folder_path_str.replace("\\", "/").strip("/")
+        if not clean:
+            return root_folder
+        if clean in folder_cache:
+            return folder_cache[clean]
+
+        parts = [p for p in clean.split("/") if p]
+        curr_node = root_folder
+        curr_path = ""
+
+        for part in parts:
+            curr_path = f"{curr_path}/{part}".strip("/")
+            if curr_path in folder_cache:
+                curr_node = folder_cache[curr_path]
+                continue
+
+            clean_part = sanitize_name(part)
+            found = None
+            if hasattr(curr_node, "contents") and isinstance(curr_node.contents, dict):
+                for child in curr_node.contents.values():
+                    if getattr(child, "type", "") == "folder" and getattr(child, "name", "") == clean_part and not getattr(child, "trash", False):
+                        found = child
+                        break
+
+            if found:
+                curr_node = found
+            else:
+                parent_loc = "/" if curr_node.id == "root" else (curr_node.path.rstrip("/") + "/" + curr_node.id).replace("//", "/")
+                new_f = Folder(clean_part, parent_loc)
+                if new_f.id not in drive.used_ids:
+                    drive.used_ids.append(new_f.id)
+                curr_node.contents[new_f.id] = new_f
+                curr_node = new_f
+
+            folder_cache[curr_path] = curr_node
+
+        return curr_node
+
+    for fpath in verified_folders:
+        get_or_create_folder(fpath)
+
+    total_files = 0
+    total_bytes = 0
+    for file_path_str, file_info in file_entries.items():
+        clean_fp = file_path_str.replace("\\", "/").strip("/")
+        parts = clean_fp.split("/")
+        fname = parts[-1]
+        folder_part = "/".join(parts[:-1])
+
+        parent_folder = get_or_create_folder(folder_part)
+        f_size = file_info.get("size", 0)
+        last_synced = file_info.get("last_synced")
+        parent_loc = "/" if parent_folder.id == "root" else (parent_folder.path.rstrip("/") + "/" + parent_folder.id).replace("//", "/")
+
+        f_obj = File(fname, file_id=0, size=f_size, path=parent_loc)
+        if f_obj.id not in drive.used_ids:
+            drive.used_ids.append(f_obj.id)
+        if last_synced:
+            f_obj.upload_date = last_synced
+            f_obj.uploaded_at = last_synced
+            f_obj.modified_at = last_synced
+            f_obj.accessed_at = last_synced
+
+        parent_folder.contents[f_obj.id] = f_obj
+        total_files += 1
+        total_bytes += f_size
+
+    drive.save()
+    dh.DRIVE_DATA = drive
+    try:
+        from utils.properties import FolderStatsCalculator
+        FolderStatsCalculator.invalidate_cache()
+    except Exception:
+        pass
+
+    try:
+        await dh._execute_backup()
+    except Exception as be:
+        logger.warning(f"Note on updating Telegram backup message: {be}")
+
+    root_items = [c.name for c in root_folder.contents.values()]
+    return JSONResponse({
+        "status": "ok",
+        "message": "Data restored from last backup successfully",
+        "roots": root_items,
+        "total_folders": len(folder_cache) - 1,
+        "total_files": total_files,
+        "total_bytes": total_bytes
+    })
+
+
+@app.post("/api/admin/eraseAllData")
+async def api_admin_erase_all_data(
+    request: Request,
+    session: Session = Depends(require_auth)
+):
+    """
+    Completely erases everything to start fresh from 0 data:
+      1. Deletes all file/backup messages in Telegram STORAGE_CHANNEL
+      2. Resets drive.data to clean empty root ('/': Folder('/', '/'), used_ids: [])
+      3. Clears local sync manifest, transfer history, shares, duplicate index, and thumbnails
+      4. Uploads fresh initial empty drive.data backup to Telegram storage channel
+    """
+    from utils.directoryHandler import ensure_drive_data, Folder, backup_drive_data
+    import utils.directoryHandler as dh
+    from utils.clients import get_client
+    from pathlib import Path
+
+    deleted_telegram_msgs = 0
+    client = None
+    try:
+        client = get_client()
+    except Exception as ce:
+        logger.warning(f"Telegram client not immediately available for message deletion: {ce}")
+
+    if client and STORAGE_CHANNEL:
+        try:
+            for start_id in range(1, 200, 100):
+                id_batch = list(range(start_id, start_id + 100))
+                try:
+                    msgs = await client.get_messages(STORAGE_CHANNEL, id_batch)
+                    valid_ids = [m.id for m in msgs if m and not getattr(m, "empty", False)]
+                    if valid_ids:
+                        await client.delete_messages(STORAGE_CHANNEL, valid_ids)
+                        deleted_telegram_msgs += len(valid_ids)
+                except Exception as batch_err:
+                    logger.warning(f"Batch delete error: {batch_err}")
+        except Exception as e:
+            logger.warning(f"Error deleting Telegram messages: {e}")
+
+    # 1. Reset drive structure to pristine empty state
+    drive = ensure_drive_data(force_reload=True)
+    drive.contents = {"/": Folder("/", "/")}
+    drive.used_ids = []
+    drive.isUpdated = True
+    drive.last_modified = 0.0
+    drive.save()
+    dh.DRIVE_DATA = drive
+
+    # 2. Invalidate stats cache & duplicate cache
+    try:
+        from utils.properties import FolderStatsCalculator
+        FolderStatsCalculator.invalidate_cache()
+    except Exception:
+        pass
+
+    try:
+        from utils.duplicate_detector import DuplicateDetector
+        DuplicateDetector.invalidate_cache()
+    except Exception:
+        pass
+
+    # 3. Clear local sync manifest and JSON backups
+    manifest_path = Path.home() / ".tgdrive_sync_manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest_path.unlink(missing_ok=True)
+            logger.info("Local sync manifest removed.")
+        except Exception:
+            pass
+
+    for extra_file in [
+        Path("cache/tgdrive_backup.json"),
+        Path("data/shares.json"),
+        Path("data/duplicate_hashes.json"),
+        Path("data/transfers.json")
+    ]:
+        try:
+            if extra_file.exists():
+                extra_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # 4. Clear thumbnail cache
+    thumbs_dir = Path("cache/thumbs")
+    if thumbs_dir.exists():
+        for f in thumbs_dir.glob("*.jpg"):
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    logger.info("Successfully completed full drive and Telegram storage erase. Drive has 0 files, 0 folders, 0 bytes.")
+    return JSONResponse({
+        "status": "ok",
+        "message": "Everything has been erased. Drive is reset to 0 data and ready for fresh uploads.",
+        "total_files": 0,
+        "total_folders": 0,
+        "total_bytes": 0,
+        "deleted_telegram_messages": deleted_telegram_msgs
+    })
+
+
+@app.post("/api/admin/purgeChannel")
+async def api_admin_purge_channel(
+    request: Request,
+    session: Session = Depends(require_auth)
+):
+    """
+    Deletes messages inside the Telegram STORAGE_CHANNEL across all configured bot and premium clients.
+    """
+    from utils.clients import multi_clients, premium_clients
+    all_clients = list(multi_clients.values()) + list(premium_clients.values())
+    if not all_clients:
+        raise HTTPException(status_code=503, detail="No active Telegram clients are currently connected")
+    if not STORAGE_CHANNEL:
+        raise HTTPException(status_code=400, detail="STORAGE_CHANNEL not configured")
+
+    deleted_ids = set()
+    errors = []
+
+    # First discover all valid message IDs in channel
+    valid_ids = []
+    primary_client = all_clients[0]
+    for start_id in range(1, 200, 50):
+        id_batch = list(range(start_id, start_id + 50))
+        try:
+            msgs = await primary_client.get_messages(STORAGE_CHANNEL, id_batch)
+            if not isinstance(msgs, list):
+                msgs = [msgs]
+            batch_valids = [m.id for m in msgs if m and not getattr(m, "empty", False)]
+            valid_ids.extend(batch_valids)
+        except Exception as e:
+            errors.append(f"get_messages range {start_id}-{start_id+50}: {e}")
+
+    # Now attempt deletion across all clients
+    for mid in valid_ids:
+        deleted = False
+        for client in all_clients:
+            try:
+                await client.delete_messages(STORAGE_CHANNEL, message_ids=mid)
+                deleted_ids.add(mid)
+                deleted = True
+                break
+            except Exception as e:
+                pass
+        if not deleted:
+            errors.append(f"Message {mid} could not be deleted (bot needs 'Delete Messages' admin rights in channel)")
+
+    logger.info(f"Purged {len(deleted_ids)} messages from Telegram STORAGE_CHANNEL. Errors: {len(errors)}")
+    return JSONResponse({
+        "status": "ok",
+        "message": f"Successfully deleted {len(deleted_ids)} messages from Telegram storage channel.",
+        "deleted_count": len(deleted_ids),
+        "total_scanned_messages": len(valid_ids),
+        "errors": errors[:10]  # Return up to first 10 for clarity
+    })
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+
 

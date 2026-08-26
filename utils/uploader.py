@@ -26,8 +26,13 @@ MAX_SEND_ATTEMPTS = 5          # total attempts per file (FloodWait + transient 
 TRANSIENT_BACKOFF = 2.0        # base backoff for non-FloodWait transmission errors
 
 
-def _client_key(client: Client):
-    return id(client)
+def _client_key(client) -> str:
+    """Returns a consistent string identifier for client rate-limit tracking."""
+    if isinstance(client, Client):
+        if hasattr(client, "name") and client.name:
+            return str(client.name)
+        return str(id(client))
+    return str(client)
 
 
 async def progress_callback(current, total, id, client: Client, file_path, filename=""):
@@ -64,7 +69,10 @@ def _pick_flood_safe_client(premium_required: bool):
     else:
         raise RuntimeError("No active Telegram clients are currently connected. Please verify bot tokens in .env.")
 
-    usable = [(cid, cl) for cid, cl in pool.items() if tg_gate.client_available(cid)]
+    usable = [
+        (cid, cl) for cid, cl in pool.items()
+        if tg_gate.client_available(_client_key(cl)) and tg_gate.client_available(cid)
+    ]
     if not usable:
         return None  # every candidate is mid-cooldown
 
@@ -75,12 +83,13 @@ def _pick_flood_safe_client(premium_required: bool):
 
 async def _wait_for_any_client() -> None:
     """Sleep until at least one client exits its FloodWait cooldown."""
-    all_keys = list({**multi_clients, **premium_clients}.keys())
+    all_clients = list({**multi_clients, **premium_clients}.values())
+    all_keys = [_client_key(cl) for cl in all_clients] + list({**multi_clients, **premium_clients}.keys())
     wake = tg_gate.next_client_wake(all_keys)
     remaining = wake - time.monotonic()
     if remaining > 0:
-        logger.info(f"All clients rate-limited; resuming uploads in {remaining:.1f}s")
-        await asyncio.sleep(min(remaining + 0.5, tg_gate.MAX_GLOBAL_WAIT))
+        logger.info(f"All Telegram clients in cooldown; resuming in {remaining:.1f}s")
+        await asyncio.sleep(min(remaining + 0.3, tg_gate.MAX_GLOBAL_WAIT))
 
 
 async def _send_with_flood_protection(
@@ -131,15 +140,23 @@ async def _send_with_flood_protection(
 
         except FloodWait as fw:
             wait_time = float(fw.value)
+            c_key = _client_key(client)
+            # Check if alternative client can immediately take over
+            has_alt = (_pick_flood_safe_client(premium_required) is not None)
             logger.warning(
-                f"Telegram FloodWait {wait_time:.0f}s on upload {id} "
-                f"(attempt {attempt}/{MAX_SEND_ATTEMPTS}). Global pause engaged."
+                f"Telegram FloodWait {wait_time:.0f}s on client {getattr(client, 'name', c_key)} (upload {id}, "
+                f"attempt {attempt}/{MAX_SEND_ATTEMPTS}). Alternate available: {has_alt}"
             )
-            tg_gate.note_flood(_client_key(client), wait_time)
+            tg_gate.note_flood(c_key, wait_time, has_alternatives=has_alt)
             PROGRESS_CACHE[id] = ("waiting", 0, PROGRESS_CACHE.get(id, (0, 0, 0, ""))[2], filename)
 
             # Rotate to a different client on the next attempt
             client_ref["client"] = None
+            if has_alt:
+                # Immediate retry on next available client
+                continue
+            else:
+                await asyncio.sleep(min(wait_time + 0.5, 60.0))
             continue
 
         except Exception as send_err:
@@ -187,7 +204,18 @@ async def start_file_uploader(
 
         filename = unquote_plus(filename)
 
-        drive.new_file(directory_path, filename, message.id, size, conflict=conflict)
+        new_item_id = drive.new_file(directory_path, filename, message.id, size, conflict=conflict)
+        
+        # Extract rich properties (sha256, dimensions, codecs, pages) before temp file deletion
+        try:
+            from utils.properties import MetadataWorker
+            new_file_obj = drive.find_item_by_id(new_item_id)
+            if new_file_obj:
+                MetadataWorker._process_item(new_file_obj, file_path)
+                drive.save()
+        except Exception as meta_err:
+            logger.debug(f"Post-upload metadata extraction note: {meta_err}")
+
         from utils.directoryHandler import backup_drive_data
         asyncio.create_task(backup_drive_data(loop=False))
         PROGRESS_CACHE[id] = ("completed", size, size, filename)

@@ -65,24 +65,49 @@ async def create_zip_archive(
     try:
         with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zip_file:
             for idx, item in enumerate(items, start=1):
-                file_id = item["file_id"]
-                file_name = item["file_name"]
-                rel_archive_path = item["archive_path"].replace("\\", "/").lstrip("/")
-                
+                file_id = item.get("file_id", 0)
+                file_name = item.get("file_name", "file")
+                rel_archive_path = item.get("archive_path", file_name).replace("\\", "/").lstrip("/")
+                local_path = item.get("local_path")
+
                 if progress_callback:
                     try:
                         progress_callback(idx, total_items, file_name)
                     except Exception:
                         pass
-                
+
+                # Fast path: Pack directly from local disk if available
+                if local_path and os.path.isfile(local_path):
+                    try:
+                        zinfo = zipfile.ZipInfo(rel_archive_path, date_time=time.localtime(time.time())[:6])
+                        zinfo.compress_type = zipfile.ZIP_DEFLATED
+                        zinfo.external_attr = 0o644 << 16
+
+                        with open(local_path, "rb") as src:
+                            with zip_file.open(zinfo, mode="w") as dest:
+                                while True:
+                                    chunk = src.read(1024 * 1024)
+                                    if not chunk:
+                                        break
+                                    dest.write(chunk)
+                        logger.info(f"[{idx}/{total_items}] Added local file '{rel_archive_path}' to ZIP")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error packing local file '{local_path}' into ZIP: {e}")
+
+                # Cloud path: Download from Telegram storage channel if valid message ID
+                if not file_id or int(file_id) <= 0:
+                    logger.warning(f"File '{file_name}' has no local file and no valid Telegram ID ({file_id}). Skipping.")
+                    continue
+
                 try:
                     client = get_client()
                     msg = await client.get_messages(STORAGE_CHANNEL, int(file_id))
-                    
+
                     if not msg:
                         logger.warning(f"Telegram message {file_id} not found for ZIP inclusion. Skipping.")
                         continue
-                    
+
                     # Stream media to a scratch file (bounded memory footprint)
                     downloaded = await client.download_media(msg, file_name=str(scratch_path))
                     if downloaded and os.path.exists(scratch_path) and scratch_path.stat().st_size > 0:
@@ -90,7 +115,7 @@ async def create_zip_archive(
                         zinfo = zipfile.ZipInfo(rel_archive_path, date_time=time.localtime(time.time())[:6])
                         zinfo.compress_type = zipfile.ZIP_DEFLATED
                         zinfo.external_attr = 0o644 << 16  # standard file permissions
-                        
+
                         with open(scratch_path, "rb") as src:
                             with zip_file.open(zinfo, mode="w") as dest:
                                 while True:
@@ -98,8 +123,8 @@ async def create_zip_archive(
                                     if not chunk:
                                         break
                                     dest.write(chunk)
-                        
-                        logger.info(f"[{idx}/{total_items}] Added '{rel_archive_path}' to ZIP ({scratch_path.stat().st_size} bytes)")
+
+                        logger.info(f"[{idx}/{total_items}] Added Telegram file '{rel_archive_path}' to ZIP ({scratch_path.stat().st_size} bytes)")
                     else:
                         logger.warning(f"Empty download buffer for msg {file_id} ({file_name}). Skipping.")
                 except Exception as e:

@@ -61,9 +61,9 @@ def verify_file_checksum(file_path: Union[Path, str], checksum_or_path: Union[Pa
         return False
 
 
-def ensure_drive_data():
+def ensure_drive_data(force_reload: bool = False):
     global DRIVE_DATA
-    if DRIVE_DATA is None:
+    if DRIVE_DATA is None or force_reload:
         loaded = False
         # 1. Try loading primary drive.data with checksum validation
         if drive_cache_path.exists():
@@ -137,7 +137,20 @@ class Folder:
         self.tags = []
         self.path = ("/" + path.strip("/") + "/").replace("//", "/")
         self.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.created_at = datetime.now(timezone.utc).isoformat()
+        self.uploaded_at = self.upload_date
+        self.modified_at = self.upload_date
+        self.accessed_at = self.upload_date
+        self.trashed_at = None
+        self.restored_at = None
+        self.owner = "Admin (You)"
         self.auth_hashes = []
+        self.activity_history = []
+        try:
+            from utils.properties import ActivityTracker
+            ActivityTracker.record_activity(self, "created" if self.id != "root" else "initialized")
+        except Exception:
+            pass
 
 
 class File:
@@ -147,6 +160,7 @@ class File:
         file_id: int,
         size: int,
         path: str,
+        created_at: Optional[str] = None
     ) -> None:
         self.name = sanitize_name(name)
         self.file_id = file_id
@@ -157,6 +171,23 @@ class File:
         self.tags = []
         self.path = path[:-1] if path[-1] == "/" else path
         self.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.created_at = created_at  # Unfabricated: None unless supplied by client metadata
+        self.uploaded_at = self.upload_date
+        self.modified_at = self.upload_date
+        self.accessed_at = self.upload_date
+        self.downloaded_at = None
+        self.viewed_at = None
+        self.trashed_at = None
+        self.restored_at = None
+        self.owner = "Admin (You)"
+        self.sha256 = None
+        self.metadata_extra = {}
+        self.activity_history = []
+        try:
+            from utils.properties import ActivityTracker
+            ActivityTracker.record_activity(self, "uploaded")
+        except Exception:
+            pass
 
 
 class NewDriveData:
@@ -272,10 +303,97 @@ class NewDriveData:
             )
         directory_folder.contents[folder.id] = folder
 
+        try:
+            from utils.properties import FolderStatsCalculator
+            FolderStatsCalculator.invalidate_cache()
+        except Exception:
+            pass
+
         self.save()
         return folder.path + folder.id
 
-    def new_file(self, path: str, name: str, file_id: int, size: int, conflict: str = "keep_both") -> str:
+    def resolve_or_create_folder_hierarchy(self, base_path: str, relative_folder_path: str) -> str:
+        """
+        Recursively resolves or creates nested subfolders by human names under base_path (mkdir -p semantics).
+        Sanitizes path components to prevent directory traversal and collision issues.
+        Returns the canonical destination folder path (e.g. '/PARENT_ID/CHILD_ID' or '/').
+        """
+        if not relative_folder_path or not relative_folder_path.strip():
+            return base_path if base_path else "/"
+
+        # Normalize base_node
+        if not base_path or base_path == "/":
+            current_node: Folder = self.contents["/"]
+        else:
+            dir_res = self.get_directory(base_path, is_admin=True)
+            if isinstance(dir_res, tuple):
+                current_node = dir_res[0]
+            elif dir_res is not None:
+                current_node = dir_res
+            else:
+                current_node = self._ensure_folder_chain([p for p in base_path.strip("/").split("/") if p])
+
+        # Normalize and sanitize relative path segments
+        rel_clean = relative_folder_path.replace("\\", "/").strip("/")
+        segments = [p for p in rel_clean.split("/") if p and p not in (".", "..")]
+        if not segments:
+            if getattr(current_node, "id", "") == "root":
+                return "/"
+            return (getattr(current_node, "path", "/").rstrip("/") + "/" + current_node.id).replace("//", "/")
+
+        created_any = False
+        for seg in segments:
+            clean_seg = sanitize_name(seg)
+            if not clean_seg or clean_seg == "/":
+                continue
+
+            found_child = None
+            if hasattr(current_node, "contents") and isinstance(current_node.contents, dict):
+                if clean_seg in current_node.contents and getattr(current_node.contents[clean_seg], "type", "") == "folder" and not getattr(current_node.contents[clean_seg], "trash", False):
+                    found_child = current_node.contents[clean_seg]
+                else:
+                    seg_lower = clean_seg.lower()
+                    for child in current_node.contents.values():
+                        if getattr(child, "type", "") == "folder" and not getattr(child, "trash", False):
+                            if getattr(child, "name", "").lower() == seg_lower:
+                                found_child = child
+                                break
+
+            if found_child is not None:
+                current_node = found_child
+            else:
+                if getattr(current_node, "id", "") == "root":
+                    parent_loc = "/"
+                else:
+                    parent_loc = (getattr(current_node, "path", "/").rstrip("/") + "/" + current_node.id).replace("//", "/")
+                new_f = Folder(clean_seg, parent_loc)
+                current_node.contents[new_f.id] = new_f
+                created_any = True
+                logger.info(f"Auto-created folder '{clean_seg}' (ID: {new_f.id}) under '{parent_loc}' for folder upload tree.")
+                current_node = new_f
+
+        if created_any:
+            try:
+                from utils.properties import FolderStatsCalculator
+                FolderStatsCalculator.invalidate_cache()
+            except Exception:
+                pass
+            self.save()
+
+        if getattr(current_node, "id", "") == "root":
+            return "/"
+        return (getattr(current_node, "path", "/").rstrip("/") + "/" + current_node.id).replace("//", "/")
+
+    def ensure_folder_tree(self, base_path: str, folder_paths: List[str]) -> List[str]:
+        """Ensures multiple nested folders exist under base_path, preserving empty folders."""
+        results = []
+        for fp in folder_paths:
+            if fp and fp.strip():
+                resolved = self.resolve_or_create_folder_hierarchy(base_path, fp)
+                results.append(resolved)
+        return results
+
+    def new_file(self, path: str, name: str, file_id: int, size: int, conflict: str = "keep_both", created_at: Optional[str] = None) -> str:
         clean_name = sanitize_name(name)
         logger.info(f"Creating new file '{clean_name}' in path '{path}' (conflict mode: {conflict}).")
 
@@ -298,6 +416,14 @@ class NewDriveData:
             existing_file.file_id = file_id
             existing_file.size = size
             existing_file.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            existing_file.uploaded_at = existing_file.upload_date
+            existing_file.modified_at = existing_file.upload_date
+            try:
+                from utils.properties import ActivityTracker, FolderStatsCalculator
+                ActivityTracker.record_activity(existing_file, "uploaded")
+                FolderStatsCalculator.invalidate_cache()
+            except Exception:
+                pass
             self.save()
             return existing_file.id
 
@@ -313,10 +439,35 @@ class NewDriveData:
             clean_name = new_candidate
             logger.info(f"Renamed collision to '{clean_name}'.")
 
-        file = File(clean_name, file_id, size, path)
+        file = File(clean_name, file_id, size, path, created_at=created_at)
         directory_folder.contents[file.id] = file
+
+        try:
+            from utils.properties import FolderStatsCalculator
+            FolderStatsCalculator.invalidate_cache()
+        except Exception:
+            pass
+
         self.save()
         return file.id
+
+    def find_item_by_id(self, item_id: str):
+        """Finds any file or folder by its random ID or 'root' across the entire drive."""
+        if not item_id or item_id in ["root", "/"]:
+            return self.contents.get("/")
+
+        def traverse(folder):
+            if hasattr(folder, "contents"):
+                if item_id in folder.contents:
+                    return folder.contents[item_id]
+                for child in folder.contents.values():
+                    if getattr(child, "type", "") == "folder":
+                        res = traverse(child)
+                        if res:
+                            return res
+            return None
+
+        return traverse(self.contents.get("/"))
 
     def get_directory(
         self, path: str, is_admin: bool = True, auth: str = None
@@ -400,8 +551,82 @@ class NewDriveData:
         logger.info(f"Authorization hash generated for path '{clean}'.")
         return auth
 
+    def get_human_path(self, item: Union[Folder, File]) -> str:
+        """
+        Computes the human-readable path of any file or folder object,
+        e.g. 'C_Drive/Users/shishir0x/Pictures/photo.jpg'
+        """
+        parts = []
+        curr_path = getattr(item, "path", "")
+        folder_ids = [p for p in str(curr_path).strip("/").split("/") if p]
+        folder = self.contents.get("/")
+        for fid in folder_ids:
+            if hasattr(folder, "contents") and fid in folder.contents:
+                f = folder.contents[fid]
+                parts.append(getattr(f, "name", fid))
+                folder = f
+            else:
+                break
+        parts.append(getattr(item, "name", ""))
+        return "/".join(parts)
+
+    def resolve_local_file_path(self, item: Union[Folder, File, str]) -> Optional[str]:
+        """
+        Resolves an item (or path) to a physical local file on disk if it exists.
+        Handles:
+          - Windows drives: 'C_Drive/...' -> 'C:\\...', 'D_Drive/...' -> 'D:\\...'
+          - Relative workspace files: './downloads/...', 'cache/...'
+          - Absolute paths: '/C_Drive/...' -> 'C:\\...'
+        Returns canonical absolute path string if existing file, else None.
+        """
+        if isinstance(item, str):
+            try:
+                item_obj = self.get_file(item)
+                if item_obj:
+                    item = item_obj
+            except Exception:
+                pass
+
+        if hasattr(item, "name"):
+            hp = self.get_human_path(item)
+        elif isinstance(item, str):
+            hp = item.replace("\\", "/").strip("/")
+        else:
+            return None
+
+        # 0. Check if item has an explicit device path or local path attached
+        if hasattr(item, "device") and item.device:
+            dev = str(item.device)
+            if os.path.isfile(dev):
+                return os.path.abspath(dev)
+            cand = os.path.join(dev, getattr(item, "name", ""))
+            if os.path.isfile(cand):
+                return os.path.abspath(cand)
+
+        # 1. Check Windows Drive patterns: C_Drive/..., D_Drive/..., etc.
+        parts = hp.split("/", 1)
+        if len(parts) == 2 and parts[0].endswith("_Drive") and len(parts[0]) == 7:
+            letter = parts[0][0].upper()
+            candidate = f"{letter}:\\" + parts[1].replace("/", "\\")
+            if os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+
+        # 2. Check if the path directly exists on disk (relative or absolute)
+        if os.path.isfile(hp):
+            return os.path.abspath(hp)
+
+        # 3. Check within downloads or workspace
+        for base in [Path("."), Path("downloads"), Path("cache")]:
+            candidate = base / hp
+            if candidate.is_file():
+                return str(candidate.resolve())
+
+        return None
+
     def get_file(self, path: str, is_admin: bool = True) -> File:
-        clean = (path or "").replace("/share_", "").replace("share_", "").strip("/")
+        import urllib.parse
+        raw_clean = (path or "").replace("/share_", "").replace("share_", "").strip("/")
+        clean = urllib.parse.unquote(raw_clean)
         if "/" in clean:
             folder_path = "/" + "/".join(clean.split("/")[:-1])
             file_id_or_name = clean.split("/")[-1]
@@ -416,9 +641,22 @@ class NewDriveData:
             if hasattr(folder_data, "contents"):
                 if file_id_or_name in folder_data.contents:
                     return folder_data.contents[file_id_or_name]
+                file_id_or_name_lower = file_id_or_name.lower()
                 for item in folder_data.contents.values():
-                    if getattr(item, "type", "") == "file" and getattr(item, "name", "") == file_id_or_name:
-                        return item
+                    if getattr(item, "type", "") == "file":
+                        if getattr(item, "name", "") == file_id_or_name or getattr(item, "name", "").lower() == file_id_or_name_lower:
+                            return item
+
+        # Also try with raw_clean if different
+        if raw_clean != clean and "/" in raw_clean:
+            raw_folder_path = "/" + "/".join(raw_clean.split("/")[:-1])
+            raw_file_id_or_name = raw_clean.split("/")[-1]
+            raw_folder_data = self.get_directory(raw_folder_path, is_admin=True)
+            if raw_folder_data:
+                if isinstance(raw_folder_data, tuple):
+                    raw_folder_data = raw_folder_data[0]
+                if hasattr(raw_folder_data, "contents") and raw_file_id_or_name in raw_folder_data.contents:
+                    return raw_folder_data.contents[raw_file_id_or_name]
 
         # Recursive fallback search by file_id or name.
         # SECURITY: skipped for non-admin (share-visitor) requests — otherwise a
@@ -426,12 +664,14 @@ class NewDriveData:
         if not is_admin:
             raise KeyError(f"File not found: {path}")
 
+        file_id_or_name_lower = file_id_or_name.lower()
+
         def find_file(folder):
             if hasattr(folder, "contents"):
                 if file_id_or_name in folder.contents and getattr(folder.contents[file_id_or_name], "type", None) == "file":
                     return folder.contents[file_id_or_name]
                 for item in folder.contents.values():
-                    if getattr(item, "type", None) == "file" and getattr(item, "name", None) == file_id_or_name:
+                    if getattr(item, "type", None) == "file" and (getattr(item, "name", None) == file_id_or_name or getattr(item, "name", "").lower() == file_id_or_name_lower):
                         return item
                 for child in folder.contents.values():
                     if getattr(child, "type", None) == "folder":
@@ -455,10 +695,24 @@ class NewDriveData:
             folder_path = "/"
             file_id = clean
         folder_data = self.get_directory(folder_path)
+        target_item = None
         if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
-            folder_data.contents[file_id].name = clean_new_name
+            target_item = folder_data.contents[file_id]
+        else:
+            target_item = self.find_item_by_id(file_id)
+
+        if target_item:
+            old_name = getattr(target_item, "name", "")
+            target_item.name = clean_new_name
+            target_item.modified_at = datetime.now(timezone.utc).isoformat()
+            try:
+                from utils.properties import ActivityTracker, FolderStatsCalculator
+                ActivityTracker.record_activity(target_item, "renamed", details={"old_name": old_name, "new_name": clean_new_name})
+                FolderStatsCalculator.invalidate_cache()
+            except Exception:
+                pass
             self.save()
-            logger.info(f"Item at path '{path}' renamed to '{clean_new_name}'.")
+            logger.info(f"Item at path '{path}' renamed from '{old_name}' to '{clean_new_name}'.")
 
     def trash_file_folder(self, path: str, trash: bool) -> None:
         action = "Trashing" if trash else "Restoring"
@@ -470,27 +724,26 @@ class NewDriveData:
             folder_path = "/"
             file_id = clean
         folder_data = self.get_directory(folder_path)
+        target_item = None
         if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
-            folder_data.contents[file_id].trash = trash
+            target_item = folder_data.contents[file_id]
+        else:
+            target_item = self.find_item_by_id(file_id)
+
+        if target_item:
+            target_item.trash = trash
+            if trash:
+                target_item.trashed_at = datetime.now(timezone.utc).isoformat()
+            else:
+                target_item.restored_at = datetime.now(timezone.utc).isoformat()
+            try:
+                from utils.properties import ActivityTracker, FolderStatsCalculator
+                ActivityTracker.record_activity(target_item, "trashed" if trash else "restored")
+                FolderStatsCalculator.invalidate_cache()
+            except Exception:
+                pass
             self.save()
             logger.info(f"Item at path '{path}' {action.lower()} successfully.")
-            return
-
-        # Fallback global search if path structure changed
-        def search_and_trash(folder):
-            if hasattr(folder, "contents"):
-                if file_id in folder.contents:
-                    folder.contents[file_id].trash = trash
-                    return True
-                for child in folder.contents.values():
-                    if child.type == "folder":
-                        if search_and_trash(child):
-                            return True
-            return False
-
-        if search_and_trash(self.contents.get("/")):
-            self.save()
-            logger.info(f"Item with ID '{file_id}' {action.lower()} via fallback search.")
 
     def get_trashed_files_folders(self):
         root_dir = self.get_directory("/")
@@ -660,6 +913,11 @@ class NewDriveData:
         if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
             deleted_item = folder_data.contents.pop(file_id)
             deleted_msg_ids.extend(self._collect_file_ids(deleted_item))
+            try:
+                from utils.properties import FolderStatsCalculator
+                FolderStatsCalculator.invalidate_cache()
+            except Exception:
+                pass
             self.save()
             logger.info(f"Item at path '{path}' deleted successfully. Collected {len(deleted_msg_ids)} Telegram msg IDs.")
             return deleted_msg_ids
@@ -678,6 +936,11 @@ class NewDriveData:
             return False
 
         if search_and_delete(self.contents.get("/")):
+            try:
+                from utils.properties import FolderStatsCalculator
+                FolderStatsCalculator.invalidate_cache()
+            except Exception:
+                pass
             self.save()
             logger.info(f"Item with ID '{file_id}' deleted via fallback search. Collected {len(deleted_msg_ids)} Telegram msg IDs.")
 
@@ -713,6 +976,11 @@ class NewDriveData:
                     return False
                 search_and_pop(self.contents.get("/"))
 
+        try:
+            from utils.properties import FolderStatsCalculator
+            FolderStatsCalculator.invalidate_cache()
+        except Exception:
+            pass
         self.save()
         logger.info(f"Bulk deleted {len(paths)} item(s). Collected {len(all_deleted_ids)} Telegram msg IDs.")
         return all_deleted_ids
@@ -863,6 +1131,13 @@ class NewDriveData:
             item.path = dest_folder_path
 
         dest_folder.contents[item.id] = item
+        item.modified_at = datetime.now(timezone.utc).isoformat()
+        try:
+            from utils.properties import ActivityTracker, FolderStatsCalculator
+            ActivityTracker.record_activity(item, "moved", details={"src_path": src_path, "dest_path": dest_folder_path})
+            FolderStatsCalculator.invalidate_cache()
+        except Exception:
+            pass
         self.save()
         logger.info(f"Moved item '{item.name}' ({item.id}) from '{src_path}' to '{dest_folder_path}'.")
 
@@ -913,6 +1188,10 @@ class NewDriveData:
         new_item = copy.deepcopy(item)
         new_item.id = getRandomID()
         new_item.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_item.uploaded_at = new_item.upload_date
+        new_item.modified_at = new_item.upload_date
+        new_item.accessed_at = new_item.upload_date
+        new_item.activity_history = []
 
         # Copies must NOT inherit live share tokens from the original
         if hasattr(new_item, "auth_hashes"):
@@ -935,6 +1214,10 @@ class NewDriveData:
                     child = folder.contents.pop(cid)
                     child.id = getRandomID()
                     child.upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    child.uploaded_at = child.upload_date
+                    child.modified_at = child.upload_date
+                    child.accessed_at = child.upload_date
+                    child.activity_history = []
                     if hasattr(child, "auth_hashes"):
                         child.auth_hashes = []
                     if child.type == "folder":
@@ -947,6 +1230,12 @@ class NewDriveData:
             regenerate_ids(new_item, dest_folder_path)
 
         dest_folder.contents[new_item.id] = new_item
+        try:
+            from utils.properties import ActivityTracker, FolderStatsCalculator
+            ActivityTracker.record_activity(new_item, "copied", details={"src_name": item.name})
+            FolderStatsCalculator.invalidate_cache()
+        except Exception:
+            pass
         self.save()
         logger.info(f"Copied item '{item.name}' to '{dest_folder_path}' as '{new_item.name}' ({new_item.id}).")
         return new_item.id
@@ -1198,11 +1487,13 @@ class NewDriveData:
             if rel_archive_path in seen_paths:
                 return
             seen_paths.add(rel_archive_path)
+            local_path = self.resolve_local_file_path(f)
             items_to_download.append({
-                "file_id": f.file_id,
+                "file_id": getattr(f, "file_id", 0),
                 "file_name": f.name,
                 "archive_path": rel_archive_path,
-                "size": getattr(f, "size", 0)
+                "size": getattr(f, "size", 0),
+                "local_path": local_path,
             })
 
         def traverse_folder(folder, current_prefix=""):

@@ -261,6 +261,17 @@ async function getCurrentDirectory() {
         }
     }
 
+    if (path === '/duplicates' || path.startsWith('/duplicates')) {
+        if (typeof window.showDuplicatesView === 'function') {
+            window.showDuplicatesView(false);
+            return;
+        }
+    } else {
+        if (typeof window.hideDuplicatesView === 'function') {
+            window.hideDuplicatesView();
+        }
+    }
+
     // Immediately trigger skeleton loader to eliminate stale folder rendering
     if (typeof showDirectorySkeleton === 'function') {
         showDirectorySkeleton();
@@ -503,21 +514,50 @@ function promptFileConflict(file, destPath, existingInfo) {
     });
 }
 
-async function uploadFilesQueue(files, targetPath) {
-    if (!files || files.length === 0) return;
+async function uploadFilesQueue(files, targetPath, options = {}) {
+    if (!files || files.length === 0) {
+        if (options && options.emptyFolders && options.emptyFolders.length > 0) {
+            const destPath = targetPath || getCurrentPath();
+            try {
+                await postJson('/api/createFolderTree', { base_path: destPath, folders: options.emptyFolders });
+                showToast(`📁 Created ${options.emptyFolders.length} folder${options.emptyFolders.length === 1 ? '' : 's'}`);
+                getCurrentDirectory();
+            } catch (e) {
+                console.error('Failed to create empty folders:', e);
+            }
+        }
+        return;
+    }
     const destPath = targetPath || getCurrentPath();
+    const batchId = (options && options.batchId) || ('batch_' + (typeof getRandomId === 'function' ? getRandomId() : Date.now()));
 
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+    // Pre-create empty folders if supplied in options or discovered from directory scan
+    if (options && options.emptyFolders && options.emptyFolders.length > 0) {
+        try {
+            await postJson('/api/createFolderTree', { base_path: destPath, folders: options.emptyFolders });
+        } catch (e) {
+            console.debug('Folder tree pre-creation note:', e);
+        }
+    }
+
+    const fileArray = Array.from(files);
+    for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
         if (file.size > MAX_FILE_SIZE) {
             showToast(`⚠️ "${file.name}" exceeds ${(MAX_FILE_SIZE / (1024 * 1024 * 1024)).toFixed(2)} GB limit`);
             continue;
         }
 
+        const relativePath = file.webkitRelativePath || file._relativePath || '';
+
         // Check if file already exists in this path
-        let conflictChoice = 'keep_both';
+        let conflictChoice = (options && options.defaultConflict) || 'keep_both';
         try {
-            const checkRes = await postJson('/api/checkFileExists', { path: destPath, filename: file.name });
+            const checkRes = await postJson('/api/checkFileExists', {
+                path: destPath,
+                filename: file.name,
+                relative_path: relativePath || undefined
+            });
             if (checkRes && checkRes.exists) {
                 conflictChoice = await promptFileConflict(file, destPath, checkRes);
                 if (conflictChoice === 'cancel') {
@@ -529,7 +569,13 @@ async function uploadFilesQueue(files, targetPath) {
             conflictChoice = 'keep_both';
         }
 
-        UPLOAD_QUEUE.push({ file: file, path: destPath, conflict: conflictChoice });
+        UPLOAD_QUEUE.push({
+            file: file,
+            path: destPath,
+            relativePath: relativePath,
+            batchId: batchId,
+            conflict: conflictChoice
+        });
     }
 
     if (!IS_UPLOADING_QUEUE && UPLOAD_QUEUE.length > 0) {
@@ -558,6 +604,8 @@ async function processUploadQueue() {
     const file = currentItem.file;
     const path = currentItem.path;
     const conflictMode = currentItem.conflict || 'keep_both';
+    const relativePath = currentItem.relativePath || '';
+    const batchId = currentItem.batchId || '';
     const remaining = UPLOAD_QUEUE.length;
 
     const uploaderCard = document.getElementById('file-uploader');
@@ -567,7 +615,8 @@ async function processUploadQueue() {
     const sizeEl = document.getElementById('upload-filesize');
     const statusEl = document.getElementById('upload-status');
 
-    if (filenameEl) filenameEl.innerText = file.name;
+    const displayName = relativePath || file.name;
+    if (filenameEl) filenameEl.innerText = displayName;
     if (sizeEl) sizeEl.innerText = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
     if (statusEl) statusEl.innerText = remaining > 0 ? `Uploading (${remaining + 1} items)...` : 'Uploading to Drive...';
     if (progressBar) progressBar.style.width = '0%';
@@ -577,6 +626,12 @@ async function processUploadQueue() {
     formData.append('file', file);
     formData.append('path', path);
     formData.append('conflict', conflictMode);
+    if (relativePath) {
+        formData.append('relative_path', relativePath);
+    }
+    if (batchId) {
+        formData.append('batch_id', batchId);
+    }
     const id = getRandomId();
     formData.append('id', id);
     formData.append('total_size', file.size);
@@ -606,6 +661,93 @@ async function processUploadQueue() {
     });
 
     uploadRequest.send(formData);
+}
+
+// Recursive scanner for drag & drop directories and files
+async function scanDataTransferItems(dataTransfer) {
+    const files = [];
+    const emptyFolders = [];
+
+    if (!dataTransfer || !dataTransfer.items) {
+        if (dataTransfer && dataTransfer.files) {
+            return { files: Array.from(dataTransfer.files), emptyFolders: [] };
+        }
+        return { files: [], emptyFolders: [] };
+    }
+
+    async function traverseEntry(entry, path = '') {
+        if (!entry) return;
+        if (entry.isFile) {
+            try {
+                const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+                file._relativePath = path ? `${path}/${file.name}` : file.name;
+                files.push(file);
+            } catch (err) {
+                console.warn('Error reading dropped file entry:', err);
+            }
+        } else if (entry.isDirectory) {
+            const dirPath = path ? `${path}/${entry.name}` : entry.name;
+            const dirReader = entry.createReader();
+            let allEntries = [];
+
+            async function readBatch() {
+                return new Promise((resolve, reject) => {
+                    dirReader.readEntries((batch) => {
+                        if (!batch || !batch.length) {
+                            resolve(allEntries);
+                        } else {
+                            allEntries = allEntries.concat(batch);
+                            readBatch().then(resolve, reject);
+                        }
+                    }, reject);
+                });
+            }
+
+            try {
+                await readBatch();
+                if (allEntries.length === 0) {
+                    emptyFolders.push(dirPath);
+                } else {
+                    for (const childEntry of allEntries) {
+                        await traverseEntry(childEntry, dirPath);
+                    }
+                }
+            } catch (dirErr) {
+                console.warn('Error reading directory entries:', dirErr);
+            }
+        }
+    }
+
+    const entries = [];
+    for (let i = 0; i < dataTransfer.items.length; i++) {
+        const item = dataTransfer.items[i];
+        if (item.webkitGetAsEntry) {
+            const entry = item.webkitGetAsEntry();
+            if (entry) entries.push(entry);
+        }
+    }
+
+    if (entries.length > 0) {
+        for (const entry of entries) {
+            await traverseEntry(entry);
+        }
+    } else if (dataTransfer.files && dataTransfer.files.length > 0) {
+        for (let i = 0; i < dataTransfer.files.length; i++) {
+            files.push(dataTransfer.files[i]);
+        }
+    }
+
+    return { files, emptyFolders };
+}
+
+const folderInput = document.getElementById('folderInput');
+if (folderInput) {
+    folderInput.addEventListener('change', (e) => {
+        if (folderInput.files && folderInput.files.length > 0) {
+            uploadFilesQueue(folderInput.files, getCurrentPath(), { isFolder: true });
+            folderInput.value = '';
+        }
+    });
 }
 
 if (fileInput) {
@@ -862,4 +1004,59 @@ async function searchDrive(query, filters = {}, signal = null) {
         throw new Error(errJson.detail || `Search failed with status ${response.status}`);
     }
     return await response.json();
+}
+
+// Properties & Details System Client Functions
+async function fetchFileProperties(fileId, auth = null) {
+    const url = `/api/files/${encodeURIComponent(fileId)}/properties${auth ? `?auth=${encodeURIComponent(auth)}` : ''}`;
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin'
+    });
+    if (!response.ok) {
+        if (response.status === 401 && !auth) showLoginModal();
+        return null;
+    }
+    return await response.json();
+}
+
+async function fetchFolderProperties(folderId, auth = null) {
+    const url = `/api/folders/${encodeURIComponent(folderId)}/properties${auth ? `?auth=${encodeURIComponent(auth)}` : ''}`;
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin'
+    });
+    if (!response.ok) {
+        if (response.status === 401 && !auth) showLoginModal();
+        return null;
+    }
+    return await response.json();
+}
+
+async function fetchFileActivity(fileId) {
+    const url = `/api/files/${encodeURIComponent(fileId)}/activity`;
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin'
+    });
+    if (!response.ok) return null;
+    return await response.json();
+}
+
+async function fetchFolderActivity(folderId) {
+    const url = `/api/folders/${encodeURIComponent(folderId)}/activity`;
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin'
+    });
+    if (!response.ok) return null;
+    return await response.json();
+}
+
+async function enrichItemMetadata(itemId) {
+    return await postJson('/api/properties/enrich', { id: itemId });
 }
