@@ -7,21 +7,58 @@ load_dotenv()
 # Telegram API credentials obtained from https://my.telegram.org/auth
 _api_id_raw = os.getenv("API_ID")
 API_ID = int(_api_id_raw) if _api_id_raw and _api_id_raw.strip().lstrip("-").isdigit() else 0
-API_HASH = os.getenv("API_HASH", "")
+API_HASH = os.getenv("API_HASH", "").strip().strip('"').strip("'")
 
 # List of Telegram bot tokens used for file upload/download operations
-BOT_TOKENS = [token.strip() for token in os.getenv("BOT_TOKENS", "").split(",") if token.strip()]
+BOT_TOKENS = [
+    token.strip().strip('"').strip("'")
+    for token in os.getenv("BOT_TOKENS", "").split(",")
+    if token.strip().strip('"').strip("'")
+]
 
 # List of Premium Telegram Account Pyrogram String Sessions used for file upload/download operations
-STRING_SESSIONS = [session.strip() for session in os.getenv("STRING_SESSIONS", "").split(",") if session.strip()]
+STRING_SESSIONS = [
+    session.strip().strip('"').strip("'")
+    for session in os.getenv("STRING_SESSIONS", "").split(",")
+    if session.strip().strip('"').strip("'")
+]
 
-# Chat ID of the Telegram storage channel where files will be stored
+# Chat ID or username of the Telegram storage channel where files will be stored
+def _parse_storage_channel(raw: str | None):
+    if not raw:
+        return 0
+    raw = str(raw).strip().strip('"').strip("'")
+    if not raw:
+        return 0
+    if "t.me/" in raw:
+        path_part = raw.split("t.me/")[-1].strip("/")
+        parts = path_part.split("/")
+        if parts[0] == "c" and len(parts) >= 2 and parts[1].isdigit():
+            return int(f"-100{parts[1]}")
+        elif parts[0] and not parts[0].startswith("+"):
+            return f"@{parts[0].lstrip('@')}"
+    if raw.lstrip("-").isdigit():
+        return int(raw)
+    if raw.startswith("@") or (raw.replace("_", "").isalnum() and not raw.isdigit()):
+        return raw if raw.startswith("@") else f"@{raw}"
+    return 0
+
 _storage_channel_raw = os.getenv("STORAGE_CHANNEL")
-STORAGE_CHANNEL = int(_storage_channel_raw) if _storage_channel_raw and _storage_channel_raw.strip().lstrip("-").isdigit() else 0
+STORAGE_CHANNEL = _parse_storage_channel(_storage_channel_raw)
 
 # Message ID of a file in the storage channel used for storing database backups
+def _parse_db_msg_id(raw: str | None) -> int:
+    if not raw:
+        return 0
+    raw = str(raw).strip().strip('"').strip("'").rstrip("/")
+    if "/" in raw:
+        raw = raw.split("/")[-1]
+    if raw.isdigit():
+        return int(raw)
+    return 0
+
 _db_msg_id_raw = os.getenv("DATABASE_BACKUP_MSG_ID")
-DATABASE_BACKUP_MSG_ID = int(_db_msg_id_raw) if _db_msg_id_raw and _db_msg_id_raw.strip().isdigit() else 0
+DATABASE_BACKUP_MSG_ID = _parse_db_msg_id(_db_msg_id_raw)
 
 # Password used to access the website's admin panel
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")

@@ -348,8 +348,13 @@ async function refreshCurrentDirectory() {
     const btn = document.getElementById('refresh-dir-btn');
     if (btn) btn.classList.add('is-refreshing');
     try {
+        if (window.IS_AUTHENTICATED && !getCurrentPath().includes('/share_')) {
+            try {
+                await postJson('/api/syncDriveData', {});
+            } catch (e) {}
+        }
         await getCurrentDirectory();
-        showToast('Folder refreshed 🔄');
+        showToast('Folder refreshed & synced 🔄');
     } catch (e) {
         console.error('Refresh error:', e);
     } finally {

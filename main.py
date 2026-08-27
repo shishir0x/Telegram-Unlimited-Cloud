@@ -965,7 +965,7 @@ def _strip_internal_ids(node):
 
 @app.post("/api/getDirectory")
 async def api_get_directory(request: Request):
-    from utils.directoryHandler import ensure_drive_data
+    from utils.directoryHandler import ensure_drive_data, _count_total_drive_items, sync_drive_data_from_telegram
     drive = ensure_drive_data()
 
     try:
@@ -977,6 +977,17 @@ async def api_get_directory(request: Request):
     raw_path = data.get("path", "/")
     path = sanitize_path(raw_path) if not (raw_path.startswith("/tags/") or "/search_" in raw_path or raw_path.startswith("/share_") or raw_path == "/trash" or raw_path == "/recent") else raw_path
     is_admin = is_admin_authenticated(request)
+
+    # On fresh startup/render container reboot, if drive is empty, auto-sync from Telegram backup
+    if is_admin and _count_total_drive_items(drive) == 0:
+        try:
+            from utils.clients import is_telegram_ready
+            if is_telegram_ready():
+                synced = await sync_drive_data_from_telegram(force=True)
+                if synced:
+                    drive = ensure_drive_data()
+        except Exception as sync_err:
+            logger.debug(f"Auto-sync on empty directory check: {sync_err}")
 
     logger.info(f"getFolder path={path} is_admin={is_admin}")
 
