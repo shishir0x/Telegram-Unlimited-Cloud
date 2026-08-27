@@ -12,7 +12,7 @@ async function postJson(url, data) {
             body: JSON.stringify(data)
         })
         if (response.status === 401) {
-            showLoginModal();
+            showLoginModal(false);
             return { status: 'Unauthorized' };
         }
         return await response.json()
@@ -27,14 +27,17 @@ window.IS_AUTHENTICATED = false;
 // Login Modal — Two-Step Auth (Email+Password → OTP)
 // ==========================================
 
-function showLoginModal() {
+function showLoginModal(forceReset = false) {
     window.IS_AUTHENTICATED = false;
     const bg = document.getElementById('bg-blur');
     const modal = document.getElementById('get-password');
     const step1 = document.getElementById('login-step-1');
     const step2 = document.getElementById('login-step-2');
-    if (step1) step1.style.display = '';
-    if (step2) step2.style.display = 'none';
+    const isStep2Active = step2 && step2.style.display !== 'none';
+    if (forceReset || !isStep2Active) {
+        if (step1) step1.style.display = '';
+        if (step2) step2.style.display = 'none';
+    }
     if (bg) { bg.style.zIndex = '100'; bg.style.opacity = '1'; }
     if (modal) { modal.style.zIndex = '101'; modal.style.opacity = '1'; }
 }
@@ -43,8 +46,18 @@ function hideLoginModal() {
     window.IS_AUTHENTICATED = true;
     const bg = document.getElementById('bg-blur');
     const modal = document.getElementById('get-password');
+    const step1 = document.getElementById('login-step-1');
+    const step2 = document.getElementById('login-step-2');
     if (bg) { bg.style.zIndex = '-1'; bg.style.opacity = '0'; }
     if (modal) { modal.style.zIndex = '-1'; modal.style.opacity = '0'; }
+    setTimeout(() => {
+        if (step1) step1.style.display = '';
+        if (step2) step2.style.display = 'none';
+        const err1 = document.getElementById('login-error');
+        const err2 = document.getElementById('otp-error');
+        if (err1) err1.style.display = 'none';
+        if (err2) err2.style.display = 'none';
+    }, 300);
 }
 
 // Initialize Auth Modal Event Listeners
@@ -169,7 +182,7 @@ function initAuthListeners() {
             if (confirm('Do you want to log out of your Admin session?')) {
                 try {
                     await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
-                } catch (e) {}
+                } catch (e) { }
                 window.location.reload();
             }
         });
@@ -243,7 +256,7 @@ setInterval(async () => {
                 getCurrentDirectory();
             }, 1800);
         }
-    } catch {}
+    } catch { }
 }, 2000);
 
 async function getCurrentDirectory() {
@@ -310,7 +323,7 @@ async function getCurrentDirectory() {
             }
             showDirectory(json['data'], json['breadcrumbs'] || []);
         } else if (json.status === 'Unauthorized' || json.status === 'Unauthorized folder access') {
-            showLoginModal();
+            showLoginModal(false);
         } else {
             if (typeof showDirectoryError === 'function') {
                 showDirectoryError(json.status || 'Folder not accessible', path);
@@ -997,7 +1010,7 @@ async function searchDrive(query, filters = {}, signal = null) {
     });
     if (!response.ok) {
         if (response.status === 401) {
-            showLoginModal();
+            showLoginModal(false);
             throw new Error('Unauthorized');
         }
         const errJson = await response.json().catch(() => ({}));
@@ -1015,7 +1028,7 @@ async function fetchFileProperties(fileId, auth = null) {
         credentials: 'same-origin'
     });
     if (!response.ok) {
-        if (response.status === 401 && !auth) showLoginModal();
+        if (response.status === 401 && !auth) showLoginModal(false);
         return null;
     }
     return await response.json();
@@ -1029,7 +1042,7 @@ async function fetchFolderProperties(folderId, auth = null) {
         credentials: 'same-origin'
     });
     if (!response.ok) {
-        if (response.status === 401 && !auth) showLoginModal();
+        if (response.status === 401 && !auth) showLoginModal(false);
         return null;
     }
     return await response.json();

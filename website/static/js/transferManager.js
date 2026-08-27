@@ -99,6 +99,8 @@ window.TRANSFER_MANAGER = (function () {
     }
 
     async function fetchTransfers() {
+        if (!window.IS_AUTHENTICATED) return;
+        if (typeof getCurrentPath === 'function' && getCurrentPath().includes('/share_')) return;
         if (typeof postJson !== 'function') return;
         try {
             const res = await postJson('/api/getTransfers', {});
