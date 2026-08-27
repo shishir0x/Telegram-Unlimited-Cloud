@@ -61,6 +61,17 @@ def verify_file_checksum(file_path: Union[Path, str], checksum_or_path: Union[Pa
         return False
 
 
+def _count_total_drive_items(data) -> int:
+    """Recursively counts all files and folders across all directories in drive contents."""
+    if not data or not hasattr(data, "contents") or not isinstance(data.contents, dict):
+        return 0
+    total = 0
+    for folder in data.contents.values():
+        if hasattr(folder, "contents") and isinstance(folder.contents, dict):
+            total += len(folder.contents)
+    return total
+
+
 def ensure_drive_data(force_reload: bool = False):
     global DRIVE_DATA
     if DRIVE_DATA is None or force_reload:
@@ -105,7 +116,7 @@ def ensure_drive_data(force_reload: bool = False):
             DRIVE_DATA.save()
             DRIVE_DATA.isUpdated = False
             DRIVE_DATA.last_modified = 0.0
-            
+
     return DRIVE_DATA
 
 
@@ -1586,7 +1597,7 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
     """
     global DRIVE_DATA, LAST_REMOTE_BACKUP_FILE_ID, LAST_REMOTE_SYNC_TIME, _BACKUP_AUTHOR_CLIENT_ID
 
-    if not config.DATABASE_BACKUP_MSG_ID or not config.STORAGE_CHANNEL:
+    if not config.STORAGE_CHANNEL:
         return False
 
     import time
@@ -1617,13 +1628,16 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
             for cid, candidate_client in client_candidates:
                 try:
                     if config.DATABASE_BACKUP_MSG_ID:
-                        cand_msg = await candidate_client.get_messages(
-                            config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
-                        )
-                        if cand_msg and not getattr(cand_msg, "empty", True) and cand_msg.document:
-                            msg = cand_msg
-                            _BACKUP_AUTHOR_CLIENT_ID = cid
-                            break
+                        try:
+                            cand_msg = await candidate_client.get_messages(
+                                config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID
+                            )
+                            if cand_msg and not getattr(cand_msg, "empty", True) and cand_msg.document:
+                                msg = cand_msg
+                                _BACKUP_AUTHOR_CLIENT_ID = cid
+                                break
+                        except Exception:
+                            pass
 
                     # Fallback 1: check pinned message in storage channel
                     if not msg:
@@ -1631,9 +1645,9 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                             chat = await candidate_client.get_chat(config.STORAGE_CHANNEL)
                             if chat and chat.pinned_message and chat.pinned_message.document:
                                 msg = chat.pinned_message
-                                if not config.DATABASE_BACKUP_MSG_ID:
-                                    config.DATABASE_BACKUP_MSG_ID = chat.pinned_message.id
+                                config.DATABASE_BACKUP_MSG_ID = chat.pinned_message.id
                                 _BACKUP_AUTHOR_CLIENT_ID = cid
+                                _persist_backup_msg_id(msg.id)
                                 break
                         except Exception:
                             pass
@@ -1641,7 +1655,7 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                     # Fallback 2: scan recent messages in storage channel for backup document
                     if not msg:
                         try:
-                            async for hist_msg in candidate_client.get_chat_history(config.STORAGE_CHANNEL, limit=20):
+                            async for hist_msg in candidate_client.get_chat_history(config.STORAGE_CHANNEL, limit=100):
                                 if hist_msg and hist_msg.document and (
                                     hist_msg.document.file_name == "drive.data" or
                                     (hist_msg.caption and "TG Drive Data Backup File" in hist_msg.caption)
@@ -1649,6 +1663,7 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                                     msg = hist_msg
                                     config.DATABASE_BACKUP_MSG_ID = hist_msg.id
                                     _BACKUP_AUTHOR_CLIENT_ID = cid
+                                    _persist_backup_msg_id(msg.id)
                                     break
                         except Exception:
                             pass
@@ -1678,24 +1693,22 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                     return False
 
                 # ── Stale-rollback protection ─────────────────────────────────
-                # Never let an OLDER Telegram backup wipe recent local changes
-                # (e.g. folders created moments ago during an active sync).
-                remote_ts = float(getattr(new_drive_data, "last_modified", 0) or 0)
-                local_ts = float(getattr(DRIVE_DATA, "last_modified", 0) or 0) if DRIVE_DATA is not None else 0.0
-                local_root_items = []
-                if DRIVE_DATA is not None:
-                    local_root_items = list(
-                        getattr(getattr(DRIVE_DATA, "contents", {}).get("/", None), "contents", {}) or {}
-                    )
-                if not force and local_root_items and remote_ts and local_ts and remote_ts < local_ts:
-                    logger.warning(
-                        f"Remote Telegram backup is OLDER than local drive metadata "
-                        f"(remote {remote_ts:.0f} < local {local_ts:.0f}). "
-                        f"Skipping reload to protect recent changes."
-                    )
-                    # Remember this doc so we don't re-download the same stale backup every tick.
-                    LAST_REMOTE_BACKUP_FILE_ID = remote_file_id
-                    return False
+                # Only protect against rollback if local has pending unpushed changes (isUpdated=True)
+                # and local drive is non-empty. On clean boots or empty local state, always accept remote backup.
+                remote_items_count = _count_total_drive_items(new_drive_data)
+                local_items_count = _count_total_drive_items(DRIVE_DATA)
+                local_is_updated = bool(DRIVE_DATA is not None and getattr(DRIVE_DATA, "isUpdated", False))
+
+                if not force and local_is_updated and local_items_count > 0:
+                    remote_ts = float(getattr(new_drive_data, "last_modified", 0) or 0)
+                    local_ts = float(getattr(DRIVE_DATA, "last_modified", 0) or 0) if DRIVE_DATA is not None else 0.0
+                    if remote_ts and local_ts and remote_ts < local_ts:
+                        logger.warning(
+                            f"Remote Telegram backup is older than unpushed local changes "
+                            f"(remote {remote_ts:.0f} < local {local_ts:.0f}, local: {local_items_count} items, remote: {remote_items_count} items). "
+                            f"Skipping reload to protect pending local modifications."
+                        )
+                        return False
 
                 DRIVE_DATA = new_drive_data
                 LAST_REMOTE_BACKUP_FILE_ID = remote_file_id
@@ -1705,7 +1718,7 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                 # Clear updated flag since local matches remote
                 DRIVE_DATA.isUpdated = False
 
-                logger.info(f"✅ Successfully synchronized drive metadata from Telegram backup (Document ID: {remote_file_id[:12]}...).")
+                logger.info(f"✅ Successfully synchronized drive metadata from Telegram backup ({remote_items_count} item(s) restored, Document ID: {remote_file_id[:12]}...).")
                 return True
             finally:
                 if os.path.exists(dl_result):
