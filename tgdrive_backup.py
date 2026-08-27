@@ -74,7 +74,7 @@ IGNORED_DIRS = {
     "cross device",
     "phonelink",
     "phone link",
-    "your phone",
+    "your phone"
 
 
     # Heavy Dependency & Build Folders (Crucial for C: Drive!)
