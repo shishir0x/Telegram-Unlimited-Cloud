@@ -72,43 +72,83 @@ def _count_total_drive_items(data) -> int:
     return total
 
 
+def load_drive_data_from_file(file_path: Union[Path, str]) -> Optional["NewDriveData"]:
+    """
+    Robustly deserializes drive data supporting dill, standard pickle with cross-version encodings,
+    and JSON export fallbacks across different Python/OS versions.
+    """
+    fp = Path(file_path)
+    if not fp.exists() or fp.stat().st_size == 0:
+        return None
+
+    # 1. Try dill.load
+    try:
+        with open(fp, "rb") as f:
+            obj = dill.load(f)
+            if hasattr(obj, "contents") and "/" in obj.contents:
+                return obj
+    except Exception as e:
+        logger.debug(f"dill.load skipped for {fp.name}: {e}")
+
+    # 2. Try standard pickle.load with multiple encodings
+    for enc in [None, "latin1", "bytes"]:
+        try:
+            with open(fp, "rb") as f:
+                import pickle
+                obj = pickle.load(f, encoding=enc) if enc else pickle.load(f)
+                if hasattr(obj, "contents") and "/" in obj.contents:
+                    return obj
+        except Exception:
+            pass
+
+    # 3. Try reading as JSON
+    try:
+        content = fp.read_text(encoding="utf-8")
+        data = json.loads(content)
+        if isinstance(data, dict) and "contents" in data:
+            return NewDriveData.from_dict(data)
+    except Exception:
+        pass
+
+    return None
+
+
 def ensure_drive_data(force_reload: bool = False):
     global DRIVE_DATA
     if DRIVE_DATA is None or force_reload:
         loaded = False
-        # 1. Try loading primary drive.data with checksum validation
+        # 1. Try loading primary drive.data with multi-format loader
         if drive_cache_path.exists():
-            try:
-                with open(drive_cache_path, "rb") as f:
-                    DRIVE_DATA = dill.load(f)
-                    loaded = True
-                    logger.info("Successfully loaded primary drive.data.")
-                    # Verify recorded SHA256 checksum; warn only (a stale checksum
-                    # must never cause discarding readable data)
-                    if drive_checksum_path.exists():
-                        try:
-                            expected = drive_checksum_path.read_text(encoding="utf-8").strip()
-                            actual = calculate_file_sha256(drive_cache_path)
-                            if expected.lower() != actual.lower():
-                                logger.warning("drive.data SHA256 checksum mismatch (possible unclean shutdown). Metadata loaded but should be verified via /api/admin/integrityReport.")
-                        except Exception as chk_e:
-                            logger.debug(f"Checksum verification skipped: {chk_e}")
-            except Exception as e:
-                logger.warning(f"Primary drive.data corrupted or failed to load ({e}). Attempting backup restore...")
+            DRIVE_DATA = load_drive_data_from_file(drive_cache_path)
+            if DRIVE_DATA is not None:
+                loaded = True
+                logger.info("Successfully loaded primary drive.data.")
+                if drive_checksum_path.exists():
+                    try:
+                        expected = drive_checksum_path.read_text(encoding="utf-8").strip()
+                        actual = calculate_file_sha256(drive_cache_path)
+                        if expected.lower() != actual.lower():
+                            logger.warning("drive.data SHA256 checksum mismatch (possible unclean shutdown).")
+                    except Exception as chk_e:
+                        logger.debug(f"Checksum verification skipped: {chk_e}")
 
         # 2. Try loading backup drive.data.bak if primary failed
         if not loaded and drive_backup_path.exists():
-            try:
-                with open(drive_backup_path, "rb") as f:
-                    DRIVE_DATA = dill.load(f)
-                    loaded = True
-                    logger.info("Successfully recovered drive data from drive.data.bak!")
-                    # Resave to restore primary and checksum
-                    DRIVE_DATA.save()
-            except Exception as e:
-                logger.warning(f"Could not load backup drive.data.bak: {e}")
+            DRIVE_DATA = load_drive_data_from_file(drive_backup_path)
+            if DRIVE_DATA is not None:
+                loaded = True
+                logger.info("Successfully recovered drive data from drive.data.bak!")
+                DRIVE_DATA.save()
 
-        # 3. Initialize fresh root if no data exists
+        # 3. Try loading JSON mirror if binary failed
+        if not loaded and drive_json_mirror_path.exists():
+            DRIVE_DATA = load_drive_data_from_file(drive_json_mirror_path)
+            if DRIVE_DATA is not None:
+                loaded = True
+                logger.info("Successfully recovered drive data from JSON mirror!")
+                DRIVE_DATA.save()
+
+        # 4. Initialize fresh root if no data exists
         if not loaded:
             logger.info("Initializing new drive data structure.")
             DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
@@ -163,6 +203,68 @@ class Folder:
         except Exception:
             pass
 
+    def to_dict(self) -> dict:
+        d = {
+            "id": getattr(self, "id", "root"),
+            "name": getattr(self, "name", "/"),
+            "type": "folder",
+            "trash": getattr(self, "trash", False),
+            "tags": getattr(self, "tags", []),
+            "path": getattr(self, "path", "/"),
+            "upload_date": getattr(self, "upload_date", ""),
+            "created_at": getattr(self, "created_at", ""),
+            "uploaded_at": getattr(self, "uploaded_at", ""),
+            "modified_at": getattr(self, "modified_at", ""),
+            "accessed_at": getattr(self, "accessed_at", ""),
+            "trashed_at": getattr(self, "trashed_at", None),
+            "restored_at": getattr(self, "restored_at", None),
+            "owner": getattr(self, "owner", "Admin (You)"),
+            "auth_hashes": getattr(self, "auth_hashes", []),
+            "activity_history": getattr(self, "activity_history", []),
+            "contents": {}
+        }
+        if hasattr(self, "contents") and isinstance(self.contents, dict):
+            for k, v in self.contents.items():
+                if hasattr(v, "to_dict"):
+                    d["contents"][k] = v.to_dict()
+                elif isinstance(v, dict):
+                    d["contents"][k] = v
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Folder":
+        folder = cls.__new__(cls)
+        folder.id = data.get("id", "root" if data.get("name") == "/" else "root")
+        folder.name = data.get("name", "/")
+        folder.type = "folder"
+        folder.trash = bool(data.get("trash", False))
+        folder.tags = list(data.get("tags", []))
+        folder.path = data.get("path", "/")
+        folder.upload_date = data.get("upload_date", "")
+        folder.created_at = data.get("created_at", "")
+        folder.uploaded_at = data.get("uploaded_at", folder.upload_date)
+        folder.modified_at = data.get("modified_at", folder.upload_date)
+        folder.accessed_at = data.get("accessed_at", folder.upload_date)
+        folder.trashed_at = data.get("trashed_at")
+        folder.restored_at = data.get("restored_at")
+        folder.owner = data.get("owner", "Admin (You)")
+        folder.auth_hashes = list(data.get("auth_hashes", []))
+        folder.activity_history = list(data.get("activity_history", []))
+        folder.contents = {}
+
+        raw_contents = data.get("contents", {})
+        if isinstance(raw_contents, dict):
+            for k, child_data in raw_contents.items():
+                if isinstance(child_data, dict):
+                    ctype = child_data.get("type", "file")
+                    if ctype == "folder":
+                        folder.contents[k] = Folder.from_dict(child_data)
+                    else:
+                        folder.contents[k] = File.from_dict(child_data)
+                elif hasattr(child_data, "type"):
+                    folder.contents[k] = child_data
+        return folder
+
 
 class File:
     def __init__(
@@ -200,6 +302,57 @@ class File:
         except Exception:
             pass
 
+    def to_dict(self) -> dict:
+        return {
+            "id": getattr(self, "id", ""),
+            "name": getattr(self, "name", ""),
+            "file_id": getattr(self, "file_id", 0),
+            "size": getattr(self, "size", 0),
+            "type": "file",
+            "trash": getattr(self, "trash", False),
+            "tags": getattr(self, "tags", []),
+            "path": getattr(self, "path", "/"),
+            "upload_date": getattr(self, "upload_date", ""),
+            "created_at": getattr(self, "created_at", None),
+            "uploaded_at": getattr(self, "uploaded_at", ""),
+            "modified_at": getattr(self, "modified_at", ""),
+            "accessed_at": getattr(self, "accessed_at", ""),
+            "downloaded_at": getattr(self, "downloaded_at", None),
+            "viewed_at": getattr(self, "viewed_at", None),
+            "trashed_at": getattr(self, "trashed_at", None),
+            "restored_at": getattr(self, "restored_at", None),
+            "owner": getattr(self, "owner", "Admin (You)"),
+            "sha256": getattr(self, "sha256", None),
+            "metadata_extra": getattr(self, "metadata_extra", {}),
+            "activity_history": getattr(self, "activity_history", [])
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "File":
+        file = cls.__new__(cls)
+        file.id = data.get("id", "")
+        file.name = data.get("name", "Unnamed")
+        file.file_id = int(data.get("file_id", 0))
+        file.size = int(data.get("size", 0))
+        file.type = "file"
+        file.trash = bool(data.get("trash", False))
+        file.tags = list(data.get("tags", []))
+        file.path = data.get("path", "/")
+        file.upload_date = data.get("upload_date", "")
+        file.created_at = data.get("created_at")
+        file.uploaded_at = data.get("uploaded_at", file.upload_date)
+        file.modified_at = data.get("modified_at", file.upload_date)
+        file.accessed_at = data.get("accessed_at", file.upload_date)
+        file.downloaded_at = data.get("downloaded_at")
+        file.viewed_at = data.get("viewed_at")
+        file.trashed_at = data.get("trashed_at")
+        file.restored_at = data.get("restored_at")
+        file.owner = data.get("owner", "Admin (You)")
+        file.sha256 = data.get("sha256")
+        file.metadata_extra = dict(data.get("metadata_extra", {}))
+        file.activity_history = list(data.get("activity_history", []))
+        return file
+
 
 class NewDriveData:
     def __init__(self, contents: dict, used_ids: list) -> None:
@@ -210,6 +363,42 @@ class NewDriveData:
         # so a stale remote snapshot can never overwrite newer local metadata on pull.
         self.last_modified = time.time()
 
+    def to_dict(self) -> dict:
+        d = {
+            "used_ids": list(getattr(self, "used_ids", [])),
+            "last_modified": float(getattr(self, "last_modified", 0.0)),
+            "contents": {}
+        }
+        if hasattr(self, "contents") and isinstance(self.contents, dict):
+            for k, v in self.contents.items():
+                if hasattr(v, "to_dict"):
+                    d["contents"][k] = v.to_dict()
+                elif isinstance(v, dict):
+                    d["contents"][k] = v
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "NewDriveData":
+        used_ids = list(data.get("used_ids", []))
+        raw_contents = data.get("contents", {})
+        contents = {}
+        if isinstance(raw_contents, dict):
+            for k, v in raw_contents.items():
+                if isinstance(v, dict):
+                    ctype = v.get("type", "folder")
+                    if ctype == "folder" or k == "/":
+                        contents[k] = Folder.from_dict(v)
+                    else:
+                        contents[k] = File.from_dict(v)
+                else:
+                    contents[k] = v
+        if "/" not in contents:
+            contents["/"] = Folder("/", "/")
+        drive = cls(contents, used_ids)
+        drive.last_modified = float(data.get("last_modified", 0.0) or 0.0)
+        drive.isUpdated = False
+        return drive
+
     def save(self) -> None:
         """Atomically saves drive data to disk with automatic .bak backup copy, SHA256 checksum, and JSON mirror."""
         # Freshness stamp: bumped on every mutation (all mutators funnel through save()).
@@ -217,7 +406,7 @@ class NewDriveData:
         tmp_path = drive_cache_path.with_suffix(".tmp")
         try:
             with open(tmp_path, "wb") as f:
-                dill.dump(self, f)
+                dill.dump(self, f, protocol=4)
             # Create/update backup before replacing primary
             if drive_cache_path.exists():
                 try:
@@ -247,8 +436,7 @@ class NewDriveData:
 
             # Export JSON metadata mirror
             try:
-                from utils.extra import convert_class_to_dict
-                dict_snapshot = convert_class_to_dict(self, isObject=True, showtrash=True)
+                dict_snapshot = self.to_dict()
                 json_tmp = drive_json_mirror_path.with_suffix(".tmp")
                 json_tmp.write_text(json.dumps(dict_snapshot, indent=2, default=str), encoding="utf-8")
                 os.replace(json_tmp, drive_json_mirror_path)
@@ -1685,11 +1873,10 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                 return False
 
             try:
-                with open(dl_result, "rb") as f:
-                    new_drive_data = dill.load(f)
+                new_drive_data = load_drive_data_from_file(dl_result)
 
-                if not hasattr(new_drive_data, "contents") or "/" not in new_drive_data.contents:
-                    logger.warning("Downloaded remote drive.data has invalid structure, skipping reload.")
+                if new_drive_data is None or not hasattr(new_drive_data, "contents") or "/" not in new_drive_data.contents:
+                    logger.warning("Downloaded remote drive.data could not be deserialized or has invalid structure, skipping reload.")
                     return False
 
                 # ── Stale-rollback protection ─────────────────────────────────
