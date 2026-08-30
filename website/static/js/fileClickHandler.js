@@ -61,7 +61,15 @@ function openMobileBottomSheet(id) {
     let actionsHtml = '';
     if (!isTrash) {
         if (!isFolder) {
+            const isZip = item.name && item.name.toLowerCase().endsWith('.zip');
+            const archiveBsHtml = isZip ? `
+                <div class="gd-bs-item" id="bs-act-archive">
+                    <svg viewBox="0 0 24 24" class="gd-bs-svg" style="fill:none;stroke:currentColor;stroke-width:2;"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                    <span>Browse Archive</span>
+                </div>
+            ` : '';
             actionsHtml += `
+                ${archiveBsHtml}
                 <div class="gd-bs-item" id="bs-act-preview">
                     <svg viewBox="0 0 24 24" class="gd-bs-svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
                     <span>Preview file</span>
@@ -126,6 +134,17 @@ function openMobileBottomSheet(id) {
     bsActions.innerHTML = actionsHtml;
 
     // Attach Handlers
+    const actArchive = document.getElementById('bs-act-archive');
+    if (actArchive) {
+        actArchive.onclick = () => {
+            closeMobileBottomSheet();
+            const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+            if (window.ARCHIVE_MANAGER && typeof window.ARCHIVE_MANAGER.open === 'function') {
+                window.ARCHIVE_MANAGER.open(filePath, item.name);
+            }
+        };
+    }
+
     const actPreview = document.getElementById('bs-act-preview');
     if (actPreview) {
         actPreview.onclick = () => {
@@ -262,6 +281,20 @@ function bindMoreMenuActions(moreDiv, id) {
     const isTrash = (typeof getCurrentPath === 'function' ? getCurrentPath() : '').includes('/trash');
 
     if (!isTrash) {
+        const archiveOpt = moreDiv.querySelector(`#archive-opt-${id}`);
+        if (archiveOpt) {
+            archiveOpt.onclick = (e) => {
+                e.stopPropagation();
+                closeMoreMenu(moreDiv);
+                const item = (typeof DIRECTORY_ITEMS !== 'undefined') ? DIRECTORY_ITEMS[id] : null;
+                if (!item) return;
+                const filePath = (item.path + '/' + item.id).replaceAll('//', '/');
+                if (window.ARCHIVE_MANAGER && typeof window.ARCHIVE_MANAGER.open === 'function') {
+                    window.ARCHIVE_MANAGER.open(filePath, item.name);
+                }
+            };
+        }
+
         const dlZipOpt = moreDiv.querySelector(`#download-zip-opt-${id}`);
         if (dlZipOpt) {
             dlZipOpt.onclick = (e) => {

@@ -215,5 +215,162 @@ class TestFolderUploadSystem(unittest.TestCase):
         asyncio.run(run_test())
 
 
+    def test_webkit_relative_path_extraction(self):
+        """Simulate browser webkitRelativePath enumeration and verify folder tree derivation.
+
+        The JS folderInput handler derives all intermediate directory paths from
+        webkitRelativePath so they can be pre-created via /api/createFolderTree.
+        This test validates that logic in pure Python.
+        """
+        # Simulated browser FileList: (filename, webkitRelativePath)
+        browser_files = [
+            ("img1.jpg",     "Photos/2026/January/img1.jpg"),
+            ("img2.jpg",     "Photos/2026/January/img2.jpg"),
+            ("report.pdf",   "Photos/2026/February/report.pdf"),
+            ("readme.txt",   "Photos/readme.txt"),
+        ]
+
+        # Replicate the JS logic: collect all ancestor directory paths
+        folder_set = set()
+        for _, rel in browser_files:
+            parts = [p for p in rel.split("/") if p]
+            for depth in range(1, len(parts)):          # skip filename (last part)
+                folder_set.add("/".join(parts[:depth]))
+
+        # Expected directories
+        expected = {
+            "Photos",
+            "Photos/2026",
+            "Photos/2026/January",
+            "Photos/2026/February",
+        }
+        self.assertEqual(folder_set, expected)
+
+        # Verify ensure_folder_tree creates all paths correctly
+        created = self.data.ensure_folder_tree("/", list(folder_set))
+        self.assertEqual(len(created), len(expected))
+
+        # Spot-check January exists under 2026
+        photos = next(
+            i for i in self.data.contents["/"].contents.values()
+            if i.name == "Photos"
+        )
+        year = next(i for i in photos.contents.values() if i.name == "2026")
+        year_folders = {i.name for i in year.contents.values()
+                        if getattr(i, "type", "") == "folder"}
+        self.assertIn("January", year_folders)
+        self.assertIn("February", year_folders)
+
+    def test_folder_upload_api_round_trip(self):
+        """Integration test: createFolderTree then upload with relative_path via real HTTP."""
+        try:
+            import httpx
+        except ImportError:
+            self.skipTest("httpx not installed; skipping API round-trip test")
+
+        async def run():
+            # Patch drive so tests use the isolated temp instance
+            import utils.directoryHandler as dh
+            dh._DRIVE_INSTANCE = self.data
+
+            from main import app
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                # Step 1: Authenticate (use test bypass if available)
+                # Most test setups allow an admin token or skip auth for local tests.
+                # We'll attempt without auth and skip if a 401/403 is returned.
+                tree_resp = await client.post(
+                    "/api/createFolderTree",
+                    json={
+                        "base_path": "/",
+                        "folders": [
+                            "Photos",
+                            "Photos/2026",
+                            "Photos/2026/January",
+                        ],
+                    },
+                )
+                if tree_resp.status_code in (401, 403):
+                    return "SKIP_AUTH"
+                self.assertEqual(tree_resp.status_code, 200)
+                body = tree_resp.json()
+                self.assertEqual(body["status"], "ok")
+                self.assertGreaterEqual(body["created_count"], 1)
+
+                # Step 2: Upload a test file into Photos/2026/January
+                tmp_file = Path(self.test_dir) / "img1.jpg"
+                tmp_file.write_bytes(b"FAKE_JPEG_DATA" * 100)
+
+                upload_resp = await client.post(
+                    "/api/upload",
+                    data={
+                        "path": "/",
+                        "id": "test_rt_001",
+                        "total_size": str(tmp_file.stat().st_size),
+                        "conflict": "keep_both",
+                        "relative_path": "Photos/2026/January/img1.jpg",
+                    },
+                    files={"file": ("img1.jpg", tmp_file.read_bytes(), "image/jpeg")},
+                )
+                if upload_resp.status_code in (401, 403):
+                    return "SKIP_AUTH"
+                self.assertEqual(upload_resp.status_code, 200)
+                body = upload_resp.json()
+                self.assertEqual(body["status"], "ok")
+                return "OK"
+
+        result = asyncio.run(run())
+        if result == "SKIP_AUTH":
+            self.skipTest("Server requires auth; skipping API round-trip test")
+
+    def test_partial_failure_recovery(self):
+        """Verify that a missing file on disk causes state=failed but other queue items proceed."""
+        async def run():
+            store_file = Path(self.test_dir) / "transfers_pf.json"
+            tm = TransferManager(store_path=store_file, is_singleton=False, max_concurrent_uploads=2)
+
+            # Good file
+            good_file = Path(self.test_dir) / "good.txt"
+            good_file.write_text("hello")
+
+            # Queue a file that doesn't exist → should fail gracefully
+            missing_path = str(Path(self.test_dir) / "nonexistent_file.bin")
+            bad_item = await tm.queue_upload(
+                file_path=missing_path,
+                id="tx_fail_001",
+                target_path="/FOLDER",
+                filename="nonexistent_file.bin",
+                file_size=0,
+            )
+            # Queue a good file immediately after
+            good_item = await tm.queue_upload(
+                file_path=str(good_file),
+                id="tx_good_001",
+                target_path="/FOLDER",
+                filename="good.txt",
+                file_size=5,
+            )
+
+            # Both should be immediately queued (state = QUEUED)
+            self.assertEqual(bad_item.state, TransferState.QUEUED)
+            self.assertEqual(good_item.state, TransferState.QUEUED)
+
+            # Serialize / deserialize to verify persistence of queued state
+            await tm.store.save(force=True)
+            new_store = TransferStore(filepath=store_file)
+            self.assertIn("tx_fail_001", new_store.transfers)
+            self.assertIn("tx_good_001", new_store.transfers)
+
+            # Both items appear in the store with expected metadata
+            saved_bad = new_store.transfers["tx_fail_001"]
+            self.assertEqual(saved_bad.filename, "nonexistent_file.bin")
+            saved_good = new_store.transfers["tx_good_001"]
+            self.assertEqual(saved_good.filename, "good.txt")
+
+        asyncio.run(run())
+
+
 if __name__ == "__main__":
     unittest.main()

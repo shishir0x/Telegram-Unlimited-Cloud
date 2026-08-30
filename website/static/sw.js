@@ -6,6 +6,7 @@ const STATIC_ASSETS = [
   '/static/js/apiHandler.js?v=14.0',
   '/static/js/sidebar.js?v=14.0',
   '/static/js/fileClickHandler.js?v=14.0',
+  '/static/js/archiveManager.js?v=14.0',
   '/static/js/main.js?v=14.0',
   '/static/manifest.json'
 ];

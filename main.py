@@ -403,6 +403,321 @@ async def api_download_zip(request: Request, _auth: Session = Depends(require_au
     })
 
 
+
+# =========================================================
+# Archive Manager API — Browse, Inspect, Extract ZIP Archives
+# =========================================================
+
+
+@app.get("/api/archive/list_formats")
+async def api_archive_list_formats(_auth: Session = Depends(require_auth)):
+    """Returns the list of archive formats supported by this server."""
+    from utils.archive_manager import SUPPORTED_FORMATS
+    return JSONResponse({"supported": SUPPORTED_FORMATS})
+
+
+@app.post("/api/archive/inspect")
+async def api_archive_inspect(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Inspects an archive file on the drive and returns its full manifest (tree + sizes).
+
+    Body: {"file_path": "<drive_virtual_path>"}
+    """
+    from utils.directoryHandler import ensure_drive_data
+    from utils.archive_manager import (
+        inspect_archive, manifest_to_dict,
+        ArchiveSecurity, ARCHIVE_TEMP_DIR, cleanup_archive_temp, make_sandbox,
+    )
+    from config import (
+        ARCHIVE_MAX_EXTRACT_SIZE, ARCHIVE_MAX_EXTRACT_FILES,
+        ARCHIVE_MAX_NESTING_DEPTH, ARCHIVE_MAX_RATIO,
+    )
+    import asyncio
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    drive_path = body.get("file_path", "").strip()
+    if not drive_path:
+        raise HTTPException(status_code=400, detail="Missing file_path")
+
+    drive_path = sanitize_path(drive_path)
+    drive = ensure_drive_data()
+
+    try:
+        file_obj = drive.get_file(drive_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found in drive")
+
+    ext = Path(file_obj.name).suffix.lower()
+    if ext not in (".zip",):
+        raise HTTPException(status_code=400, detail=f"Unsupported archive format: '{ext}'. Supported: .zip")
+
+    security = ArchiveSecurity(
+        max_extract_size=ARCHIVE_MAX_EXTRACT_SIZE,
+        max_extract_files=ARCHIVE_MAX_EXTRACT_FILES,
+        max_nesting_depth=ARCHIVE_MAX_NESTING_DEPTH,
+        max_ratio=ARCHIVE_MAX_RATIO,
+    )
+
+    # Resolve local file or download from Telegram to a temp location
+    local_path = drive.resolve_local_file_path(file_obj) if hasattr(drive, "resolve_local_file_path") else None
+    temp_download: Optional[Path] = None
+
+    if not local_path or not os.path.isfile(local_path):
+        # Archive is cloud-only — download to temp for inspection
+        if not getattr(file_obj, "file_id", 0) or int(file_obj.file_id) <= 0:
+            raise HTTPException(status_code=503, detail="Archive file is not available locally or in Telegram cloud")
+
+        try:
+            from utils.clients import get_client
+            from config import STORAGE_CHANNEL as _STORAGE_CHANNEL
+            ARCHIVE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+            temp_download = ARCHIVE_TEMP_DIR / f"inspect_{secrets.token_hex(8)}{ext}"
+            client = get_client()
+            msg = await client.get_messages(_STORAGE_CHANNEL, int(file_obj.file_id))
+            if not msg:
+                raise HTTPException(status_code=404, detail="Telegram message not found for archive")
+            await client.download_media(msg, file_name=str(temp_download))
+            local_path = str(temp_download)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to download archive for inspection: {e}")
+
+    try:
+        manifest = await asyncio.get_event_loop().run_in_executor(
+            None, inspect_archive, Path(local_path), security
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"archive inspect error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to inspect archive: {e}")
+    finally:
+        if temp_download and temp_download.exists():
+            try:
+                temp_download.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    return JSONResponse(manifest_to_dict(manifest))
+
+
+@app.post("/api/archive/extract")
+async def api_archive_extract(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Extracts selected members (or all) from an archive into a drive destination folder.
+    Each extracted file is queued into the Transfer Manager as an upload job.
+
+    Body:
+    {
+      "file_path": "<drive_virtual_path>",
+      "members": ["path/inside/archive.txt", ...] | null,
+      "destination": "<drive_folder_path>",   // defaults to archive's parent folder
+      "conflict": "keep_both" | "replace"
+    }
+    """
+    from utils.directoryHandler import ensure_drive_data
+    from utils.archive_manager import (
+        inspect_archive, extract_archive, make_sandbox,
+        cleanup_archive_temp, ArchiveSecurity, ARCHIVE_TEMP_DIR,
+        register_download_token,
+    )
+    from utils.transfer_manager import transfer_manager
+    from config import (
+        ARCHIVE_MAX_EXTRACT_SIZE, ARCHIVE_MAX_EXTRACT_FILES,
+        ARCHIVE_MAX_NESTING_DEPTH, ARCHIVE_MAX_RATIO, STORAGE_CHANNEL as _SC,
+    )
+    from starlette.background import BackgroundTask
+    import asyncio
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    drive_path = sanitize_path(body.get("file_path", "").strip())
+    members_raw: Optional[List[str]] = body.get("members")  # None → extract all
+    destination_raw: Optional[str] = body.get("destination")
+    conflict_mode: str = body.get("conflict", "keep_both")
+
+    if conflict_mode not in ("keep_both", "replace"):
+        conflict_mode = "keep_both"
+
+    if not drive_path:
+        raise HTTPException(status_code=400, detail="Missing file_path")
+
+    drive = ensure_drive_data()
+
+    try:
+        file_obj = drive.get_file(drive_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found in drive")
+
+    ext = Path(file_obj.name).suffix.lower()
+    if ext not in (".zip",):
+        raise HTTPException(status_code=400, detail=f"Unsupported archive format: '{ext}'")
+
+    # Determine destination folder path in drive (defaults to archive's parent)
+    if destination_raw:
+        dest_folder = sanitize_path(destination_raw.strip())
+    else:
+        parts = drive_path.strip("/").split("/")
+        dest_folder = "/" + "/".join(parts[:-1]) if len(parts) > 1 else "/"
+
+    security = ArchiveSecurity(
+        max_extract_size=ARCHIVE_MAX_EXTRACT_SIZE,
+        max_extract_files=ARCHIVE_MAX_EXTRACT_FILES,
+        max_nesting_depth=ARCHIVE_MAX_NESTING_DEPTH,
+        max_ratio=ARCHIVE_MAX_RATIO,
+    )
+
+    # Resolve local file or download from Telegram
+    local_path = drive.resolve_local_file_path(file_obj) if hasattr(drive, "resolve_local_file_path") else None
+    temp_download: Optional[Path] = None
+
+    if not local_path or not os.path.isfile(local_path):
+        if not getattr(file_obj, "file_id", 0) or int(file_obj.file_id) <= 0:
+            raise HTTPException(status_code=503, detail="Archive not available locally or in cloud")
+        try:
+            from utils.clients import get_client
+            ARCHIVE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+            temp_download = ARCHIVE_TEMP_DIR / f"extract_{secrets.token_hex(8)}{ext}"
+            client = get_client()
+            msg = await client.get_messages(_SC, int(file_obj.file_id))
+            if not msg:
+                raise HTTPException(status_code=404, detail="Telegram message not found for archive")
+            await client.download_media(msg, file_name=str(temp_download))
+            local_path = str(temp_download)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to download archive: {e}")
+
+    # Safety pass: inspect first to enforce limits before touching disk
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, inspect_archive, Path(local_path), security
+        )
+    except ValueError as e:
+        if temp_download and temp_download.exists():
+            temp_download.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Create sandbox and extract
+    sandbox = make_sandbox()
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, extract_archive, Path(local_path), members_raw, sandbox, security
+        )
+    except Exception as e:
+        cleanup_archive_temp(sandbox)
+        if temp_download and temp_download.exists():
+            temp_download.unlink(missing_ok=True)
+        logger.error(f"archive extract error: {e}")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
+    finally:
+        if temp_download and temp_download.exists():
+            try:
+                temp_download.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    if not result.extracted_files:
+        cleanup_archive_temp(sandbox)
+        raise HTTPException(
+            status_code=400,
+            detail="No files were extracted. " + "; ".join(result.skipped[:5])
+        )
+
+    # Queue each extracted file as an upload transfer job
+    import uuid
+    batch_id = f"archive_{secrets.token_hex(6)}"
+    transfer_ids: List[str] = []
+
+    for file_path in result.extracted_files:
+        try:
+            rel = file_path.relative_to(sandbox)
+            relative_str = str(rel).replace("\\", "/")
+            tx_id = f"arc_{uuid.uuid4().hex[:12]}"
+            item = await transfer_manager.queue_upload(
+                file_path=str(file_path),
+                id=tx_id,
+                target_path=dest_folder,
+                filename=file_path.name,
+                file_size=file_path.stat().st_size,
+                conflict=conflict_mode,
+                relative_path=relative_str,
+                batch_id=batch_id,
+            )
+            transfer_ids.append(item.id)
+        except Exception as e:
+            logger.warning(f"Failed to queue extracted file {file_path.name}: {e}")
+
+    # Build download token for direct-browser access (skips Telegram upload)
+    file_map = {
+        str(f.relative_to(sandbox)).replace("\\", "/"): f
+        for f in result.extracted_files
+    }
+    dl_token = register_download_token(sandbox, file_map)
+
+    return JSONResponse({
+        "status": "ok",
+        "batch_id": batch_id,
+        "transfer_ids": transfer_ids,
+        "extracted_count": len(result.extracted_files),
+        "skipped": result.skipped[:20],
+        "errors": result.errors[:10],
+        "download_token": dl_token,
+    })
+
+
+@app.get("/api/archive/download")
+async def api_archive_download(request: Request, _auth: Session = Depends(require_auth)):
+    """
+    Streams a single extracted file back to the browser using a short-lived token.
+    Query params: token=<token>&member=<archive-relative-path>
+    """
+    from utils.archive_manager import resolve_download_token
+    from starlette.responses import StreamingResponse
+    import mimetypes
+
+    token = request.query_params.get("token", "")
+    member = request.query_params.get("member", "")
+
+    if not token or not member:
+        raise HTTPException(status_code=400, detail="Missing token or member parameter")
+
+    file_path = resolve_download_token(token, member)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="Invalid or expired download token")
+
+    filename = file_path.name
+    mime_type, _ = mimetypes.guess_type(filename)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+    def _iter_file():
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(512 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        _iter_file(),
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"',
+            "Content-Length": str(file_path.stat().st_size),
+        },
+    )
+
+
 # =========================================================
 # Google-Grade Thumbnail & Media Optimization Service
 # =========================================================

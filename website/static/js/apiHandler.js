@@ -760,11 +760,47 @@ async function scanDataTransferItems(dataTransfer) {
 
 const folderInput = document.getElementById('folderInput');
 if (folderInput) {
-    folderInput.addEventListener('change', (e) => {
-        if (folderInput.files && folderInput.files.length > 0) {
-            uploadFilesQueue(folderInput.files, getCurrentPath(), { isFolder: true });
-            folderInput.value = '';
+    folderInput.addEventListener('change', async (e) => {
+        const files = Array.from(folderInput.files || []);
+        folderInput.value = ''; // reset early so re-selection works
+        if (files.length === 0) return;
+
+        const destPath = getCurrentPath();
+        const totalSize = files.reduce((s, f) => s + f.size, 0);
+        const totalMB = (totalSize / (1024 * 1024)).toFixed(1);
+        showToast(`📂 Queuing folder: ${files.length} file${files.length === 1 ? '' : 's'} (${totalMB} MB)…`);
+
+        // Derive every intermediate directory path from webkitRelativePath.
+        // This pre-creates the full hierarchy including empty directories whose
+        // files were not selected by the browser (e.g. truly empty dirs).
+        const folderSet = new Set();
+        for (const f of files) {
+            const rel = f.webkitRelativePath || '';
+            const parts = rel.split('/').filter(Boolean);
+            // Add each ancestor directory path (skip the filename = last part)
+            for (let depth = 1; depth < parts.length; depth++) {
+                folderSet.add(parts.slice(0, depth).join('/'));
+            }
         }
+
+        if (folderSet.size > 0) {
+            try {
+                await postJson('/api/createFolderTree', {
+                    base_path: destPath,
+                    folders: Array.from(folderSet),
+                });
+            } catch (err) {
+                // Non-fatal: the upload handler will also resolve paths on the fly
+                console.debug('[folderUpload] createFolderTree note:', err);
+            }
+        }
+
+        // Queue every file with its relative path so the backend places it in
+        // the correct subfolder (resolve_or_create_folder_hierarchy on server).
+        await uploadFilesQueue(files, destPath, {
+            isFolder: true,
+            defaultConflict: 'keep_both',
+        });
     });
 }
 

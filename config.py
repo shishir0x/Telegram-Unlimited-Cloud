@@ -142,3 +142,23 @@ def validate_config(raise_on_error: bool = False) -> tuple[bool, list[str]]:
         raise ValueError("Critical configuration errors:\n - " + "\n - ".join(errors))
 
     return is_valid, errors + warnings
+
+
+# ---------------------------------------------------------------------------
+# Archive Manager — Security Limits
+# Override any of these via .env to suit your archive sizes.
+# ---------------------------------------------------------------------------
+
+# Maximum total bytes that may be extracted from a single archive (default 2 GB)
+ARCHIVE_MAX_EXTRACT_SIZE = int(os.getenv("ARCHIVE_MAX_EXTRACT_SIZE_GB", "2")) * 1024 ** 3
+
+# Maximum number of member files that may be extracted from a single archive
+ARCHIVE_MAX_EXTRACT_FILES = int(os.getenv("ARCHIVE_MAX_EXTRACT_FILES", "10000"))
+
+# Maximum directory nesting depth allowed inside an archive
+ARCHIVE_MAX_NESTING_DEPTH = int(os.getenv("ARCHIVE_MAX_NESTING_DEPTH", "32"))
+
+# Maximum allowed compression ratio (uncompressed / compressed).
+# A member with ratio > this value is considered a zip-bomb and rejected.
+ARCHIVE_MAX_RATIO = int(os.getenv("ARCHIVE_MAX_RATIO", "200"))
+
