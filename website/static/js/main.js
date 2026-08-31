@@ -2895,6 +2895,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const sbCloseBtn = document.getElementById('storage-breakdown-close');
     if (sbCloseBtn) sbCloseBtn.addEventListener('click', window.closeStorageBreakdownModal);
 
+    const settingsBtn = document.getElementById('settings-btn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.openStorageBreakdownModal();
+        });
+    }
+
     setupDragAndDrop();
     applyViewMode(CURRENT_VIEW_MODE);
     initSyncActivityManager();
@@ -3175,12 +3183,13 @@ function getStaticCommands() {
     return [
         { id: 'nav-my-drive', label: 'Go to My Drive', icon: '🏠', action: () => navigateToPath('/') },
         { id: 'nav-recent', label: 'Go to Recent Files', icon: '🕒', action: () => navigateToPath('/recent') },
+        { id: 'nav-transfers', label: 'View Transfers Manager', icon: '🚀', action: () => window.showTransfersView() },
         { id: 'nav-trash', label: 'Go to Trash', icon: '🗑️', action: () => navigateToPath('/trash') },
         { id: 'nav-sync', label: 'View Live Sync Activity', icon: '⚡', action: () => window.showSyncActivityView() },
         { id: 'nav-storage', label: 'View Cloud Storage Breakdown', icon: '📊', action: () => window.openStorageBreakdownModal() },
         { id: 'act-new-folder', label: 'Create New Folder', icon: '📁', action: () => { const b = document.getElementById('new-folder-btn'); if (b) b.click(); } },
         { id: 'act-upload-file', label: 'Upload Local File', icon: '⬆️', action: () => { const b = document.getElementById('fileInput'); if (b) b.click(); } },
-        { id: 'act-upload-url', label: 'Upload from URL', icon: '🌐', action: () => { const b = document.getElementById('url-upload'); if (b) b.click(); } },
+        { id: 'act-upload-url', label: 'Upload from URL', icon: '🌐', action: () => { const b = document.getElementById('url-upload-btn'); if (b) b.click(); } },
         { id: 'act-toggle-view', label: 'Toggle List / Grid View', icon: '🔲', action: () => applyViewMode(CURRENT_VIEW_MODE === 'grid' ? 'list' : 'grid') },
         { id: 'act-toggle-insp', label: 'Toggle Details Inspector', icon: 'ℹ️', action: () => { const b = document.getElementById('toggle-info-pane'); if (b) b.click(); } },
         { id: 'act-shortcuts', label: 'Show Keyboard Shortcuts', icon: '⌨️', action: () => openKeyboardShortcutsModal() }
@@ -3348,40 +3357,43 @@ function initCommandPalette() {
 // ==========================================
 
 // Switch to Native Sync View in UI
-window.showSyncActivityView = function() {
+window.showSyncActivityView = function(pushState = true) {
     window.CURRENT_PAGE_VIEW = 'sync';
+    if (pushState) {
+        const url = new URL(window.location);
+        url.searchParams.set('path', '/sync');
+        window.history.pushState({ path: '/sync' }, '', url.toString());
+    }
+
     const listViewContainer = document.getElementById('list-view-container');
     const gridViewContainer = document.getElementById('grid-view-container');
     const syncViewContainer = document.getElementById('sync-view-container');
+    const sharedLinks = document.getElementById('shared-links-container');
+    const dupView = document.getElementById('duplicates-view-container');
+    const transfersContainer = document.getElementById('transfers-container');
     const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
-    const navMyDrive = document.getElementById('nav-my-drive');
-    const navSyncActivity = document.getElementById('nav-sync-activity');
-    const navTrash = document.getElementById('nav-trash');
+    const statusBar = document.getElementById('gd-status-bar');
+    const filterChips = document.getElementById('filter-chips-bar');
 
     if (listViewContainer) listViewContainer.style.display = 'none';
     if (gridViewContainer) gridViewContainer.style.display = 'none';
+    if (sharedLinks) sharedLinks.style.display = 'none';
+    if (dupView) dupView.style.display = 'none';
+    if (transfersContainer) transfersContainer.style.display = 'none';
+    if (statusBar) statusBar.style.display = 'none';
+    if (filterChips) filterChips.style.display = 'none';
     if (syncViewContainer) syncViewContainer.style.display = 'flex';
 
-    // Update sidebar selection
-    if (navMyDrive) navMyDrive.className = 'gd-nav-item unselected-item';
-    if (navTrash) navTrash.className = 'gd-nav-item unselected-item';
-    if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';
-
-    // Update breadcrumb
     if (breadcrumbsContainer) {
         breadcrumbsContainer.innerHTML = `
-            <span class="gd-crumb gd-crumb-target" id="crumb-root-back">My Drive</span>
+            <span class="gd-crumb gd-crumb-target" id="crumb-root-back" style="cursor: pointer;" onclick="navigateToPath('/')">My Drive</span>
             <span class="gd-crumb-separator">&gt;</span>
             <span class="gd-crumb gd-crumb-current">⚡ Live Sync Activity</span>
         `;
-        const rootCrumb = document.getElementById('crumb-root-back');
-        if (rootCrumb) {
-            rootCrumb.addEventListener('click', (e) => {
-                e.preventDefault();
-                window.hideSyncActivityView();
-                if (typeof getCurrentDirectory === 'function') getCurrentDirectory();
-            });
-        }
+    }
+
+    if (typeof updateSidebarNavSelection === 'function') {
+        updateSidebarNavSelection('/sync');
     }
 
     // Trigger an immediate status poll instead of waiting for the next interval tick
@@ -3389,23 +3401,58 @@ window.showSyncActivityView = function() {
 };
 
 window.hideSyncActivityView = function() {
-    window.CURRENT_PAGE_VIEW = 'drive';
+    const syncViewContainer = document.getElementById('sync-view-container');
+    if (syncViewContainer) syncViewContainer.style.display = 'none';
+};
+
+// Switch to Native Transfers Manager View in UI
+window.showTransfersView = function(pushState = true) {
+    window.CURRENT_PAGE_VIEW = 'transfers';
+    if (pushState) {
+        const url = new URL(window.location);
+        url.searchParams.set('path', '/transfers');
+        window.history.pushState({ path: '/transfers' }, '', url.toString());
+    }
+
     const listViewContainer = document.getElementById('list-view-container');
     const gridViewContainer = document.getElementById('grid-view-container');
     const syncViewContainer = document.getElementById('sync-view-container');
-    const navMyDrive = document.getElementById('nav-my-drive');
-    const navSyncActivity = document.getElementById('nav-sync-activity');
+    const sharedLinks = document.getElementById('shared-links-container');
+    const dupView = document.getElementById('duplicates-view-container');
+    const transfersContainer = document.getElementById('transfers-container');
+    const breadcrumbsContainer = document.getElementById('breadcrumbs-container');
+    const statusBar = document.getElementById('gd-status-bar');
+    const filterChips = document.getElementById('filter-chips-bar');
 
+    if (listViewContainer) listViewContainer.style.display = 'none';
+    if (gridViewContainer) gridViewContainer.style.display = 'none';
     if (syncViewContainer) syncViewContainer.style.display = 'none';
-    if (CURRENT_VIEW_MODE === 'grid') {
-        if (gridViewContainer) gridViewContainer.style.display = 'block';
-        if (listViewContainer) listViewContainer.style.display = 'none';
-    } else {
-        if (listViewContainer) listViewContainer.style.display = 'block';
-        if (gridViewContainer) gridViewContainer.style.display = 'none';
+    if (sharedLinks) sharedLinks.style.display = 'none';
+    if (dupView) dupView.style.display = 'none';
+    if (statusBar) statusBar.style.display = 'none';
+    if (filterChips) filterChips.style.display = 'none';
+    if (transfersContainer) transfersContainer.style.display = 'flex';
+
+    if (breadcrumbsContainer) {
+        breadcrumbsContainer.innerHTML = `
+            <span class="gd-crumb gd-crumb-target" id="crumb-root-back-tf" style="cursor: pointer;" onclick="navigateToPath('/')">My Drive</span>
+            <span class="gd-crumb-separator">&gt;</span>
+            <span class="gd-crumb gd-crumb-current">🚀 Transfers Manager</span>
+        `;
     }
-    if (navSyncActivity) navSyncActivity.className = 'gd-nav-item unselected-item';
-    if (navMyDrive) navMyDrive.className = 'gd-nav-item selected-item';
+
+    if (typeof updateSidebarNavSelection === 'function') {
+        updateSidebarNavSelection('/transfers');
+    }
+
+    if (window.TRANSFER_MANAGER && typeof window.TRANSFER_MANAGER.fetchTransfers === 'function') {
+        window.TRANSFER_MANAGER.fetchTransfers();
+    }
+};
+
+window.hideTransfersView = function() {
+    const transfersContainer = document.getElementById('transfers-container');
+    if (transfersContainer) transfersContainer.style.display = 'none';
 };
 
 function initSyncActivityManager() {
@@ -3424,6 +3471,7 @@ function initSyncActivityManager() {
 
     async function pollSyncStatus() {
         if (!window.IS_AUTHENTICATED) return; // Only poll once authenticated
+        if (document.hidden) return; // Skip polling when browser tab is hidden/minimized
         try {
             const res = await fetch('/api/getSyncStatus', {
                 method: 'POST',
@@ -3444,6 +3492,16 @@ function initSyncActivityManager() {
         } catch (e) {
             // Ignore background polling errors
         }
+    }
+
+    function formatSyncBytes(b) {
+        if (typeof b === 'string' && isNaN(Number(b))) return b;
+        const num = Number(b);
+        if (!num || isNaN(num) || num <= 0) return (typeof b === 'string' && b) ? b : '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(num) / Math.log(k));
+        return parseFloat((num / Math.pow(k, i)).toFixed(2)) + ' ' + (sizes[i] || 'B');
     }
 
     function renderSyncStatus(data) {
@@ -3484,6 +3542,9 @@ function initSyncActivityManager() {
         const uiCounts = document.getElementById('sync-view-progress-counts');
         const uiPercent = document.getElementById('sync-view-progress-percent');
 
+        const activeContainer = document.getElementById('sync-active-cards-container');
+        const activeCountBadge = document.getElementById('sync-active-count-badge');
+
         const pendingBody = document.getElementById('sync-pending-table-body');
         const pendingBadge = document.getElementById('sync-pending-badge');
         const completedBody = document.getElementById('sync-completed-table-body');
@@ -3495,7 +3556,7 @@ function initSyncActivityManager() {
         if (uiSource && data.source) uiSource.innerText = data.source;
         if (uiSpeed) uiSpeed.innerText = data.speed_str || (isBusy ? 'Transferring...' : '0.00 KB/s');
 
-        // Active file card
+        // Hero Active file card
         if (uiActiveName) uiActiveName.innerText = data.current_item || (isBusy ? 'Processing cloud stream...' : 'No active transfer');
         if (uiActivePath) uiActivePath.innerText = data.current_path || '/';
         if (uiActiveSize) uiActiveSize.innerText = data.current_size || (data.current_item ? 'In-Memory Stream' : '--');
@@ -3518,19 +3579,73 @@ function initSyncActivityManager() {
         if (uiCounts) uiCounts.innerText = countText;
         if (uiPercent) uiPercent.innerText = `${pct}%`;
 
-        // Render Left Table: ⏳ To Be Uploaded (Queue)
+        // 1. Render Concurrent Uploads (Active Only)
+        let activeList = [];
+        if (Array.isArray(data.active_concurrent) && data.active_concurrent.length > 0) {
+            activeList = data.active_concurrent;
+        } else if (data.current_item && isBusy) {
+            activeList = [{
+                id: 'sync_current',
+                name: data.current_item,
+                path: data.current_path || '/',
+                size: data.current_size || '--',
+                transferred: data.current_bytes || 0,
+                percentage: data.current_percent || 50,
+                speed: data.speed_str || 'Transferring...',
+                eta: '--',
+                state: 'uploading'
+            }];
+        }
+
+        if (activeCountBadge) {
+            activeCountBadge.innerText = `${activeList.length} Active`;
+        }
+
+        if (activeContainer) {
+            if (activeList.length > 0) {
+                activeContainer.innerHTML = activeList.map(item => {
+                    const itemPct = Math.min(100, Math.max(0, Math.round(item.percentage || 0)));
+                    const sizeStr = formatSyncBytes(item.size);
+                    const transStr = formatSyncBytes(item.transferred);
+                    const speedStr = item.speed || 'Transferring...';
+                    return `
+                        <div class="gd-sync-active-card">
+                            <div class="gd-sync-active-card-top">
+                                <div class="gd-sync-active-card-icon">⚡</div>
+                                <div class="gd-sync-active-card-info">
+                                    <div class="gd-sync-active-card-name" title="${escapeHtml(item.name || '')}">${escapeHtml(item.name || '')}</div>
+                                    <div class="gd-sync-active-card-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</div>
+                                </div>
+                            </div>
+                            <div class="gd-sync-sub-progress">
+                                <div class="gd-sync-sub-fill" style="width: ${itemPct}%;"></div>
+                            </div>
+                            <div class="gd-sync-active-card-meta">
+                                <span>${transStr} / ${sizeStr} (${itemPct}%)</span>
+                                <span>⚡ ${escapeHtml(speedStr)}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                activeContainer.innerHTML = `
+                    <div class="gd-sync-active-empty-state">
+                        <span>No active concurrent uploads right now</span>
+                    </div>
+                `;
+            }
+        }
+
+        // 2. Render Future Uploads (Sequential Queue - Uploaded One After Another)
         if (pendingBody) {
-            let pendingList = (data.pending_queue && data.pending_queue.length > 0) ? [...data.pending_queue] : [];
-            
-            if (pendingList.length === 0 && data.current_item) {
-                pendingList.push({
-                    name: data.current_item,
-                    path: data.current_path || (data.source ? `/${data.source}/` : '/'),
-                    size: data.current_size || '⚡ Transferring'
-                });
+            let pendingList = [];
+            if (Array.isArray(data.future_queue) && data.future_queue.length > 0) {
+                pendingList = [...data.future_queue];
+            } else if (Array.isArray(data.pending_queue) && data.pending_queue.length > 0) {
+                pendingList = [...data.pending_queue];
             }
 
-            // If queue list is short but sync is actively running with remaining items
+            // If sync engine is streaming and has remaining items but local queue buffer is smaller
             if (pendingList.length < 15 && isBusy && data.remaining_items > pendingList.length) {
                 const startIdx = (data.current_index || 0) + pendingList.length + 1;
                 const fillCount = Math.min(15 - pendingList.length, data.remaining_items - pendingList.length);
@@ -3544,46 +3659,52 @@ function initSyncActivityManager() {
                 }
             }
 
-            if (pendingBadge) pendingBadge.innerText = data.remaining_items !== undefined ? data.remaining_items : pendingList.length;
+            const queueCount = data.remaining_items !== undefined ? data.remaining_items : pendingList.length;
+            if (pendingBadge) pendingBadge.innerText = queueCount;
 
             if (pendingList.length > 0) {
-                pendingBody.innerHTML = pendingList.map((item, idx) => `
-                    <tr>
-                        <td class="gd-sync-table-idx">${idx + 1}</td>
-                        <td class="gd-sync-table-fname" title="${escapeHtml(item.name || '')}">
-                            <span>${idx === 0 && isBusy ? '⚡' : '📄'}</span>
-                            <span class="file-name-text">${escapeHtml(item.name || '')}</span>
-                        </td>
-                        <td>
-                            <span class="gd-sync-table-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</span>
-                        </td>
-                        <td style="text-align: right;">
-                            <span class="gd-sync-status-tag ${idx === 0 && isBusy ? 'tag-uploading' : 'tag-pending'}">${escapeHtml(item.size || 'Queued')}</span>
-                        </td>
-                    </tr>
-                `).join('');
+                pendingBody.innerHTML = pendingList.map((item, idx) => {
+                    const isNext = idx === 0;
+                    return `
+                        <tr>
+                            <td class="gd-sync-table-idx">${idx + 1}</td>
+                            <td class="gd-sync-table-fname" title="${escapeHtml(item.name || '')}">
+                                <span>${isNext ? '⏳' : '📄'}</span>
+                                <span class="file-name-text">${escapeHtml(item.name || '')}</span>
+                            </td>
+                            <td>
+                                <span class="gd-sync-table-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</span>
+                            </td>
+                            <td style="text-align: right;">
+                                <span class="gd-sync-status-tag ${isNext ? 'tag-pending' : ''}">${isNext ? 'Next Up' : (item.size ? escapeHtml(formatSyncBytes(item.size)) : 'Queued')}</span>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
             } else if (isBusy && data.remaining_items > 0) {
                 pendingBody.innerHTML = `
                     <tr class="empty-row">
-                        <td colspan="4">⚡ Processing remaining ${data.remaining_items} items over persistent MTP stream...</td>
+                        <td colspan="4">⚡ Processing remaining ${data.remaining_items} items over persistent stream...</td>
                     </tr>
                 `;
             } else {
                 pendingBody.innerHTML = `
                     <tr class="empty-row">
-                        <td colspan="4">${state === 'completed' ? '✅ All files transferred! Queue is empty.' : 'No pending files in queue'}</td>
+                        <td colspan="4">${state === 'completed' ? '✅ All files transferred! Queue is empty.' : 'Queue is empty — no upcoming uploads'}</td>
                     </tr>
                 `;
             }
         }
 
-        // Render Right Table: ✅ Uploaded to Cloud (History)
+        // 3. Render Completed Uploads
         if (completedBody) {
-            let completedList = data.completed_list || [];
-            
-            // If empty, parse from live logs array
-            if (completedList.length === 0 && data.logs && data.logs.length > 0) {
-                completedList = [];
+            let completedList = [];
+            if (Array.isArray(data.completed_uploads) && data.completed_uploads.length > 0) {
+                completedList = data.completed_uploads;
+            } else if (Array.isArray(data.completed_list) && data.completed_list.length > 0) {
+                completedList = data.completed_list;
+            } else if (data.logs && data.logs.length > 0) {
+                // Reconstruct from logs if empty
                 for (let i = data.logs.length - 1; i >= 0; i--) {
                     const log = data.logs[i];
                     const msg = log.msg || '';
@@ -3603,7 +3724,8 @@ function initSyncActivityManager() {
                 }
             }
 
-            if (completedBadge) completedBadge.innerText = data.current_index !== undefined ? data.current_index : completedList.length;
+            const doneCount = data.files_uploaded !== undefined ? data.files_uploaded : completedList.length;
+            if (completedBadge) completedBadge.innerText = doneCount;
 
             if (completedList.length > 0) {
                 completedBody.innerHTML = completedList.map((item, idx) => `
@@ -3617,7 +3739,7 @@ function initSyncActivityManager() {
                             <span class="gd-sync-table-path" title="${escapeHtml(item.path || '/')}">${escapeHtml(item.path || '/')}</span>
                         </td>
                         <td style="text-align: right;">
-                            <span class="gd-sync-status-tag tag-synced">${escapeHtml(item.size ? item.size + ' • ' + (item.time || '') : (item.time || 'Synced'))}</span>
+                            <span class="gd-sync-status-tag tag-synced">${escapeHtml(item.size ? item.size + ' • ' + (item.time || 'Done') : (item.time || 'Done'))}</span>
                         </td>
                     </tr>
                 `).join('');
@@ -3643,7 +3765,27 @@ function initSyncActivityManager() {
 
     // Expose the polling hook so the sync view can request an immediate refresh
     window.syncPollHook = pollSyncStatus;
-    setInterval(pollSyncStatus, 2000);
+
+    let syncPollTimer = null;
+    function scheduleNextSyncPoll() {
+        const syncContainer = document.getElementById('sync-view-container');
+        const isSyncVisible = syncContainer && syncContainer.style.display !== 'none';
+        const delay = document.hidden ? 8000 : (isSyncVisible ? 2000 : 5000);
+
+        syncPollTimer = setTimeout(async () => {
+            if (!document.hidden) {
+                await pollSyncStatus();
+            }
+            scheduleNextSyncPoll();
+        }, delay);
+    }
+    scheduleNextSyncPoll();
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            pollSyncStatus();
+        }
+    });
 }
 
 // ==========================================================================

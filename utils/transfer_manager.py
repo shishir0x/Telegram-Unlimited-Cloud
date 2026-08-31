@@ -83,6 +83,11 @@ class TransferItem:
         return 0.0
 
     def to_dict(self) -> Dict[str, Any]:
+        can_retry = True
+        if (self.type == TransferType.UPLOAD or getattr(self.type, "value", str(self.type)) == "upload"):
+            if not self.source_url and (not self.temp_file_path or not os.path.isfile(self.temp_file_path)):
+                can_retry = False
+
         return {
             "id": self.id,
             "type": self.type.value if isinstance(self.type, TransferType) else str(self.type),
@@ -108,6 +113,7 @@ class TransferItem:
             "conflict_mode": self.conflict_mode,
             "temp_file_path": self.temp_file_path,
             "single_threaded": self.single_threaded,
+            "can_retry": can_retry,
         }
 
     @classmethod

@@ -166,8 +166,9 @@ def getRandomID():
         id = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
         if not drive:
             return id
+        # used_ids is a set for O(1) lookup
         if id not in drive.used_ids:
-            drive.used_ids.append(id)
+            drive.used_ids.add(id)
             return id
 
 
@@ -355,9 +356,10 @@ class File:
 
 
 class NewDriveData:
-    def __init__(self, contents: dict, used_ids: list) -> None:
+    def __init__(self, contents: dict, used_ids) -> None:
         self.contents = contents
-        self.used_ids = used_ids
+        # Stored as a set for O(1) membership checks in getRandomID()
+        self.used_ids: set = set(used_ids) if not isinstance(used_ids, set) else used_ids
         self.isUpdated = False
         # Epoch seconds of the last local mutation. Embedded in every Telegram backup
         # so a stale remote snapshot can never overwrite newer local metadata on pull.
@@ -365,7 +367,7 @@ class NewDriveData:
 
     def to_dict(self) -> dict:
         d = {
-            "used_ids": list(getattr(self, "used_ids", [])),
+            "used_ids": list(getattr(self, "used_ids", set())),  # serialize set as list
             "last_modified": float(getattr(self, "last_modified", 0.0)),
             "contents": {}
         }
@@ -379,7 +381,7 @@ class NewDriveData:
 
     @classmethod
     def from_dict(cls, data: dict) -> "NewDriveData":
-        used_ids = list(data.get("used_ids", []))
+        used_ids = set(data.get("used_ids", []))  # load as set for O(1) lookup
         raw_contents = data.get("contents", {})
         contents = {}
         if isinstance(raw_contents, dict):
@@ -1805,12 +1807,22 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
             if not all_active:
                 return False
 
+            from utils import tg_gate
+
+            def _client_key(cl):
+                return getattr(getattr(cl, "me", None), "id", None) or getattr(cl, "name", None)
+
             client_candidates = []
             if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
-                client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
+                if tg_gate.client_available(_BACKUP_AUTHOR_CLIENT_ID):
+                    client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
+
             for cid, cl in all_active.items():
-                if cid != _BACKUP_AUTHOR_CLIENT_ID:
+                if cid != _BACKUP_AUTHOR_CLIENT_ID and tg_gate.client_available(cid) and tg_gate.client_available(_client_key(cl)):
                     client_candidates.append((cid, cl))
+
+            if not client_candidates:
+                client_candidates = list(all_active.items())
 
             msg: Optional[Message] = None
             for cid, candidate_client in client_candidates:
@@ -1824,6 +1836,8 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                                 msg = cand_msg
                                 _BACKUP_AUTHOR_CLIENT_ID = cid
                                 break
+                        except FloodWait as fw:
+                            tg_gate.note_flood(cid, float(fw.value))
                         except Exception:
                             pass
 
@@ -1837,6 +1851,8 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                                 _BACKUP_AUTHOR_CLIENT_ID = cid
                                 _persist_backup_msg_id(msg.id)
                                 break
+                        except FloodWait as fw:
+                            tg_gate.note_flood(cid, float(fw.value))
                         except Exception:
                             pass
 
@@ -1853,8 +1869,13 @@ async def sync_drive_data_from_telegram(force: bool = False) -> bool:
                                     _BACKUP_AUTHOR_CLIENT_ID = cid
                                     _persist_backup_msg_id(msg.id)
                                     break
+                        except FloodWait as fw:
+                            tg_gate.note_flood(cid, float(fw.value))
                         except Exception:
                             pass
+                except FloodWait as fw:
+                    tg_gate.note_flood(cid, float(fw.value))
+                    continue
                 except Exception:
                     continue
 
@@ -1941,17 +1962,18 @@ def _persist_backup_msg_id(msg_id: int):
 
 
 async def auto_sync_telegram_loop():
-    """Periodic background task that checks Telegram for remote metadata updates every 15 seconds."""
-    logger.info("Starting Telegram metadata auto-sync loop (15s interval).")
+    """Periodic background task that checks Telegram for remote metadata updates every 180 seconds (3 mins).
+    Safe interval to prevent Telegram channel API rate limiting."""
+    logger.info("Starting Telegram metadata auto-sync loop (180s interval).")
     while True:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(180)
             # Only pull remote if we don't have pending local unsaved modifications
             if DRIVE_DATA is not None and not getattr(DRIVE_DATA, "isUpdated", False):
                 await sync_drive_data_from_telegram(force=False)
         except Exception as e:
             logger.debug(f"Auto-sync loop warning: {e}")
-            await asyncio.sleep(15)
+            await asyncio.sleep(60)
 
 
 async def _execute_backup() -> bool:
@@ -1969,18 +1991,28 @@ async def _execute_backup() -> bool:
 
     logger.info("Backing up drive data to Telegram.")
     from utils.clients import multi_clients, premium_clients
+    from utils import tg_gate
 
-    # Build candidate list: prioritize known author client, otherwise test all active clients
+    # Build candidate list: prioritize known author client, filtering out clients in FloodWait
     all_active = {**multi_clients, **premium_clients}
     if not all_active:
         return False
 
+    def _client_key(cl):
+        return getattr(getattr(cl, "me", None), "id", None) or getattr(cl, "name", None)
+
     client_candidates = []
     if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
-        client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
+        if tg_gate.client_available(_BACKUP_AUTHOR_CLIENT_ID):
+            client_candidates.append((_BACKUP_AUTHOR_CLIENT_ID, all_active[_BACKUP_AUTHOR_CLIENT_ID]))
+
     for cid, cl in all_active.items():
-        if cid != _BACKUP_AUTHOR_CLIENT_ID:
+        if cid != _BACKUP_AUTHOR_CLIENT_ID and tg_gate.client_available(cid) and tg_gate.client_available(_client_key(cl)):
             client_candidates.append((cid, cl))
+
+    # If all filtered out, fall back to all clients
+    if not client_candidates:
+        client_candidates = list(all_active.items())
 
     time_text = f"📅 **Last Updated :** {get_current_utc_time()} (UTC +00:00)"
     caption = (
@@ -2005,14 +2037,11 @@ async def _execute_backup() -> bool:
                 _BACKUP_AUTHOR_CLIENT_ID = cid
                 break
             except FloodWait as fw:
-                wait_time = fw.value + 1
-                logger.warning(f"Backup FloodWait: sleeping {wait_time}s before next candidate.")
+                logger.warning(f"Backup FloodWait {fw.value}s on client {cid}; rotating to next candidate immediately.")
                 try:
-                    from utils import tg_gate
                     tg_gate.note_flood(cid, float(fw.value))
                 except Exception:
                     pass
-                await asyncio.sleep(wait_time)
                 continue
             except Exception as edit_err:
                 if "MESSAGE_AUTHOR_REQUIRED" in str(edit_err):
@@ -2041,6 +2070,13 @@ async def _execute_backup() -> bool:
                         pass
                     logger.info(f"✨ Created new Telegram backup message ID: {msg.id}")
                     break
+            except FloodWait as fw:
+                logger.warning(f"Send backup FloodWait {fw.value}s on client {cid}; rotating to next candidate.")
+                try:
+                    tg_gate.note_flood(cid, float(fw.value))
+                except Exception:
+                    pass
+                continue
             except Exception as send_err:
                 logger.warning(f"Failed to send fresh backup message via client {cid}: {send_err}")
                 continue
@@ -2066,19 +2102,7 @@ async def _flush_backup_coalesced():
     _BACKUP_FLUSH_SCHEDULED = False
     async with _BACKUP_LOCK:
         try:
-            success = await _execute_backup()
-            if success:
-                # Pin only during debounced flush (covers batch uploads)
-                try:
-                    from utils.clients import multi_clients, premium_clients
-                    all_active = {**multi_clients, **premium_clients}
-                    if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
-                        client = all_active[_BACKUP_AUTHOR_CLIENT_ID]
-                        msg = await client.get_messages(config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID)
-                        if msg:
-                            await msg.pin()
-                except Exception as pin_e:
-                    logger.debug(f"Pinning backup message note: {pin_e}")
+            await _execute_backup()
         except Exception as e:
             logger.error(f"Coalesced backup error: {e}")
 
@@ -2107,17 +2131,6 @@ async def backup_drive_data(loop=True):
             async with _BACKUP_LOCK:
                 try:
                     await _execute_backup()
-                    # Pin on periodic loop backup
-                    try:
-                        from utils.clients import multi_clients, premium_clients
-                        all_active = {**multi_clients, **premium_clients}
-                        if _BACKUP_AUTHOR_CLIENT_ID and _BACKUP_AUTHOR_CLIENT_ID in all_active:
-                            client = all_active[_BACKUP_AUTHOR_CLIENT_ID]
-                            msg = await client.get_messages(config.STORAGE_CHANNEL, config.DATABASE_BACKUP_MSG_ID)
-                            if msg:
-                                await msg.pin()
-                    except Exception as pin_e:
-                        logger.debug(f"Pinning backup message note: {pin_e}")
                 except Exception as e:
                     logger.error(f"Backup Error: {e}")
                     await asyncio.sleep(10)

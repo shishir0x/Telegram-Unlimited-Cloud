@@ -214,7 +214,12 @@
                     <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
                     <span>Duplicates</span>
                 </a>
-                <a href="#" id="nav-sync-activity" class="gd-nav-item unselected-item">
+                <a href="/?path=/transfers" id="nav-transfers" class="gd-nav-item unselected-item">
+                    <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm7 14.01V10h-2v7.01h-3L15 21l4-3.99h-3z"/></svg>
+                    <span>Transfers</span>
+                    <span id="nav-transfers-badge" class="gd-nav-badge" style="display: none;">0</span>
+                </a>
+                <a href="/?path=/sync" id="nav-sync-activity" class="gd-nav-item unselected-item">
                     <svg viewBox="0 0 24 24" class="gd-nav-svg"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
                     <span>Sync Activity</span>
                 </a>
@@ -453,55 +458,72 @@
                         </div>
                     </div>
 
-                    <!-- Dual Tables Side-by-Side: Left (To Be Uploaded) & Right (Uploaded) -->
+                    <!-- 1. Concurrent Uploads (Active Only) -->
+                    <div class="gd-sync-concurrent-section" id="sync-concurrent-section">
+                        <div class="gd-sync-section-title-bar">
+                            <div class="gd-sync-title-left">
+                                <span class="gd-sync-sec-icon">⚡</span>
+                                <span class="gd-sync-sec-title">Concurrent Uploads (Active Only)</span>
+                                <span class="gd-sync-sec-desc">Files actively uploading in parallel right now</span>
+                            </div>
+                            <span class="gd-sync-panel-count-pill" id="sync-active-count-badge" style="background: #e8f0fe; color: #1a73e8;">0 Active</span>
+                        </div>
+                        <div class="gd-sync-active-cards-container" id="sync-active-cards-container">
+                            <div class="gd-sync-active-empty-state">
+                                <span>No active concurrent uploads right now</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dual Side-by-Side Tables: Future Uploads (Sequential Queue) & Completed Uploads -->
                     <div class="gd-sync-tables-split">
-                        <!-- Left Table: To Be Uploaded (Pending Queue) -->
-                        <div class="gd-sync-table-panel left-panel">
+                        <!-- 2. Future Uploads (Queue - Uploaded One After Another) -->
+                        <div class="gd-sync-table-panel">
                             <div class="gd-sync-panel-header">
                                 <div class="gd-sync-panel-title">
                                     <span class="gd-sync-panel-dot pending-dot"></span>
-                                    <span>⏳ To Be Uploaded</span>
+                                    <span>Future Uploads (Queue)</span>
                                     <span class="gd-sync-panel-count-pill" id="sync-pending-badge">0</span>
                                 </div>
-                                <span class="gd-sync-panel-hint">Pending Queue</span>
+                                <span class="gd-sync-panel-hint">Uploaded one after another</span>
                             </div>
                             <div class="gd-sync-table-scroll">
                                 <table class="gd-sync-dual-table">
                                     <thead>
                                         <tr>
-                                            <th style="width: 8%;">#</th>
-                                            <th style="width: 42%;">File Name</th>
-                                            <th style="width: 35%;">Source Folder Path</th>
-                                            <th style="width: 15%; text-align: right;">Size</th>
+                                            <th style="width: 32px;">#</th>
+                                            <th>File Name</th>
+                                            <th>Path</th>
+                                            <th style="text-align: right;">Size / Queue</th>
                                         </tr>
                                     </thead>
                                     <tbody id="sync-pending-table-body">
                                         <tr class="empty-row">
-                                            <td colspan="4">No pending files in queue</td>
+                                            <td colspan="4">Queue is empty — no upcoming uploads</td>
                                         </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
 
-                        <!-- Right Table: Uploaded to Cloud (Completed) -->
-                        <div class="gd-sync-table-panel right-panel">
+                        <!-- 3. Completed Uploads -->
+                        <div class="gd-sync-table-panel">
                             <div class="gd-sync-panel-header">
                                 <div class="gd-sync-panel-title">
                                     <span class="gd-sync-panel-dot success-dot"></span>
-                                    <span>✅ Uploaded to Cloud</span>
+                                    <span>Completed Uploads</span>
                                     <span class="gd-sync-panel-count-pill success-pill" id="sync-completed-badge">0</span>
                                 </div>
-                                <span class="gd-sync-panel-hint">Live Synced History</span>
+                                <span class="gd-sync-panel-hint">Uploaded to Cloud</span>
                             </div>
                             <div class="gd-sync-table-scroll">
                                 <table class="gd-sync-dual-table">
                                     <thead>
                                         <tr>
-                                            <th style="width: 8%;">#</th>
-                                            <th style="width: 42%;">File Name</th>
-                                            <th style="width: 35%;">Cloud Destination Path</th>
-                                            <th style="width: 15%; text-align: right;">Status</th>
+                                            <th style="width: 32px;">#</th>
+                                            <th>File Name</th>
+                                            <th>Path</th>
+                                            <th style="text-align: right;">Size / Time</th>
                                         </tr>
                                     </thead>
                                     <tbody id="sync-completed-table-body">
@@ -684,6 +706,42 @@
 
                     <!-- Duplicate Groups List Container -->
                     <div class="dup-groups-list" id="dup-groups-list"></div>
+                </div>
+
+                <!-- Dedicated Transfers Manager View (Native Tab, Not on Home Screen) -->
+                <div class="gd-transfers-container" id="transfers-container" style="display: none;">
+                    <div class="gd-tm-view-card">
+                        <div class="gd-tm-header">
+                            <div class="gd-tm-title-group">
+                                <span class="gd-tm-title">🚀 Transfers Manager</span>
+                                <span id="tm-header-count" class="gd-tm-badge">0</span>
+                            </div>
+                            <div class="gd-tm-header-actions">
+                                <button id="tm-clear-btn" class="gd-tm-btn-clear" title="Clear finished transfers">Clear finished</button>
+                            </div>
+                        </div>
+
+                        <div class="gd-tm-tabs-bar">
+                            <button class="gd-tm-tab active" data-tab="all">All (<span id="tm-tab-count-all">0</span>)</button>
+                            <button class="gd-tm-tab" data-tab="upload">Uploads (<span id="tm-tab-count-upload">0</span>)</button>
+                            <button class="gd-tm-tab" data-tab="download">Downloads (<span id="tm-tab-count-download">0</span>)</button>
+                            <button class="gd-tm-tab" data-tab="active">Active (<span id="tm-tab-count-active">0</span>)</button>
+                        </div>
+
+                        <div id="tm-batch-section" class="gd-tm-batch-section" style="display: none;">
+                            <div class="gd-tm-batch-meta">
+                                <span id="tm-batch-text">Transferring items...</span>
+                                <span id="tm-batch-speed">0 B/s</span>
+                            </div>
+                            <div class="gd-tm-batch-bar-track">
+                                <div id="tm-batch-fill" class="gd-tm-batch-bar-fill" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <div id="tm-items-container" class="gd-tm-items-list">
+                            <!-- Rendered by transferManager.js -->
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Desktop Context Menus Container (Separated from table DOM) -->
@@ -1047,52 +1105,7 @@
         </div>
     </div>
 
-    <!-- Google Drive-Style Production Transfer Manager Dock & Drawer -->
-    <div id="transfer-dock-pill" class="gd-transfer-dock-pill" style="display: none;">
-        <div class="gd-dock-left">
-            <span id="dock-spinner-icon" class="gd-dock-spinner">🔄</span>
-            <span id="dock-status-label" class="gd-dock-title">Transfers</span>
-        </div>
-        <div class="gd-dock-right">
-            <span id="dock-speed-badge" class="gd-dock-speed" style="display: none;">0 B/s</span>
-            <span class="gd-dock-chevron">▲</span>
-        </div>
-    </div>
 
-    <div id="transfer-manager-drawer" class="gd-transfer-drawer">
-        <div class="gd-tm-header">
-            <div class="gd-tm-title-group">
-                <span class="gd-tm-title">Transfers</span>
-                <span id="tm-header-count" class="gd-tm-badge">0</span>
-            </div>
-            <div class="gd-tm-header-actions">
-                <button id="tm-clear-btn" class="gd-tm-btn-clear" title="Clear finished transfers">Clear finished</button>
-                <button id="tm-minimize-btn" class="gd-tm-icon-btn" title="Minimize drawer">—</button>
-                <button id="tm-close-btn" class="gd-tm-icon-btn" title="Close">✕</button>
-            </div>
-        </div>
-
-        <div class="gd-tm-tabs-bar">
-            <button class="gd-tm-tab active" data-tab="all">All (<span id="tm-tab-count-all">0</span>)</button>
-            <button class="gd-tm-tab" data-tab="upload">Uploads (<span id="tm-tab-count-upload">0</span>)</button>
-            <button class="gd-tm-tab" data-tab="download">Downloads (<span id="tm-tab-count-download">0</span>)</button>
-            <button class="gd-tm-tab" data-tab="active">Active (<span id="tm-tab-count-active">0</span>)</button>
-        </div>
-
-        <div id="tm-batch-section" class="gd-tm-batch-section" style="display: none;">
-            <div class="gd-tm-batch-meta">
-                <span id="tm-batch-text">Transferring items...</span>
-                <span id="tm-batch-speed">0 B/s</span>
-            </div>
-            <div class="gd-tm-batch-bar-track">
-                <div id="tm-batch-fill" class="gd-tm-batch-bar-fill" style="width: 0%;"></div>
-            </div>
-        </div>
-
-        <div id="tm-items-container" class="gd-tm-items-list">
-            <!-- Rendered by transferManager.js -->
-        </div>
-    </div>
 
     <!-- Legacy hidden upload card for strict backward compatibility -->
     <div id="file-uploader" class="gd-upload-floating-card" style="display: none !important;">

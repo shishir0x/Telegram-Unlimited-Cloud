@@ -120,6 +120,7 @@ function navigateToPath(targetPath, pushState = true) {
     if (cleanPath === '/shared_links' || cleanPath.startsWith('/shared_links')) {
         if (typeof window.hideSyncActivityView === 'function') window.hideSyncActivityView();
         if (typeof window.hideDuplicatesView === 'function') window.hideDuplicatesView();
+        if (typeof window.hideTransfersView === 'function') window.hideTransfersView();
         if (typeof window.showSharedLinksView === 'function') {
             window.showSharedLinksView(false);
             return;
@@ -127,8 +128,25 @@ function navigateToPath(targetPath, pushState = true) {
     } else if (cleanPath === '/duplicates' || cleanPath.startsWith('/duplicates')) {
         if (typeof window.hideSyncActivityView === 'function') window.hideSyncActivityView();
         if (typeof window.hideSharedLinksView === 'function') window.hideSharedLinksView();
+        if (typeof window.hideTransfersView === 'function') window.hideTransfersView();
         if (typeof window.showDuplicatesView === 'function') {
             window.showDuplicatesView(false);
+            return;
+        }
+    } else if (cleanPath === '/transfers' || cleanPath.startsWith('/transfers')) {
+        if (typeof window.hideSyncActivityView === 'function') window.hideSyncActivityView();
+        if (typeof window.hideSharedLinksView === 'function') window.hideSharedLinksView();
+        if (typeof window.hideDuplicatesView === 'function') window.hideDuplicatesView();
+        if (typeof window.showTransfersView === 'function') {
+            window.showTransfersView(false);
+            return;
+        }
+    } else if (cleanPath === '/sync' || cleanPath.startsWith('/sync')) {
+        if (typeof window.hideSharedLinksView === 'function') window.hideSharedLinksView();
+        if (typeof window.hideDuplicatesView === 'function') window.hideDuplicatesView();
+        if (typeof window.hideTransfersView === 'function') window.hideTransfersView();
+        if (typeof window.showSyncActivityView === 'function') {
+            window.showSyncActivityView(false);
             return;
         }
     } else {
@@ -140,6 +158,9 @@ function navigateToPath(targetPath, pushState = true) {
         }
         if (typeof window.hideDuplicatesView === 'function') {
             window.hideDuplicatesView();
+        }
+        if (typeof window.hideTransfersView === 'function') {
+            window.hideTransfersView();
         }
     }
 
@@ -162,16 +183,18 @@ function updateSidebarNavSelection(path) {
     const isRecent = path && (path === '/recent' || path.startsWith('/recent'));
     const isSharedLinks = path && (path === '/shared_links' || path.startsWith('/shared_links')) || (window.CURRENT_PAGE_VIEW === 'shared_links');
     const isDuplicates = path && (path === '/duplicates' || path.startsWith('/duplicates')) || (window.CURRENT_PAGE_VIEW === 'duplicates');
-    const isSync = (window.CURRENT_PAGE_VIEW === 'sync');
+    const isTransfers = path && (path === '/transfers' || path.startsWith('/transfers')) || (window.CURRENT_PAGE_VIEW === 'transfers');
+    const isSync = (path && (path === '/sync' || path.startsWith('/sync'))) || (window.CURRENT_PAGE_VIEW === 'sync');
     const navMyDrive = document.getElementById('nav-my-drive');
     const navRecent = document.getElementById('nav-recent');
     const navSharedLinks = document.getElementById('nav-shared-links');
     const navDuplicates = document.getElementById('nav-duplicates');
+    const navTransfers = document.getElementById('nav-transfers');
     const navSyncActivity = document.getElementById('nav-sync-activity');
     const navTrash = document.getElementById('nav-trash');
     const newBtn = document.getElementById('new-button');
 
-    const allNavs = [navMyDrive, navRecent, navSharedLinks, navDuplicates, navSyncActivity, navTrash];
+    const allNavs = [navMyDrive, navRecent, navSharedLinks, navDuplicates, navTransfers, navSyncActivity, navTrash];
     allNavs.forEach(n => {
         if (n) n.className = 'gd-nav-item unselected-item';
     });
@@ -181,6 +204,9 @@ function updateSidebarNavSelection(path) {
         if (newBtn) newBtn.style.display = 'inline-flex';
     } else if (isDuplicates) {
         if (navDuplicates) navDuplicates.className = 'gd-nav-item selected-item';
+        if (newBtn) newBtn.style.display = 'inline-flex';
+    } else if (isTransfers) {
+        if (navTransfers) navTransfers.className = 'gd-nav-item selected-item';
         if (newBtn) newBtn.style.display = 'inline-flex';
     } else if (isSync) {
         if (navSyncActivity) navSyncActivity.className = 'gd-nav-item selected-item';

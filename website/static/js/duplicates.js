@@ -44,7 +44,8 @@ window.showDuplicatesView = function(pushState = true) {
     const gridView = document.getElementById('grid-view-container');
     const syncView = document.getElementById('sync-view-container');
     const sharedLinks = document.getElementById('shared-links-container');
-    const breadcrumb = document.getElementById('gd-breadcrumb');
+    const transfersView = document.getElementById('transfers-container');
+    const breadcrumb = document.getElementById('breadcrumbs-container');
     const searchBanner = document.getElementById('search-results-banner');
     const filterChips = document.getElementById('filter-chips-bar');
     const bulkBar = document.getElementById('bulk-actions-bar');
@@ -55,6 +56,7 @@ window.showDuplicatesView = function(pushState = true) {
     if (gridView) gridView.style.display = 'none';
     if (syncView) syncView.style.display = 'none';
     if (sharedLinks) sharedLinks.style.display = 'none';
+    if (transfersView) transfersView.style.display = 'none';
     if (searchBanner) searchBanner.style.display = 'none';
     if (filterChips) filterChips.style.display = 'none';
     if (bulkBar) bulkBar.classList.remove('active');
@@ -447,8 +449,11 @@ window.confirmDeleteDuplicates = function(permanent = false) {
     const existing = document.getElementById('dup-delete-modal');
     if (existing) existing.remove();
 
-    const overlay = document.getElementById('modal-overlay');
-    if (overlay) overlay.classList.add('active');
+    const overlay = document.getElementById('bg-blur') || document.getElementById('modal-overlay');
+    if (overlay) {
+        overlay.style.zIndex = '100';
+        overlay.style.opacity = '1';
+    }
 
     document.body.insertAdjacentHTML('beforeend', modalHtml);
 };
@@ -456,8 +461,11 @@ window.confirmDeleteDuplicates = function(permanent = false) {
 window.closeDuplicateDeleteModal = function() {
     const modal = document.getElementById('dup-delete-modal');
     if (modal) modal.remove();
-    const overlay = document.getElementById('modal-overlay');
-    if (overlay) overlay.classList.remove('active');
+    const overlay = document.getElementById('bg-blur') || document.getElementById('modal-overlay');
+    if (overlay) {
+        overlay.style.opacity = '0';
+        setTimeout(() => { overlay.style.zIndex = '-1'; }, 200);
+    }
 };
 
 window.executeDuplicateDelete = async function(permanent = false) {

@@ -29,23 +29,49 @@ async def initialize_clients():
         (i, s) for i, s in enumerate(config.STRING_SESSIONS, start=len(all_tokens) + 1)
     )
 
+    _client_flood_until = {}
+
     async def start_client(client_id, token, client_type):
         try:
             logger.info(f"Starting - {client_type.title()} Client {client_id}")
 
             if client_type == "bot":
-                client = Client(
-                    name=str(client_id),
-                    api_id=config.API_ID,
-                    api_hash=config.API_HASH,
-                    bot_token=token,
-                    in_memory=True,
-                    max_concurrent_transmissions=8,
-                    workers=16,
-                    no_updates=True,
-                )
-                client.loop = asyncio.get_running_loop()
-                await client.start()
+                # Use persistent session SQLite database in ./cache/ to eliminate
+                # repeated auth.ImportBotAuthorization calls on every server start/reload.
+                try:
+                    client = Client(
+                        name=str(client_id),
+                        workdir=str(session_cache_path.resolve()),
+                        api_id=config.API_ID,
+                        api_hash=config.API_HASH,
+                        bot_token=token,
+                        in_memory=False,
+                        max_concurrent_transmissions=8,
+                        workers=16,
+                        no_updates=True,
+                    )
+                    client.loop = asyncio.get_running_loop()
+                    await client.start()
+                except Exception as start_err:
+                    if "database is locked" in str(start_err).lower():
+                        logger.warning(
+                            f"Session cache locked for Bot Client {client_id} (another server process is active). "
+                            f"Falling back to ephemeral session for this client..."
+                        )
+                        client = Client(
+                            name=f"{client_id}_ephemeral",
+                            api_id=config.API_ID,
+                            api_hash=config.API_HASH,
+                            bot_token=token,
+                            in_memory=True,
+                            max_concurrent_transmissions=8,
+                            workers=16,
+                            no_updates=True,
+                        )
+                        client.loop = asyncio.get_running_loop()
+                        await client.start()
+                    else:
+                        raise start_err
 
                 # Verify storage channel access and admin status
                 if config.STORAGE_CHANNEL:
@@ -61,6 +87,7 @@ async def initialize_clients():
 
                 multi_clients[client_id] = client
                 work_loads[client_id] = 0
+                _client_flood_until.pop(client_id, None)
             elif client_type == "user":
                 client = await Client(
                     name=str(client_id),
@@ -87,9 +114,25 @@ async def initialize_clients():
             logger.info(f"Started - {client_type.title()} Client {client_id}")
             return True
         except Exception as e:
-            logger.error(
-                f"Failed To Start {client_type.title()} Client - {client_id} Error: {e}"
-            )
+            err_str = str(e)
+            if "FLOOD_WAIT" in err_str or getattr(e, "value", None) is not None:
+                import re, time
+                val = getattr(e, "value", None)
+                if val is None:
+                    m = re.search(r"wait\s+(\d+)\s*seconds", err_str, re.IGNORECASE)
+                    val = int(m.group(1)) if m else 1800
+                _client_flood_until[client_id] = time.time() + val + 5
+                try:
+                    from utils import tg_gate
+                    tg_gate.note_flood(client_id, val)
+                except Exception:
+                    pass
+                logger.warning(
+                    f"⚠️ {client_type.title()} Client {client_id} in FloodWait for {val}s. "
+                    f"Will not retry until cooldown expires at {time.strftime('%H:%M:%S', time.localtime(_client_flood_until[client_id]))}."
+                )
+            else:
+                logger.error(f"Failed To Start {client_type.title()} Client - {client_id} Error: {e}")
             return False
 
     # Stagger client startup sequentially to avoid Telegram FloodWait on parallel connections
@@ -98,20 +141,26 @@ async def initialize_clients():
         if success:
             await asyncio.sleep(1.0)
         else:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(1.5)
 
     for client_id, token in all_sessions.items():
         success = await start_client(client_id, token, "user")
         if success:
             await asyncio.sleep(1.0)
 
-    # Background retry worker for any clients that encountered temporary FloodWait
+    # Background retry worker with smart cooldown adherence (NEVER re-triggers FloodWait prematurely)
     async def retry_pending_clients():
+        import time
         while len(multi_clients) < len(all_tokens):
-            await asyncio.sleep(30)
+            await asyncio.sleep(15)
+            now = time.time()
             for cid, tok in all_tokens.items():
                 if cid not in multi_clients:
-                    logger.info(f"Retrying Bot Client {cid} connection...")
+                    cooldown = _client_flood_until.get(cid, 0)
+                    if now < cooldown:
+                        # Cooldown still active; wait quietly without pinging Telegram servers
+                        continue
+                    logger.info(f"Cooldown expired for Bot Client {cid}. Retrying connection...")
                     await start_client(cid, tok, "bot")
                     await asyncio.sleep(2.0)
             if len(multi_clients) > 0 and not getattr(config, "_drive_data_loaded", False):
@@ -133,37 +182,81 @@ async def initialize_clients():
     if len(premium_clients) == 0:
         logger.info("No Premium Clients Were Initialized")
 
-    # Load the drive data
-    try:
-        await loadDriveData()
-        config._drive_data_loaded = True
-        # Start the backup drive data task and auto-sync loop
-        asyncio.create_task(backup_drive_data())
-        asyncio.create_task(auto_sync_telegram_loop())
-    except Exception as e:
-        logger.warning(f"Initial drive data load deferred until bot connection: {e}")
+    # Load the drive data (only if at least one client connected successfully)
+    if len(multi_clients) > 0 or len(premium_clients) > 0:
+        if not getattr(config, "_drive_data_loaded", False):
+            try:
+                await loadDriveData()
+                config._drive_data_loaded = True
+                # Start the backup drive data task and auto-sync loop
+                asyncio.create_task(backup_drive_data())
+                asyncio.create_task(auto_sync_telegram_loop())
+            except Exception as e:
+                logger.warning(f"Initial drive data load deferred until bot connection: {e}")
+    else:
+        logger.warning("No clients ready at startup; drive data load deferred to retry worker.")
 
 
 def get_client(premium_required=False) -> Client:
+    """Returns the least-loaded client that is NOT currently in a Telegram FloodWait cooldown.
+    Automatically rotates across healthy bots and falls back gracefully."""
     global multi_clients, work_loads, premium_clients, premium_work_loads
+    from utils import tg_gate
 
+    def _client_key(cl):
+        return getattr(getattr(cl, "me", None), "id", None) or getattr(cl, "name", None)
+
+    # 1. Premium client requested
     if premium_required:
-        if premium_clients and premium_work_loads:
-            index = min(premium_work_loads, key=premium_work_loads.get)
-            premium_work_loads[index] += 1
-            return premium_clients[index]
-        # Fallback to standard client if premium client not available
+        if premium_clients:
+            usable = [
+                (cid, cl) for cid, cl in premium_clients.items()
+                if tg_gate.client_available(cid) and tg_gate.client_available(_client_key(cl))
+            ]
+            if usable:
+                cid, cl = min(usable, key=lambda item: premium_work_loads.get(item[0], 0))
+                premium_work_loads[cid] = premium_work_loads.get(cid, 0) + 1
+                return cl
+            if premium_work_loads:
+                cid = min(premium_work_loads, key=premium_work_loads.get)
+                premium_work_loads[cid] = premium_work_loads.get(cid, 0) + 1
+                return premium_clients[cid]
         logger.warning("Premium client requested but none active; falling back to standard client.")
 
-    if multi_clients and work_loads:
-        index = min(work_loads, key=work_loads.get)
-        work_loads[index] += 1
-        return multi_clients[index]
+    # 2. Standard multi-client pool (Flood-Safe selection)
+    if multi_clients:
+        usable = [
+            (cid, cl) for cid, cl in multi_clients.items()
+            if tg_gate.client_available(cid) and tg_gate.client_available(_client_key(cl))
+        ]
+        if usable:
+            cid, cl = min(usable, key=lambda item: work_loads.get(item[0], 0))
+            work_loads[cid] = work_loads.get(cid, 0) + 1
+            return cl
+
+        # If all standard bots are currently in cooldown, fallback to any available premium client
+        if premium_clients:
+            usable_prem = [
+                (cid, cl) for cid, cl in premium_clients.items()
+                if tg_gate.client_available(cid) and tg_gate.client_available(_client_key(cl))
+            ]
+            if usable_prem:
+                cid, cl = min(usable_prem, key=lambda item: premium_work_loads.get(item[0], 0))
+                premium_work_loads[cid] = premium_work_loads.get(cid, 0) + 1
+                return cl
+
+        # All clients in cooldown: return least loaded client so caller can handle or wait
+        all_pool = {**multi_clients, **premium_clients}
+        all_loads = {**work_loads, **premium_work_loads}
+        if all_pool and all_loads:
+            cid = min(all_loads, key=all_loads.get)
+            all_loads[cid] = all_loads.get(cid, 0) + 1
+            return all_pool[cid]
 
     if premium_clients and premium_work_loads:
-        index = min(premium_work_loads, key=premium_work_loads.get)
-        premium_work_loads[index] += 1
-        return premium_clients[index]
+        cid = min(premium_work_loads, key=premium_work_loads.get)
+        premium_work_loads[cid] = premium_work_loads.get(cid, 0) + 1
+        return premium_clients[cid]
 
     raise RuntimeError("No active Telegram clients are currently connected. Please verify bot tokens in .env.")
 

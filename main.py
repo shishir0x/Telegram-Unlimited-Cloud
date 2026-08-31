@@ -488,7 +488,7 @@ async def api_archive_inspect(request: Request, _auth: Session = Depends(require
             raise HTTPException(status_code=500, detail=f"Failed to download archive for inspection: {e}")
 
     try:
-        manifest = await asyncio.get_event_loop().run_in_executor(
+        manifest = await asyncio.get_running_loop().run_in_executor(
             None, inspect_archive, Path(local_path), security
         )
     except ValueError as e:
@@ -599,7 +599,7 @@ async def api_archive_extract(request: Request, _auth: Session = Depends(require
 
     # Safety pass: inspect first to enforce limits before touching disk
     try:
-        await asyncio.get_event_loop().run_in_executor(
+        await asyncio.get_running_loop().run_in_executor(
             None, inspect_archive, Path(local_path), security
         )
     except ValueError as e:
@@ -610,7 +610,7 @@ async def api_archive_extract(request: Request, _auth: Session = Depends(require
     # Create sandbox and extract
     sandbox = make_sandbox()
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, extract_archive, Path(local_path), members_raw, sandbox, security
         )
     except Exception as e:
@@ -2858,7 +2858,6 @@ async def getSyncStatus(request: Request, _auth: Session = Depends(require_auth)
         reconstructed = []
         for log in reversed(SYNC_ENGINE_STATUS["logs"]):
             msg = log.get("msg", "")
-            # e.g. "Streaming [370/7059]: Screenshot 2026-08-13 005059.png (47.83 KB)"
             if "]: " in msg and " (" in msg:
                 try:
                     fpart = msg.split("]: ", 1)[1]
@@ -2874,17 +2873,91 @@ async def getSyncStatus(request: Request, _auth: Session = Depends(require_auth)
                     pass
         SYNC_ENGINE_STATUS["completed_list"] = reconstructed[:100]
 
+    # Combine with TransferManager concurrent uploads & future queue
+    active_concurrent = []
+    future_queue = []
+    completed_uploads = list(SYNC_ENGINE_STATUS.get("completed_list") or [])
+
+    try:
+        from utils.transfer_manager import transfer_manager, TransferType, TransferState, TransferItem
+        for t in list(transfer_manager.store.transfers.values()):
+            if t.type == TransferType.UPLOAD or getattr(t.type, "value", str(t.type)) == "upload":
+                d = t.to_dict()
+                st = t.state.value if isinstance(t.state, TransferState) else str(t.state)
+                if st in ("preparing", "uploading", "retrying"):
+                    active_concurrent.append({
+                        "id": d["id"],
+                        "name": d["filename"],
+                        "path": d.get("relative_path") or d.get("target_path") or "/",
+                        "size": d["size"],
+                        "transferred": d["transferred"],
+                        "percentage": d["percentage"],
+                        "speed": d.get("speed_formatted") or "0 B/s",
+                        "eta": d.get("eta_formatted") or "--",
+                        "state": st
+                    })
+                elif st == "queued":
+                    future_queue.append({
+                        "id": d["id"],
+                        "name": d["filename"],
+                        "path": d.get("relative_path") or d.get("target_path") or "/",
+                        "size": TransferItem._format_bytes(d["size"]) if d.get("size") else "Queued",
+                        "state": "queued"
+                    })
+                elif st == "completed":
+                    if not any(c.get("name") == d["filename"] for c in completed_uploads):
+                        completed_uploads.insert(0, {
+                            "name": d["filename"],
+                            "path": d.get("relative_path") or d.get("target_path") or "/",
+                            "size": TransferItem._format_bytes(d["size"]) if d.get("size") else "Done",
+                            "time": "Recent"
+                        })
+    except Exception:
+        pass
+
+    # If sync engine has an active item, include it in active_concurrent if not already present
+    cur_item = SYNC_ENGINE_STATUS.get("current_item")
+    if cur_item and not any(a["name"] == cur_item for a in active_concurrent):
+        active_concurrent.insert(0, {
+            "id": "sync_stream_active",
+            "name": cur_item,
+            "path": SYNC_ENGINE_STATUS.get("current_path") or "/",
+            "size": SYNC_ENGINE_STATUS.get("current_size") or "--",
+            "transferred": SYNC_ENGINE_STATUS.get("current_bytes") or 0,
+            "percentage": SYNC_ENGINE_STATUS.get("current_percent") or 0,
+            "speed": SYNC_ENGINE_STATUS.get("speed_str") or "Transferring...",
+            "eta": "--",
+            "state": "uploading"
+        })
+
+    # Merge sync engine pending_queue into future_queue
+    for p in (SYNC_ENGINE_STATUS.get("pending_queue") or []):
+        p_name = p.get("name", "")
+        if p_name and not any(f["name"] == p_name for f in future_queue):
+            future_queue.append({
+                "id": p_name,
+                "name": p_name,
+                "path": p.get("path") or "/",
+                "size": p.get("size") or "Queued",
+                "state": "queued"
+            })
+
+    data_payload = dict(SYNC_ENGINE_STATUS)
+    data_payload["active_concurrent"] = active_concurrent
+    data_payload["future_queue"] = future_queue
+    data_payload["completed_uploads"] = completed_uploads[:100]
+
     try:
         from utils.directoryHandler import ensure_drive_data
         total_files, total_bytes = ensure_drive_data().get_drive_stats()
-        SYNC_ENGINE_STATUS["drive_stats"] = {
+        data_payload["drive_stats"] = {
             "total_files": total_files,
             "total_bytes": total_bytes
         }
     except Exception:
         pass
 
-    return JSONResponse({"status": "ok", "data": SYNC_ENGINE_STATUS})
+    return JSONResponse({"status": "ok", "data": data_payload})
 
 
 @app.post("/api/updateSyncStatus")

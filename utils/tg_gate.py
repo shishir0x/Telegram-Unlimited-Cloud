@@ -43,6 +43,7 @@ MAX_GLOBAL_WAIT = float(os.getenv("TG_MAX_WAIT", "900"))  # give up waiting afte
 # State (single event loop -> plain attrs are safe)
 # ---------------------------------------------------------------------------
 _semaphore: asyncio.Semaphore | None = None     # lazily bound to running loop
+_semaphore_loop = None                           # the loop that created _semaphore
 _flood_until: dict = {}                          # client_key (str) -> epoch ts
 _global_until: float = 0.0                       # epoch ts everyone must wait until
 _last_send_ts: float = 0.0                       # last completed/started channel send
@@ -50,13 +51,16 @@ _pace: float = 0.0                               # current adaptive extra delay
 
 
 def _sem() -> asyncio.Semaphore:
-    global _semaphore
+    global _semaphore, _semaphore_loop
     try:
         cur_loop = asyncio.get_running_loop()
     except RuntimeError:
         cur_loop = None
-    if _semaphore is None or (_semaphore._loop if hasattr(_semaphore, "_loop") else None) != cur_loop:
+    # Recreate semaphore if missing or bound to a different (stale) event loop.
+    # We track the creating loop ourselves; Python 3.10+ removed asyncio.Semaphore._loop.
+    if _semaphore is None or _semaphore_loop is not cur_loop:
         _semaphore = asyncio.Semaphore(SEND_CONCURRENCY)
+        _semaphore_loop = cur_loop
     return _semaphore
 
 

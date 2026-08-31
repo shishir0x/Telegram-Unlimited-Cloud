@@ -3,7 +3,7 @@ from typing import Dict, Union
 from pyrogram import Client, utils, raw
 from .file_properties import get_file_ids
 from pyrogram.session import Session, Auth
-from pyrogram.errors import AuthBytesInvalid
+from pyrogram.errors import AuthBytesInvalid, FloodWait
 from pyrogram.file_id import FileId, FileType, ThumbnailSource
 from utils.logger import Logger
 
@@ -15,7 +15,12 @@ class ByteStreamer:
         self.clean_timer = 30 * 60
         self.client: Client = client
         self.cached_file_ids: Dict[int, FileId] = {}
-        asyncio.create_task(self.clean_cache())
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(self.clean_cache())
+        except RuntimeError:
+            # Not inside a running event loop yet; schedule on first call instead
+            pass
 
     async def get_file_properties(self, channel, message_id: int) -> FileId:
         if message_id not in self.cached_file_ids:
@@ -119,6 +124,14 @@ class ByteStreamer:
                         ),
                         timeout=20.0,
                     )
+                except FloodWait as fw:
+                    logger.warning(f"FloodWait while streaming chunk on DC {file_id.dc_id}: waiting {fw.value}s")
+                    await asyncio.sleep(float(fw.value) + 0.5)
+                    r = await media_session.invoke(
+                        raw.functions.upload.GetFile(
+                            location=location, offset=offset, limit=chunk_size
+                        )
+                    )
                 except Exception as e:
                     logger.warning(
                         f"GetFile timeout/error on DC {file_id.dc_id}: {e}. Reconnecting media session..."
@@ -129,14 +142,23 @@ class ByteStreamer:
                     except Exception:
                         pass
                     media_session = await self.generate_media_session(client, file_id)
-                    r = await asyncio.wait_for(
-                        media_session.invoke(
+                    try:
+                        r = await asyncio.wait_for(
+                            media_session.invoke(
+                                raw.functions.upload.GetFile(
+                                    location=location, offset=offset, limit=chunk_size
+                                )
+                            ),
+                            timeout=25.0,
+                        )
+                    except FloodWait as fw2:
+                        logger.warning(f"FloodWait on reconnected session: waiting {fw2.value}s")
+                        await asyncio.sleep(float(fw2.value) + 0.5)
+                        r = await media_session.invoke(
                             raw.functions.upload.GetFile(
                                 location=location, offset=offset, limit=chunk_size
                             )
-                        ),
-                        timeout=25.0,
-                    )
+                        )
 
                 if isinstance(r, raw.types.upload.File):
                     chunk = r.bytes

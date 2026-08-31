@@ -285,6 +285,28 @@ async function getCurrentDirectory() {
         }
     }
 
+    if (path === '/sync' || path.startsWith('/sync') || window.CURRENT_PAGE_VIEW === 'sync') {
+        if (typeof window.showSyncActivityView === 'function') {
+            window.showSyncActivityView(false);
+            return;
+        }
+    } else {
+        if (typeof window.hideSyncActivityView === 'function') {
+            window.hideSyncActivityView();
+        }
+    }
+
+    if (path === '/transfers' || path.startsWith('/transfers') || window.CURRENT_PAGE_VIEW === 'transfers') {
+        if (typeof window.showTransfersView === 'function') {
+            window.showTransfersView(false);
+            return;
+        }
+    } else {
+        if (typeof window.hideTransfersView === 'function') {
+            window.hideTransfersView();
+        }
+    }
+
     // Immediately trigger skeleton loader to eliminate stale folder rendering
     if (typeof showDirectorySkeleton === 'function') {
         showDirectorySkeleton();

@@ -63,6 +63,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const navTransfers = document.getElementById('nav-transfers');
+    if (navTransfers) {
+        navTransfers.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (typeof window.showTransfersView === 'function') {
+                window.showTransfersView();
+            } else {
+                navigateToPath('/transfers');
+            }
+        });
+    }
+
     if (navTrash) {
         navTrash.addEventListener('click', (e) => {
             e.preventDefault();

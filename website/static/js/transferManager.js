@@ -71,34 +71,14 @@ window.TRANSFER_MANAGER = (function () {
         const drawer = document.getElementById('transfer-manager-drawer');
         const legacyCard = document.getElementById('file-uploader');
 
-        const activeCount = (_lastData.stats && _lastData.stats.total_active) || 0;
-        const totalCount = (_lastData.transfers && _lastData.transfers.length) || 0;
-
-        // Auto-show dock if there are active transfers or recent items
-        if (totalCount > 0 && !_hasUserClosed) {
-            if (dockPill) dockPill.style.display = 'flex';
-        } else if (activeCount === 0 && totalCount === 0) {
-            if (dockPill) dockPill.style.display = 'none';
-            if (drawer) drawer.classList.remove('active');
-            _isExpanded = false;
-            return;
-        }
-
-        if (drawer) {
-            if (_isExpanded) {
-                drawer.classList.add('active');
-                if (dockPill) dockPill.classList.add('is-open');
-            } else {
-                drawer.classList.remove('active');
-                if (dockPill) dockPill.classList.remove('is-open');
-            }
-        }
-
-        // Keep legacy card hidden to prevent UI collision
+        // Transfers are now managed exclusively in the dedicated Transfers tab
+        if (dockPill) dockPill.style.display = 'none';
+        if (drawer) drawer.style.display = 'none';
         if (legacyCard) legacyCard.style.display = 'none';
     }
 
     async function fetchTransfers() {
+        if (document.hidden) return; // Sleep when browser tab is inactive/minimized
         if (!window.IS_AUTHENTICATED) return;
         if (typeof getCurrentPath === 'function' && getCurrentPath().includes('/share_')) return;
         if (typeof postJson !== 'function') return;
@@ -118,9 +98,26 @@ window.TRANSFER_MANAGER = (function () {
         _isPolling = true;
         fetchTransfers();
 
-        _pollInterval = setInterval(async () => {
-            await fetchTransfers();
-        }, 1200);
+        let pollDelay = 1500;
+        async function runLoop() {
+            if (!_isPolling) return;
+            if (!document.hidden) {
+                await fetchTransfers();
+                const activeCount = (_lastData && _lastData.stats && _lastData.stats.total_active) || 0;
+                // If there are active transfers, poll quickly (1.2s); if idle, poll smoothly (3.5s)
+                pollDelay = activeCount > 0 ? 1200 : 3500;
+            } else {
+                pollDelay = 4000;
+            }
+            _pollInterval = setTimeout(runLoop, pollDelay);
+        }
+        _pollInterval = setTimeout(runLoop, pollDelay);
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                fetchTransfers();
+            }
+        });
     }
 
     function updateUI(data) {
@@ -138,6 +135,17 @@ window.TRANSFER_MANAGER = (function () {
         renderBatchProgress(transfers);
         renderItems();
         renderDrawerVisibility();
+
+        // Update sidebar navigation badge
+        const navBadge = document.getElementById('nav-transfers-badge');
+        if (navBadge) {
+            if (activeCount > 0) {
+                navBadge.innerText = `${activeCount}`;
+                navBadge.style.display = 'inline-block';
+            } else {
+                navBadge.style.display = 'none';
+            }
+        }
     }
 
     function renderDock(stats, transfers) {
@@ -291,7 +299,7 @@ window.TRANSFER_MANAGER = (function () {
         }
 
         const canCancel = ['queued', 'preparing', 'uploading', 'downloading', 'retrying'].includes(item.state);
-        const canRetry = ['failed', 'cancelled'].includes(item.state);
+        const canRetry = ['failed', 'cancelled'].includes(item.state) && item.can_retry !== false;
         const canRemove = isFinished;
         const canLocate = item.state === 'completed' && item.target_path;
 

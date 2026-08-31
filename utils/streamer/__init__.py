@@ -10,7 +10,9 @@ from urllib.parse import quote
 
 logger = Logger(__name__)
 
-class_cache = {}
+import weakref
+
+class_cache: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 
 async def media_streamer(channel: int, message_id: int, file_name: str, request):
@@ -51,6 +53,19 @@ async def media_streamer(channel: int, message_id: int, file_name: str, request)
         raise Exception("FileNotFound")
 
     file_size = file_id.file_size
+
+    # Guard: zero-byte files — no body to stream, return empty 200
+    if file_size == 0:
+        return Response(
+            content=b"",
+            status_code=200,
+            headers={
+                "Content-Type": mimetypes.guess_type(file_name)[0] or "application/octet-stream",
+                "Content-Length": "0",
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": f'attachment; filename="{quote(file_name)}"',
+            },
+        )
 
     if range_header:
         try:

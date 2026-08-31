@@ -403,6 +403,33 @@ def _save_sessions_to_disk() -> None:
         logger.warning(f"Could not persist sessions to disk: {e}")
 
 
+# Debounced async disk writer — avoids blocking the event loop on every session op
+_save_task: Optional[asyncio.Task] = None
+
+
+def _schedule_save_sessions() -> None:
+    """Schedule a debounced async session save (2 s delay, collapses multiple calls)."""
+    global _save_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (e.g. startup); write synchronously
+        _save_sessions_to_disk()
+        return
+
+    if _save_task and not _save_task.done():
+        _save_task.cancel()
+
+    async def _deferred_save():
+        try:
+            await asyncio.sleep(2)  # debounce: coalesce rapid saves
+            await loop.run_in_executor(None, _save_sessions_to_disk)
+        except asyncio.CancelledError:
+            pass
+
+    _save_task = loop.create_task(_deferred_save())
+
+
 def _load_sessions_from_disk() -> None:
     """Load active sessions on startup so restarts do not log out users."""
     if not _SESSION_FILE.exists():
@@ -442,7 +469,7 @@ def create_session(ip: str = "unknown", previous_token: Optional[str] = None) ->
     token = secrets.token_hex(32)  # 256-bit random token
     sess = Session(token=token, ip=ip)
     _SESSIONS[token] = sess
-    _save_sessions_to_disk()
+    _schedule_save_sessions()
     return token
 
 
@@ -450,7 +477,7 @@ def invalidate_session(token: str) -> None:
     """Destroy a specific active session."""
     if token in _SESSIONS:
         _SESSIONS.pop(token, None)
-        _save_sessions_to_disk()
+        _schedule_save_sessions()
         logger.info("Session invalidated")
 
 
@@ -471,7 +498,7 @@ def validate_session(token: str, ip: str = None) -> Optional[Session]:
 
     if session.is_expired:
         _SESSIONS.pop(token, None)
-        _save_sessions_to_disk()
+        _schedule_save_sessions()
         logger.info("Expired session evicted")
         return None
 
@@ -494,7 +521,7 @@ def validate_session(token: str, ip: str = None) -> Optional[Session]:
 def invalidate_all_sessions() -> None:
     """Destroy all active sessions (used on global logout or password change)."""
     _SESSIONS.clear()
-    _save_sessions_to_disk()
+    _schedule_save_sessions()
     logger.info("All sessions invalidated")
 
 
