@@ -4,17 +4,60 @@ import os
 # Load environment variables from the .env file, if present
 load_dotenv()
 
+# Database URL configuration (PostgreSQL for shared cloud, SQLite fallback for local testing)
+_raw_database_url = os.getenv("DATABASE_URL", "").strip().strip('"').strip("'")
+
+def normalize_database_urls(raw_url: str) -> tuple[str, str]:
+    """
+    Normalizes a database URL into (sync_url, async_url).
+    Handles 'postgres://' -> 'postgresql://', ensures asyncpg for async and psycopg for sync.
+    Falls back to local SQLite if DATABASE_URL is empty.
+    """
+    if not raw_url:
+        os.makedirs("./data", exist_ok=True)
+        sync_url = "sqlite:///./data/cloud_drive.db"
+        async_url = "sqlite+aiosqlite:///./data/cloud_drive.db"
+        return sync_url, async_url
+
+    clean = raw_url.strip()
+    if clean.startswith("postgres://"):
+        clean = "postgresql://" + clean[len("postgres://"):]
+
+    if clean.startswith("postgresql://"):
+        sync_url = clean
+        # For asyncpg, strip sslmode parameter if incompatible or adapt
+        async_url = "postgresql+asyncpg://" + clean[len("postgresql://"):]
+    elif clean.startswith("postgresql+asyncpg://"):
+        async_url = clean
+        sync_url = "postgresql://" + clean[len("postgresql+asyncpg://"):]
+    elif clean.startswith("sqlite:///"):
+        sync_url = clean
+        async_url = clean.replace("sqlite:///", "sqlite+aiosqlite:///")
+    else:
+        sync_url = clean
+        async_url = clean
+
+    return sync_url, async_url
+
+SYNC_DATABASE_URL, ASYNC_DATABASE_URL = normalize_database_urls(_raw_database_url)
+DATABASE_URL = SYNC_DATABASE_URL  # Primary reference
+IS_REMOTE_DB = not SYNC_DATABASE_URL.startswith("sqlite")
+
 # Telegram API credentials obtained from https://my.telegram.org/auth
-_api_id_raw = os.getenv("API_ID")
-API_ID = int(_api_id_raw) if _api_id_raw and _api_id_raw.strip().lstrip("-").isdigit() else 0
-API_HASH = os.getenv("API_HASH", "").strip().strip('"').strip("'")
+_api_id_raw = os.getenv("TELEGRAM_API_ID") or os.getenv("API_ID")
+API_ID = int(_api_id_raw) if _api_id_raw and str(_api_id_raw).strip().lstrip("-").isdigit() else 0
+TELEGRAM_API_ID = API_ID
+API_HASH = (os.getenv("TELEGRAM_API_HASH") or os.getenv("API_HASH") or "").strip().strip('"').strip("'")
+TELEGRAM_API_HASH = API_HASH
 
 # List of Telegram bot tokens used for file upload/download operations
+_raw_tokens = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKENS") or ""
 BOT_TOKENS = [
     token.strip().strip('"').strip("'")
-    for token in os.getenv("BOT_TOKENS", "").split(",")
+    for token in _raw_tokens.split(",")
     if token.strip().strip('"').strip("'")
 ]
+TELEGRAM_BOT_TOKEN = BOT_TOKENS[0] if BOT_TOKENS else ""
 
 # List of Premium Telegram Account Pyrogram String Sessions used for file upload/download operations
 STRING_SESSIONS = [
@@ -43,8 +86,14 @@ def _parse_storage_channel(raw: str | None):
         return raw if raw.startswith("@") else f"@{raw}"
     return 0
 
-_storage_channel_raw = os.getenv("STORAGE_CHANNEL")
+_storage_channel_raw = os.getenv("TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHANNEL_ID") or os.getenv("STORAGE_CHANNEL")
 STORAGE_CHANNEL = _parse_storage_channel(_storage_channel_raw)
+TELEGRAM_CHAT_ID = STORAGE_CHANNEL
+
+# Security & CORS configuration
+SECRET_KEY = (os.getenv("SECRET_KEY") or os.getenv("SESSION_SECRET_KEY") or os.getenv("SESSION_SECRET") or "").strip()
+_raw_cors = os.getenv("CORS_ORIGINS") or os.getenv("ALLOWED_ORIGINS") or "*"
+CORS_ORIGINS = [orig.strip() for orig in _raw_cors.split(",") if orig.strip()]
 
 # Message ID of a file in the storage channel used for storing database backups
 def _parse_db_msg_id(raw: str | None) -> int:
@@ -120,6 +169,11 @@ def validate_config(raise_on_error: bool = False) -> tuple[bool, list[str]]:
     """
     errors: list[str] = []
     warnings: list[str] = []
+
+    if not _raw_database_url:
+        warnings.append("DATABASE_URL is empty. Using local SQLite (data/cloud_drive.db). For Render & localhost cloud parity, set DATABASE_URL to your shared PostgreSQL database.")
+    else:
+        warnings.append(f"DATABASE_URL configured ({'PostgreSQL' if IS_REMOTE_DB else 'Custom DB'}). Using shared cloud database.")
 
     if not API_ID:
         errors.append("API_ID is missing or not a valid integer. Obtain from https://my.telegram.org/auth")

@@ -61,6 +61,17 @@ async def lifespan(app: FastAPI):
     for diag in diagnostics:
         logger.warning(f"⚙️ Config: {diag}")
 
+    # Initialize Database connection pool & schema
+    try:
+        from database.connection import init_db, test_database_connection
+        init_db()
+        if test_database_connection():
+            logger.info("🗄️ Database: Connection pool healthy and schema verified")
+        else:
+            logger.warning("🗄️ Database: Connection test returned false")
+    except Exception as e:
+        logger.error(f"🗄️ Database initialization error: {e}")
+
     # Initialize Telegram clients in the background so server starts immediately (<100ms)
     asyncio.create_task(initialize_clients())
 
@@ -160,6 +171,18 @@ class SecurityHeadersMiddleware:
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Cross-Origin Resource Sharing (CORS) Middleware
+from fastapi.middleware.cors import CORSMiddleware
+from config import CORS_ORIGINS
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # Page Routes
 
@@ -192,14 +215,33 @@ async def liveness_check():
 
 @app.get("/health/ready")
 async def readiness_check():
-    """Readiness probe: verifies Telegram connectivity and metadata readiness."""
+    """Readiness probe: verifies Telegram connectivity, database connectivity, and metadata readiness."""
     from utils.clients import is_telegram_ready
     from utils.directoryHandler import ensure_drive_data
+    from database.connection import test_database_connection
     drive = ensure_drive_data()
-    is_ready = is_telegram_ready() and drive is not None
+    is_tg_ready = is_telegram_ready()
+    is_db_ready = test_database_connection()
+    is_ready = is_tg_ready and drive is not None and is_db_ready
     if is_ready:
-        return JSONResponse({"status": "ready", "telegram_ready": True, "drive_loaded": True}, status_code=200)
-    return JSONResponse({"status": "initializing", "telegram_ready": is_telegram_ready(), "drive_loaded": drive is not None}, status_code=503)
+        return JSONResponse(
+            {
+                "status": "ready",
+                "telegram_ready": True,
+                "database_connected": True,
+                "drive_loaded": True,
+            },
+            status_code=200,
+        )
+    return JSONResponse(
+        {
+            "status": "initializing",
+            "telegram_ready": is_tg_ready,
+            "database_connected": is_db_ready,
+            "drive_loaded": drive is not None,
+        },
+        status_code=503,
+    )
 
 
 @app.get("/stream")

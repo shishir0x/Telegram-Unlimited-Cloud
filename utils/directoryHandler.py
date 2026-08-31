@@ -113,55 +113,155 @@ def load_drive_data_from_file(file_path: Union[Path, str]) -> Optional["NewDrive
     return None
 
 
+def load_drive_data_from_db() -> Optional["NewDriveData"]:
+    """
+    Loads the authoritative drive data structure from the shared database (PostgreSQL/SQLite).
+    Constructs the Folder and File tree preserving stable IDs and Telegram pointers.
+    """
+    try:
+        from database.connection import get_db_session, init_db
+        from database.models import FolderModel, FileModel
+
+        init_db()
+        with get_db_session() as s:
+            db_folders = s.query(FolderModel).all()
+            db_files = s.query(FileModel).all()
+
+            if not db_folders:
+                return None
+
+            folder_map = {}
+            used_ids = set()
+
+            for f in db_folders:
+                folder_obj = Folder.__new__(Folder)
+                folder_obj.id = f.id
+                folder_obj.name = f.name
+                folder_obj.type = "folder"
+                folder_obj.trash = bool(f.trash)
+                folder_obj.tags = list(f.tags or [])
+                folder_obj.auth_hashes = list(f.auth_hashes or [])
+                folder_obj.activity_history = list(f.activity_history or [])
+                folder_obj.created_at = f.created_at.isoformat() if f.created_at else ""
+                folder_obj.modified_at = f.updated_at.isoformat() if f.updated_at else ""
+                folder_obj.upload_date = folder_obj.created_at
+                folder_obj.uploaded_at = folder_obj.created_at
+                folder_obj.accessed_at = folder_obj.modified_at
+                folder_obj.trashed_at = f.trashed_at.isoformat() if f.trashed_at else None
+                folder_obj.restored_at = None
+                folder_obj.owner = f.user_id
+                folder_obj.path = f.path or "/"
+                folder_obj.contents = {}
+                used_ids.add(f.id)
+                folder_map[f.id] = (folder_obj, f.parent_folder_id)
+
+            root = folder_map.get("root", (Folder("/", "/"), None))[0]
+
+            # Attach subfolders to parents
+            for fid, (f_obj, parent_id) in folder_map.items():
+                if fid != "root":
+                    if parent_id and parent_id in folder_map:
+                        folder_map[parent_id][0].contents[fid] = f_obj
+                    else:
+                        root.contents[fid] = f_obj
+
+            # Attach files
+            for fl in db_files:
+                file_obj = File.__new__(File)
+                file_obj.id = fl.id
+                file_obj.name = fl.name
+                file_obj.type = "file"
+                file_obj.file_id = int(fl.telegram_message_id or 0)
+                file_obj.size = int(fl.size or 0)
+                file_obj.trash = bool(fl.trash)
+                file_obj.tags = list(fl.tags or [])
+                file_obj.sha256 = fl.checksum
+                file_obj.metadata_extra = dict(fl.metadata_extra or {})
+                file_obj.activity_history = list(fl.activity_history or [])
+                file_obj.created_at = fl.created_at.isoformat() if fl.created_at else ""
+                file_obj.modified_at = fl.updated_at.isoformat() if fl.updated_at else ""
+                file_obj.upload_date = file_obj.created_at
+                file_obj.uploaded_at = file_obj.created_at
+                file_obj.accessed_at = file_obj.modified_at
+                file_obj.downloaded_at = None
+                file_obj.viewed_at = None
+                file_obj.trashed_at = fl.trashed_at.isoformat() if fl.trashed_at else None
+                file_obj.restored_at = None
+                file_obj.owner = fl.user_id
+
+                parent_fid = fl.folder_id or "root"
+                if parent_fid in folder_map:
+                    parent_f = folder_map[parent_fid][0]
+                    file_obj.path = (getattr(parent_f, "path", "/").rstrip("/") + "/" + parent_f.id).replace("//", "/")
+                    if parent_fid == "root":
+                        file_obj.path = "/"
+                    folder_map[parent_fid][0].contents[fl.id] = file_obj
+                else:
+                    file_obj.path = "/"
+                    root.contents[fl.id] = file_obj
+                used_ids.add(fl.id)
+
+            drive = NewDriveData({"/": root}, used_ids)
+            logger.info(f"Loaded {len(db_folders)} folders and {len(db_files)} files from shared cloud database.")
+            return drive
+    except Exception as e:
+        logger.error(f"Error loading drive data from shared database: {e}")
+        return None
+
+
 def ensure_drive_data(force_reload: bool = False):
     global DRIVE_DATA
     if DRIVE_DATA is None or force_reload:
         loaded = False
-        # 1. Try loading primary drive.data with multi-format loader
-        if drive_cache_path.exists():
+
+        # 1. Authoritative Source of Truth: Shared Database (PostgreSQL / SQLite)
+        try:
+            from database.connection import init_db
+            init_db()
+            DRIVE_DATA = load_drive_data_from_db()
+            if DRIVE_DATA is not None and (len(DRIVE_DATA.contents["/"].contents) > 0 or not drive_cache_path.exists()):
+                loaded = True
+        except Exception as db_e:
+            logger.warning(f"Database load note: {db_e}")
+
+        # 2. If DB has no content yet, auto-migrate from legacy local files
+        if not loaded and (drive_cache_path.exists() or drive_json_mirror_path.exists()):
+            try:
+                from migrate_to_db import migrate_data
+                logger.info("Migrating existing local drive metadata to shared database...")
+                migrate_data(dry_run=False)
+                DRIVE_DATA = load_drive_data_from_db()
+                if DRIVE_DATA is not None:
+                    loaded = True
+            except Exception as mig_e:
+                logger.warning(f"Auto-migration note: {mig_e}")
+
+        # 3. Fallback to local files only if DB is completely unreachable
+        if not loaded and drive_cache_path.exists():
             DRIVE_DATA = load_drive_data_from_file(drive_cache_path)
             if DRIVE_DATA is not None:
                 loaded = True
-                logger.info("Successfully loaded primary drive.data.")
-                if drive_checksum_path.exists():
-                    try:
-                        expected = drive_checksum_path.read_text(encoding="utf-8").strip()
-                        actual = calculate_file_sha256(drive_cache_path)
-                        if expected.lower() != actual.lower():
-                            logger.warning("drive.data SHA256 checksum mismatch (possible unclean shutdown).")
-                    except Exception as chk_e:
-                        logger.debug(f"Checksum verification skipped: {chk_e}")
+                logger.info("Loaded fallback drive.data from local disk cache.")
 
-        # 2. Try loading backup drive.data.bak if primary failed
-        if not loaded and drive_backup_path.exists():
-            DRIVE_DATA = load_drive_data_from_file(drive_backup_path)
-            if DRIVE_DATA is not None:
-                loaded = True
-                logger.info("Successfully recovered drive data from drive.data.bak!")
-                DRIVE_DATA.save()
-
-        # 3. Try loading JSON mirror if binary failed
-        if not loaded and drive_json_mirror_path.exists():
-            DRIVE_DATA = load_drive_data_from_file(drive_json_mirror_path)
-            if DRIVE_DATA is not None:
-                loaded = True
-                logger.info("Successfully recovered drive data from JSON mirror!")
-                DRIVE_DATA.save()
-
-        # 4. Initialize fresh root if no data exists
+        # 4. Initialize fresh root if no data exists anywhere
         if not loaded:
             logger.info("Initializing new drive data structure.")
-            DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, [])
+            DRIVE_DATA = NewDriveData({"/": Folder("/", "/")}, set())
             DRIVE_DATA.last_modified = 0.0
             DRIVE_DATA.save()
             DRIVE_DATA.isUpdated = False
-            DRIVE_DATA.last_modified = 0.0
+
+        # Ensure used_ids is strictly a set
+        if DRIVE_DATA and not isinstance(DRIVE_DATA.used_ids, set):
+            DRIVE_DATA.used_ids = set(DRIVE_DATA.used_ids)
 
     return DRIVE_DATA
 
 
 def getRandomID():
     drive = ensure_drive_data()
+    if drive and not isinstance(drive.used_ids, set):
+        drive.used_ids = set(drive.used_ids)
     while True:
         id = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
         if not drive:
@@ -481,10 +581,27 @@ class NewDriveData:
             folder = Folder(seg, parent_loc or "/")
             if folder.id != seg:
                 if seg not in self.used_ids:
-                    self.used_ids.append(seg)
+                    if isinstance(self.used_ids, set):
+                        self.used_ids.add(seg)
+                    else:
+                        self.used_ids.append(seg)
                 folder.id = seg
             node.contents[folder.id] = folder
             created_any = True
+            try:
+                from database.repository import DatabaseRepository
+                p_id = getattr(node, "id", "root")
+                if not p_id or p_id == "/":
+                    p_id = "root"
+                DatabaseRepository.create_folder(
+                    id=folder.id,
+                    name=folder.name,
+                    parent_folder_id=p_id,
+                    path=folder.path,
+                    user_id=getattr(folder, "owner", "admin"),
+                )
+            except Exception as db_err:
+                logger.warning(f"Database sync note (_ensure_folder_chain): {db_err}")
             logger.warning(f"Healed missing folder '{seg}' inside '{parent_loc}' (auto mkdir -p).")
             node = folder
 
@@ -503,6 +620,21 @@ class NewDriveData:
                 [p for p in path.strip("/").split("/") if p]
             )
         directory_folder.contents[folder.id] = folder
+
+        try:
+            from database.repository import DatabaseRepository
+            p_id = getattr(directory_folder, "id", "root")
+            if not p_id or p_id == "/":
+                p_id = "root"
+            DatabaseRepository.create_folder(
+                id=folder.id,
+                name=folder.name,
+                parent_folder_id=p_id,
+                path=folder.path,
+                user_id=getattr(folder, "owner", "admin"),
+            )
+        except Exception as db_err:
+            logger.warning(f"Database sync note (new_folder): {db_err}")
 
         try:
             from utils.properties import FolderStatsCalculator
@@ -625,6 +757,22 @@ class NewDriveData:
                 FolderStatsCalculator.invalidate_cache()
             except Exception:
                 pass
+            try:
+                from database.repository import DatabaseRepository
+                p_id = getattr(directory_folder, "id", "root")
+                if not p_id or p_id == "/":
+                    p_id = "root"
+                DatabaseRepository.create_file(
+                    id=existing_file.id,
+                    name=existing_file.name,
+                    telegram_message_id=file_id,
+                    size=size,
+                    folder_id=p_id,
+                    checksum=getattr(existing_file, "sha256", None),
+                    user_id=getattr(existing_file, "owner", "admin"),
+                )
+            except Exception as db_err:
+                logger.warning(f"Database sync note (replace file): {db_err}")
             self.save()
             return existing_file.id
 
@@ -642,6 +790,23 @@ class NewDriveData:
 
         file = File(clean_name, file_id, size, path, created_at=created_at)
         directory_folder.contents[file.id] = file
+
+        try:
+            from database.repository import DatabaseRepository
+            p_id = getattr(directory_folder, "id", "root")
+            if not p_id or p_id == "/":
+                p_id = "root"
+            DatabaseRepository.create_file(
+                id=file.id,
+                name=file.name,
+                telegram_message_id=file.file_id,
+                size=file.size,
+                folder_id=p_id,
+                checksum=getattr(file, "sha256", None),
+                user_id=getattr(file, "owner", "admin"),
+            )
+        except Exception as db_err:
+            logger.warning(f"Database sync note (new_file): {db_err}")
 
         try:
             from utils.properties import FolderStatsCalculator
@@ -912,6 +1077,11 @@ class NewDriveData:
                 FolderStatsCalculator.invalidate_cache()
             except Exception:
                 pass
+            try:
+                from database.repository import DatabaseRepository
+                DatabaseRepository.rename_item(target_item.id, clean_new_name)
+            except Exception as db_err:
+                logger.warning(f"Database sync note (rename): {db_err}")
             self.save()
             logger.info(f"Item at path '{path}' renamed from '{old_name}' to '{clean_new_name}'.")
 
@@ -943,6 +1113,11 @@ class NewDriveData:
                 FolderStatsCalculator.invalidate_cache()
             except Exception:
                 pass
+            try:
+                from database.repository import DatabaseRepository
+                DatabaseRepository.trash_item(target_item.id, trash)
+            except Exception as db_err:
+                logger.warning(f"Database sync note (trash): {db_err}")
             self.save()
             logger.info(f"Item at path '{path}' {action.lower()} successfully.")
 
@@ -1024,6 +1199,11 @@ class NewDriveData:
 
         if clean_tag not in target_item.tags:
             target_item.tags.append(clean_tag)
+            try:
+                from database.repository import DatabaseRepository
+                DatabaseRepository.update_tags(target_item.id, target_item.tags)
+            except Exception as db_err:
+                logger.warning(f"Database sync note (add_tag): {db_err}")
             self.save()
             logger.info(f"Added tag '{clean_tag}' to item at '{path}'.")
 
@@ -1061,6 +1241,11 @@ class NewDriveData:
 
         if clean_tag in target_item.tags:
             target_item.tags.remove(clean_tag)
+            try:
+                from database.repository import DatabaseRepository
+                DatabaseRepository.update_tags(target_item.id, target_item.tags)
+            except Exception as db_err:
+                logger.warning(f"Database sync note (remove_tag): {db_err}")
             self.save()
             logger.info(f"Removed tag '{clean_tag}' from item at '{path}'.")
 
@@ -1119,6 +1304,14 @@ class NewDriveData:
                 FolderStatsCalculator.invalidate_cache()
             except Exception:
                 pass
+            try:
+                from database.repository import DatabaseRepository
+                db_deleted = DatabaseRepository.delete_item(file_id)
+                for mid in db_deleted:
+                    if mid not in deleted_msg_ids:
+                        deleted_msg_ids.append(mid)
+            except Exception as db_err:
+                logger.warning(f"Database sync note (delete_item): {db_err}")
             self.save()
             logger.info(f"Item at path '{path}' deleted successfully. Collected {len(deleted_msg_ids)} Telegram msg IDs.")
             return deleted_msg_ids
@@ -1142,6 +1335,14 @@ class NewDriveData:
                 FolderStatsCalculator.invalidate_cache()
             except Exception:
                 pass
+            try:
+                from database.repository import DatabaseRepository
+                db_deleted = DatabaseRepository.delete_item(file_id)
+                for mid in db_deleted:
+                    if mid not in deleted_msg_ids:
+                        deleted_msg_ids.append(mid)
+            except Exception as db_err:
+                logger.warning(f"Database sync note (delete_item fallback): {db_err}")
             self.save()
             logger.info(f"Item with ID '{file_id}' deleted via fallback search. Collected {len(deleted_msg_ids)} Telegram msg IDs.")
 
@@ -1176,6 +1377,16 @@ class NewDriveData:
                                     return True
                     return False
                 search_and_pop(self.contents.get("/"))
+
+        try:
+            from database.repository import DatabaseRepository
+            item_ids = [p.strip("/").split("/")[-1] for p in paths if p.strip("/")]
+            db_msgs = DatabaseRepository.bulk_delete_items(item_ids)
+            for mid in db_msgs:
+                if mid not in all_deleted_ids:
+                    all_deleted_ids.append(mid)
+        except Exception as db_err:
+            logger.warning(f"Database sync note (bulk_delete): {db_err}")
 
         try:
             from utils.properties import FolderStatsCalculator
@@ -1339,6 +1550,14 @@ class NewDriveData:
             FolderStatsCalculator.invalidate_cache()
         except Exception:
             pass
+        try:
+            from database.repository import DatabaseRepository
+            dest_fid = getattr(dest_folder, "id", "root")
+            if not dest_fid or dest_fid == "/":
+                dest_fid = "root"
+            DatabaseRepository.move_item(item.id, dest_fid)
+        except Exception as db_err:
+            logger.warning(f"Database sync note (move): {db_err}")
         self.save()
         logger.info(f"Moved item '{item.name}' ({item.id}) from '{src_path}' to '{dest_folder_path}'.")
 
@@ -1437,6 +1656,36 @@ class NewDriveData:
             FolderStatsCalculator.invalidate_cache()
         except Exception:
             pass
+        try:
+            from database.repository import DatabaseRepository
+            def sync_copy_to_db(copied_node, parent_fid):
+                if getattr(copied_node, "type", "") == "folder":
+                    DatabaseRepository.create_folder(
+                        id=copied_node.id,
+                        name=copied_node.name,
+                        parent_folder_id=parent_fid,
+                        path=copied_node.path,
+                        user_id=getattr(copied_node, "owner", "admin"),
+                    )
+                    if hasattr(copied_node, "contents"):
+                        for child in copied_node.contents.values():
+                            sync_copy_to_db(child, copied_node.id)
+                else:
+                    DatabaseRepository.create_file(
+                        id=copied_node.id,
+                        name=copied_node.name,
+                        telegram_message_id=copied_node.file_id,
+                        size=copied_node.size,
+                        folder_id=parent_fid,
+                        checksum=getattr(copied_node, "sha256", None),
+                        user_id=getattr(copied_node, "owner", "admin"),
+                    )
+            dest_fid = getattr(dest_folder, "id", "root")
+            if not dest_fid or dest_fid == "/":
+                dest_fid = "root"
+            sync_copy_to_db(new_item, dest_fid)
+        except Exception as db_err:
+            logger.warning(f"Database sync note (copy): {db_err}")
         self.save()
         logger.info(f"Copied item '{item.name}' to '{dest_folder_path}' as '{new_item.name}' ({new_item.id}).")
         return new_item.id

@@ -12,19 +12,20 @@
       "eta": null,
       "eta_formatted": "--",
       "start_time": 1788145784.961306,
-      "completion_time": null,
+      "completion_time": 1788185069.501088,
       "retry_count": 0,
       "max_retries": 5,
-      "error_reason": null,
+      "error_reason": "Interrupted by server restart (temp file lost)",
       "cooldown_remaining": 0.0,
-      "state": "uploading",
+      "state": "failed",
       "target_path": "/XBVZTU/O3NXQG/032MQO/0EHFQS/7YQK7Q/Q5DLP5/KZEBN9/8FUKH3/BLOZ2E/0X3EGR/3ROQ4E",
       "relative_path": null,
       "batch_id": null,
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\4SSM8O.css",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "DKN7UA",
@@ -50,7 +51,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\DKN7UA.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "120GAY",
@@ -76,7 +78,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\120GAY.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "O5XO6C",
@@ -102,7 +105,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\O5XO6C.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "I8KKMR",
@@ -128,7 +132,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\I8KKMR.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "MZJD3Q",
@@ -154,7 +159,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\MZJD3Q.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "02DVOR",
@@ -180,7 +186,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\02DVOR.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "I8XQ49",
@@ -206,7 +213,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\I8XQ49.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ZGUEOW",
@@ -232,7 +240,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ZGUEOW.jpg",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "4ELGE0",
@@ -258,7 +267,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\4ELGE0.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "OG5BTV",
@@ -284,7 +294,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\OG5BTV.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "0K2QJB",
@@ -310,7 +321,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\0K2QJB.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "AA9PVQ",
@@ -336,7 +348,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\AA9PVQ.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "AVSB20",
@@ -362,7 +375,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\AVSB20.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "89PN7N",
@@ -388,7 +402,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\89PN7N.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "6942LV",
@@ -414,7 +429,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\6942LV.jpg",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "267N46",
@@ -440,7 +456,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\267N46.png",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "C4NCVW",
@@ -466,7 +483,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\C4NCVW.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "W91NQV",
@@ -492,7 +510,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\W91NQV.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "PNWYES",
@@ -518,7 +537,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\PNWYES.png",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "Q5TXRM",
@@ -544,7 +564,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\Q5TXRM.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "LE1V2N",
@@ -570,7 +591,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\LE1V2N.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "FFHSFR",
@@ -596,7 +618,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\FFHSFR.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "2OJWLT",
@@ -622,7 +645,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\2OJWLT.jpg",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "JNDMA1",
@@ -648,7 +672,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\JNDMA1.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "IEYPO9",
@@ -674,7 +699,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\IEYPO9.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "DP14W4",
@@ -700,7 +726,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\DP14W4.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "R9NNJN",
@@ -726,7 +753,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\R9NNJN.pptx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "KW8G76",
@@ -752,7 +780,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\KW8G76.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "2WP7NV",
@@ -778,7 +807,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\2WP7NV.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "R0JHQD",
@@ -804,7 +834,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\R0JHQD.xlsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "58MS8R",
@@ -830,7 +861,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\58MS8R.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8T6LUB",
@@ -856,7 +888,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8T6LUB.xlsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "EIC1BR",
@@ -882,7 +915,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\EIC1BR.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "JKL1FW",
@@ -908,7 +942,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\JKL1FW.xlsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "PJNE1J",
@@ -934,7 +969,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\PJNE1J.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "Q6YO4E",
@@ -960,7 +996,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\Q6YO4E.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "WQ5ULP",
@@ -986,7 +1023,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\WQ5ULP.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "Q73RHF",
@@ -1012,7 +1050,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\Q73RHF.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "UE5THZ",
@@ -1038,7 +1077,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\UE5THZ.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "0ZQ0S0",
@@ -1064,7 +1104,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\0ZQ0S0.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "51I6U7",
@@ -1090,7 +1131,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\51I6U7.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "NZMGJ0",
@@ -1116,7 +1158,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\NZMGJ0.xlsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "RWOLYS",
@@ -1142,7 +1185,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\RWOLYS.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "RJNBYN",
@@ -1168,7 +1212,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\RJNBYN.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "OXN0TJ",
@@ -1194,7 +1239,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\OXN0TJ.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "CEJZIU",
@@ -1220,7 +1266,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\CEJZIU.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "9H4IVV",
@@ -1246,7 +1293,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\9H4IVV.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "98ZUEB",
@@ -1272,7 +1320,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\98ZUEB.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "GFTXAG",
@@ -1298,7 +1347,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\GFTXAG.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "YANFSA",
@@ -1324,7 +1374,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\YANFSA.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "EUNF37",
@@ -1350,7 +1401,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\EUNF37.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "5YVWL7",
@@ -1376,7 +1428,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\5YVWL7.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ILNXI8",
@@ -1402,7 +1455,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ILNXI8.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "VA79RD",
@@ -1428,7 +1482,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\VA79RD.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "RYDM01",
@@ -1454,7 +1509,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\RYDM01.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "87Z984",
@@ -1480,7 +1536,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\87Z984.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "0YO5LT",
@@ -1506,7 +1563,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\0YO5LT.svg",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "2F05OK",
@@ -1532,7 +1590,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\2F05OK.webp",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8FS48J",
@@ -1558,7 +1617,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8FS48J.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "DB43TD",
@@ -1584,7 +1644,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\DB43TD.css",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "KN73IV",
@@ -1610,7 +1671,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\KN73IV.tsx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "RA6TT7",
@@ -1636,7 +1698,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\RA6TT7.css",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "1688LB",
@@ -1662,7 +1725,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\1688LB.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "FDBS6L",
@@ -1688,7 +1752,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\FDBS6L.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "R0I74M",
@@ -1714,7 +1779,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\R0I74M.blend1",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "XYDCT1",
@@ -1740,7 +1806,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\XYDCT1.svg",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ZRO2RP",
@@ -1766,7 +1833,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ZRO2RP.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "7LM08W",
@@ -1792,7 +1860,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\7LM08W.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ZFWXMQ",
@@ -1818,7 +1887,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ZFWXMQ.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8KJ3UV",
@@ -1844,7 +1914,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8KJ3UV.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "6RUFQ8",
@@ -1870,7 +1941,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\6RUFQ8.md",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "TZN7SH",
@@ -1896,7 +1968,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\TZN7SH.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "Q18RU8",
@@ -1922,7 +1995,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\Q18RU8.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "Z9C94J",
@@ -1948,7 +2022,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\Z9C94J.html",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "YPRW9X",
@@ -1974,7 +2049,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\YPRW9X.js",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "UOLH1W",
@@ -2000,7 +2076,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\UOLH1W.gitignore",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "RLNYV2",
@@ -2026,7 +2103,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\RLNYV2.env",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "3MSSRA",
@@ -2052,7 +2130,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\3MSSRA.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "PK17CP",
@@ -2078,7 +2157,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\PK17CP.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "E3A4T5",
@@ -2104,7 +2184,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\E3A4T5.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "MPKEW4",
@@ -2130,7 +2211,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\MPKEW4.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "2PWF24",
@@ -2156,7 +2238,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\2PWF24.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8EKMXS",
@@ -2182,7 +2265,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8EKMXS.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "PNOAKF",
@@ -2208,7 +2292,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\PNOAKF.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "RCIEEJ",
@@ -2234,7 +2319,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\RCIEEJ.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "O3VWWL",
@@ -2260,7 +2346,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\O3VWWL.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "33MQYZ",
@@ -2286,7 +2373,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\33MQYZ.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "YPH0E8",
@@ -2312,7 +2400,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\YPH0E8.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "5E4YJZ",
@@ -2338,7 +2427,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\5E4YJZ.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "09DXPZ",
@@ -2364,7 +2454,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\09DXPZ.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8LRHYE",
@@ -2390,7 +2481,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8LRHYE.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "783W83",
@@ -2416,7 +2508,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\783W83.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ECFO3S",
@@ -2442,7 +2535,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ECFO3S.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "D4MFDT",
@@ -2468,7 +2562,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\D4MFDT.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "XWA00C",
@@ -2494,7 +2589,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\XWA00C.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "373WHQ",
@@ -2520,7 +2616,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\373WHQ.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ZWX9LH",
@@ -2546,7 +2643,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ZWX9LH.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "1JE361",
@@ -2572,7 +2670,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\1JE361.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "X2YT25",
@@ -2598,7 +2697,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\X2YT25.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "DOT7GH",
@@ -2624,7 +2724,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\DOT7GH.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "NG2P3E",
@@ -2650,7 +2751,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\NG2P3E.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "5VOK0H",
@@ -2676,7 +2778,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\5VOK0H.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "S19B5U",
@@ -2702,7 +2805,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\S19B5U.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "YETX9S",
@@ -2728,7 +2832,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\YETX9S.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "PCEE8T",
@@ -2754,7 +2859,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\PCEE8T.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "2YCMRX",
@@ -2780,7 +2886,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\2YCMRX.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "KCGBNV",
@@ -2806,7 +2913,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\KCGBNV.sql",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "X24LTH",
@@ -2832,7 +2940,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\X24LTH.sql",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "79STQT",
@@ -2858,7 +2967,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\79STQT.sql",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "OY4TAG",
@@ -2884,7 +2994,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\OY4TAG.toml",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "1LB5OY",
@@ -2910,7 +3021,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\1LB5OY.prisma",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "LCWARH",
@@ -2936,7 +3048,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\LCWARH.jpg",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8MD5SG",
@@ -2962,7 +3075,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8MD5SG.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "X6QQS7",
@@ -2988,7 +3102,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\X6QQS7.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "6O0SU5",
@@ -3014,7 +3129,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\6O0SU5.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "A7UUIM",
@@ -3040,7 +3156,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\A7UUIM.gitignore",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "YB4H52",
@@ -3066,7 +3183,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\YB4H52.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "9XRW0R",
@@ -3092,7 +3210,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\9XRW0R.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "J2GY7H",
@@ -3118,7 +3237,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\J2GY7H.gitignore",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8N3L7H",
@@ -3144,7 +3264,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8N3L7H.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "DY2LDK",
@@ -3170,7 +3291,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\DY2LDK.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "SZYX4Y",
@@ -3196,7 +3318,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\SZYX4Y.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "WHFP2L",
@@ -3222,7 +3345,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\WHFP2L.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "GKJ7XR",
@@ -3248,7 +3372,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\GKJ7XR.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "MDFY2W",
@@ -3274,7 +3399,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\MDFY2W.docx",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "JYN9DY",
@@ -3300,7 +3426,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\JYN9DY.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "91NJCR",
@@ -3326,7 +3453,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\91NJCR.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "KSN438",
@@ -3352,7 +3480,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\KSN438.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "SOWW1X",
@@ -3378,7 +3507,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\SOWW1X.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "62NW33",
@@ -3404,7 +3534,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\62NW33.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "W7ASNR",
@@ -3430,7 +3561,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\W7ASNR.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ISS7UQ",
@@ -3456,7 +3588,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ISS7UQ.sav",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "1RPR37",
@@ -3482,7 +3615,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\1RPR37.sav",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "D5968R",
@@ -3508,7 +3642,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\D5968R.blend1",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8AIYI5",
@@ -3534,7 +3669,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8AIYI5.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "I7Q3TO",
@@ -3560,7 +3696,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\I7Q3TO.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "T8WSU4",
@@ -3586,7 +3723,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\T8WSU4.blend1",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "AAWMKS",
@@ -3612,7 +3750,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\AAWMKS.blend1",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "V9TF30",
@@ -3638,7 +3777,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\V9TF30.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "1AAQC2",
@@ -3664,7 +3804,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\1AAQC2.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "KQR7PS",
@@ -3690,7 +3831,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\KQR7PS.blend1",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "Z4XON7",
@@ -3716,7 +3858,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\Z4XON7.blend",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ZPKE6F",
@@ -3742,7 +3885,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ZPKE6F.blend",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "K3UF81",
@@ -3768,7 +3912,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\K3UF81.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "9CHR9I",
@@ -3794,7 +3939,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\9CHR9I.py",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "72BYDJ",
@@ -3820,7 +3966,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\72BYDJ.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "8HAPQI",
@@ -3846,7 +3993,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\8HAPQI.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "5YRD7D",
@@ -3872,7 +4020,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\5YRD7D.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "KKL2VB",
@@ -3898,7 +4047,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\KKL2VB.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "XFIH7E",
@@ -3924,7 +4074,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\XFIH7E.pdf",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "V6II9H",
@@ -3950,7 +4101,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\V6II9H.tsbuildinfo",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "GBNG2H",
@@ -3976,7 +4128,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\GBNG2H.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "WNEQZE",
@@ -4002,7 +4155,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\WNEQZE.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "Q5RYXL",
@@ -4028,7 +4182,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\Q5RYXL.tsbuildinfo",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "LOOOLD",
@@ -4054,7 +4209,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\LOOOLD.tsbuildinfo",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "PQ3Y7I",
@@ -4080,7 +4236,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\PQ3Y7I.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "0OQDF1",
@@ -4106,7 +4263,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\0OQDF1.md",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "WB6GFT",
@@ -4132,7 +4290,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\WB6GFT.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "CIU77Q",
@@ -4158,7 +4317,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\CIU77Q.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "HPY1HE",
@@ -4184,7 +4344,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\HPY1HE.mjs",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "DTL4GL",
@@ -4210,7 +4371,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\DTL4GL.ts",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "7WPX0K",
@@ -4236,7 +4398,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\7WPX0K.prettierrc",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "261KOO",
@@ -4262,7 +4425,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\261KOO.gitignore",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "U05XGO",
@@ -4288,7 +4452,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\U05XGO.env",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "J1QGVB",
@@ -4314,7 +4479,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\J1QGVB.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "EPN5EE",
@@ -4340,7 +4506,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\EPN5EE.md",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "ZL57AW",
@@ -4366,7 +4533,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\ZL57AW.yaml",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "YGVZOE",
@@ -4392,7 +4560,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\YGVZOE.yaml",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "9G00CA",
@@ -4418,7 +4587,8 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\9G00CA.json",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     },
     {
       "id": "9U69AY",
@@ -4444,8 +4614,9 @@
       "source_url": null,
       "conflict_mode": "keep_both",
       "temp_file_path": "cache\\9U69AY.gitignore",
-      "single_threaded": false
+      "single_threaded": false,
+      "can_retry": false
     }
   ],
-  "updated_at": 1788145910.5772228
+  "updated_at": 1788187667.2776291
 }
