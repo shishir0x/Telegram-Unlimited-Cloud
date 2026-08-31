@@ -74,7 +74,7 @@ IGNORED_DIRS = {
     "cross device",
     "phonelink",
     "phone link",
-    "your phone"
+    "your phone",
 
 
     # Heavy Dependency & Build Folders (Crucial for C: Drive!)
@@ -672,6 +672,7 @@ class TGDriveBackupClient:
             max_poll_seconds = max(30, min(300, int(file_size / (50 * 1024)) + 30))
             poll_deadline = time.time() + max_poll_seconds
             cooldown_ticks = 0
+            last_was_waiting = False  # True while in a Telegram rate-limit hold
 
             while time.time() < poll_deadline:
                 time.sleep(0.4)
@@ -693,12 +694,14 @@ class TGDriveBackupClient:
                             speed_str = f"{format_size(int(speed))}/s"
 
                             if status == "waiting":
-                                # Telegram rate-limit pause: server is in cooldown and will resume automatically.
-                                poll_deadline = max(poll_deadline, time.time() + 45)
+                                # Telegram rate-limit pause: extend deadline by the
+                                # actual cooldown value so we never time-out mid-wait.
+                                last_was_waiting = True
                                 cooldown_ticks += 1
                                 transfer_meta = prog_data.get("transfer", {})
                                 rem_cooldown = transfer_meta.get("cooldown_remaining")
                                 if rem_cooldown is not None and rem_cooldown > 0:
+                                    actual_wait = float(rem_cooldown)
                                     msg = f"cooling down (resumes in {int(rem_cooldown)}s)..."
                                 else:
                                     err_reason = transfer_meta.get("error_reason", "")
@@ -706,14 +709,19 @@ class TGDriveBackupClient:
                                     wait_match = re.search(r"(\d+)\s*s", err_reason)
                                     if wait_match:
                                         initial_wait = int(wait_match.group(1))
+                                        actual_wait = float(initial_wait)
                                         rem_cooldown = max(1, initial_wait - int(cooldown_ticks * 0.4))
                                         msg = f"cooling down (resumes in ~{rem_cooldown}s)..."
                                     else:
+                                        actual_wait = 60.0
                                         msg = "server resuming automatically..."
+                                # Extend deadline to cover the full actual cooldown + 15s buffer
+                                poll_deadline = max(poll_deadline, time.time() + actual_wait + 15)
                                 sys.stdout.write(f"\r    ⏳ Telegram rate-limit {msg:<60}")
                                 sys.stdout.flush()
                                 continue
 
+                            last_was_waiting = False
                             cooldown_ticks = 0
                             if status == "running":
                                 print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
@@ -742,6 +750,12 @@ class TGDriveBackupClient:
                 except Exception:
                     pass
 
+            # Timeout branch: distinguish a genuine network timeout (file transferred
+            # but progress endpoint lagged) from a rate-limit-induced timeout (file
+            # was never sent). Only mark as synced in the manifest for the former.
+            if last_was_waiting:
+                print(f"\r    ⏭️ Upload timeout ({max_poll_seconds}s) during rate-limit hold. File will be retried on next sync.")
+                return False
             print(f"\r    ⏭️ Upload timeout ({max_poll_seconds}s). Auto-advancing to next file...")
             fhash = compute_fast_file_hash(local_file_path)
             self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
@@ -808,6 +822,7 @@ class TGDriveBackupClient:
             max_poll_seconds = max(30, min(300, int(file_size / (50 * 1024)) + 30))
             poll_deadline = time.time() + max_poll_seconds
             cooldown_ticks = 0
+            last_was_waiting = False  # True while in a Telegram rate-limit hold
 
             while time.time() < poll_deadline:
                 time.sleep(0.4)
@@ -829,12 +844,14 @@ class TGDriveBackupClient:
                             speed_str = f"{format_size(int(speed))}/s"
 
                             if status == "waiting":
-                                # Telegram rate-limit pause: extend patience.
-                                poll_deadline = max(poll_deadline, time.time() + 45)
+                                # Telegram rate-limit pause: extend deadline by the
+                                # actual cooldown value so we never time-out mid-wait.
+                                last_was_waiting = True
                                 cooldown_ticks += 1
                                 transfer_meta = prog_data.get("transfer", {})
                                 rem_cooldown = transfer_meta.get("cooldown_remaining")
                                 if rem_cooldown is not None and rem_cooldown > 0:
+                                    actual_wait = float(rem_cooldown)
                                     msg = f"cooling down (resumes in {int(rem_cooldown)}s)..."
                                 else:
                                     err_reason = transfer_meta.get("error_reason", "")
@@ -842,14 +859,19 @@ class TGDriveBackupClient:
                                     wait_match = re.search(r"(\d+)\s*s", err_reason)
                                     if wait_match:
                                         initial_wait = int(wait_match.group(1))
+                                        actual_wait = float(initial_wait)
                                         rem_cooldown = max(1, initial_wait - int(cooldown_ticks * 0.4))
                                         msg = f"cooling down (resumes in ~{rem_cooldown}s)..."
                                     else:
+                                        actual_wait = 60.0
                                         msg = "server resuming automatically..."
+                                # Extend deadline to cover the full actual cooldown + 15s buffer
+                                poll_deadline = max(poll_deadline, time.time() + actual_wait + 15)
                                 sys.stdout.write(f"\r    ⏳ Telegram rate-limit {msg:<60}")
                                 sys.stdout.flush()
                                 continue
 
+                            last_was_waiting = False
                             cooldown_ticks = 0
                             if status == "running":
                                 print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
@@ -878,6 +900,12 @@ class TGDriveBackupClient:
                 except Exception:
                     pass
 
+            # Timeout branch: distinguish a genuine network timeout (file transferred
+            # but progress endpoint lagged) from a rate-limit-induced timeout (file
+            # was never sent). Only mark as synced in the manifest for the former.
+            if last_was_waiting:
+                print(f"\r    ⏭️ Upload timeout ({max_poll_seconds}s) during rate-limit hold. File will be retried on next sync.")
+                return False
             print(f"\r    ⏭️ Upload timeout ({max_poll_seconds}s). Auto-advancing to next file...")
             h = hashlib.md5(str(file_size).encode() + file_bytes[:2*1024*1024]).hexdigest()
             self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, time.time(), h)

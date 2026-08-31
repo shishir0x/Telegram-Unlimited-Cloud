@@ -892,7 +892,9 @@ class TransferManager:
                 if has_alt:
                     # Switch immediately to available alternative client
                     continue
-                await asyncio.sleep(min(wait_time + 0.5, 60.0))
+                # Sleep the FULL Telegram-mandated wait. Capping at 60s causes
+                # escalating bans when Telegram issues multi-minute FloodWaits.
+                await asyncio.sleep(wait_time + 0.5)
 
             except Exception as exc:
                 item.retry_count += 1
@@ -909,6 +911,9 @@ class TransferManager:
 
                 item.state = TransferState.RETRYING
                 item.error_reason = str(exc)
+                # Mark as "waiting" (not "error") so the backup client does NOT
+                # false-skip this file while we are still within retry budget.
+                PROGRESS_CACHE[item.id] = ("waiting", 0, item.size, item.filename)
                 self.store.mark_dirty()
                 # Exponential backoff with jitter
                 backoff = min(60.0, (2.0 ** (item.retry_count - 1)) * 2.0 + random.uniform(0.5, 2.0))
