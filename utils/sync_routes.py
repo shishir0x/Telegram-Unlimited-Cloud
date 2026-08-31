@@ -38,8 +38,8 @@ async def sync_status(request: Request, _auth: Session = Depends(require_auth)):
     - server_time: current server UTC timestamp
     - last_change: most recent changelog entry for this user
     """
-    user_id = _auth.user_id
-    status = SyncService.get_status(user_id=user_id)
+    # Single-admin system: always use "admin" as the user_id
+    status = SyncService.get_status(user_id="admin")
     return JSONResponse({
         "status": "ok",
         **status,
@@ -73,9 +73,9 @@ async def sync_changes(
         ]
     }
     """
-    user_id = _auth.user_id
+    # Single-admin system: always use "admin" as the user_id
     result = SyncService.get_changes_since(
-        user_id=user_id,
+        user_id="admin",
         since_version=since,
         limit=limit,
     )
@@ -109,7 +109,8 @@ async def _authenticate_ws(websocket: WebSocket) -> Optional[str]:
         await websocket.close(code=4003, reason="Invalid or expired session")
         return None
 
-    return session.user_id
+    # Single-admin system: always return "admin"
+    return "admin"
 
 
 @router.websocket("/ws")

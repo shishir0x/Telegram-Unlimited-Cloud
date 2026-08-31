@@ -1323,9 +1323,9 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
                     new_folder_id = item_id
                     break
         if new_folder_id:
-            ver = ChangeTracker.folder_created(new_folder_id, user_id=_auth.user_id)
+            ver = ChangeTracker.folder_created(new_folder_id, user_id="admin")
             if ver > 0:
-                broadcast_sync_event("FOLDER_CREATED", new_folder_id, "folder", ver, _auth.user_id)
+                broadcast_sync_event("FOLDER_CREATED", new_folder_id, "folder", ver, "admin")
     except Exception as sync_err:
         logger.debug(f"Sync tracking note (new_folder): {sync_err}")
 
@@ -1803,9 +1803,9 @@ async def rename_file_folder(request: Request, _auth: Session = Depends(require_
         from utils.sync import ChangeTracker, broadcast_sync_event
         if _entity_id and _old_name:
             op = "FOLDER_RENAMED" if _entity_type == "folder" else "FILE_RENAMED"
-            ver = ChangeTracker.record(op, _entity_id, _entity_type, _auth.user_id, old_name=_old_name, new_name=safe_name)
+            ver = ChangeTracker.record(op, _entity_id, _entity_type, "admin", old_name=_old_name, new_name=safe_name)
             if ver > 0:
-                broadcast_sync_event(op, _entity_id, _entity_type, ver, _auth.user_id)
+                broadcast_sync_event(op, _entity_id, _entity_type, ver, "admin")
     except Exception as sync_err:
         logger.debug(f"Sync tracking note (rename): {sync_err}")
 
@@ -1868,9 +1868,9 @@ async def trash_file_folder(request: Request, _auth: Session = Depends(require_a
         from utils.sync import ChangeTracker, broadcast_sync_event
         if _trash_entity_id:
             op = "FILE_TRASHED" if (trash_val and _trash_entity_type == "file") else ("FILE_RESTORED" if not trash_val and _trash_entity_type == "file" else ("FOLDER_TRASHED" if trash_val else "FOLDER_RESTORED"))
-            ver = ChangeTracker.record(op, _trash_entity_id, _trash_entity_type, _auth.user_id)
+            ver = ChangeTracker.record(op, _trash_entity_id, _trash_entity_type, "admin")
             if ver > 0:
-                broadcast_sync_event(op, _trash_entity_id, _trash_entity_type, ver, _auth.user_id)
+                broadcast_sync_event(op, _trash_entity_id, _trash_entity_type, ver, "admin")
     except Exception as sync_err:
         logger.debug(f"Sync tracking note (trash): {sync_err}")
 
@@ -1915,9 +1915,9 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
     try:
         from utils.sync import ChangeTracker, broadcast_sync_event
         if _del_entity_id:
-            ver = ChangeTracker.file_deleted(_del_entity_id, user_id=_auth.user_id) if _del_entity_type == "file" else ChangeTracker.folder_deleted(_del_entity_id, user_id=_auth.user_id)
+            ver = ChangeTracker.file_deleted(_del_entity_id, user_id="admin") if _del_entity_type == "file" else ChangeTracker.folder_deleted(_del_entity_id, user_id="admin")
             if ver > 0:
-                broadcast_sync_event("FILE_DELETED" if _del_entity_type == "file" else "FOLDER_DELETED", _del_entity_id, _del_entity_type, ver, _auth.user_id)
+                broadcast_sync_event("FILE_DELETED" if _del_entity_type == "file" else "FOLDER_DELETED", _del_entity_id, _del_entity_type, ver, "admin")
     except Exception as sync_err:
         logger.debug(f"Sync tracking note (delete): {sync_err}")
 
@@ -2043,9 +2043,9 @@ async def bulk_delete_api(request: Request, _auth: Session = Depends(require_aut
         from utils.sync import ChangeTracker, broadcast_sync_event
         for _eid, _etype in _bulk_del_entities:
             op = "FILE_DELETED" if _etype == "file" else "FOLDER_DELETED"
-            ver = ChangeTracker.record(op, _eid, _etype, _auth.user_id)
+            ver = ChangeTracker.record(op, _eid, _etype, "admin")
             if ver > 0:
-                broadcast_sync_event(op, _eid, _etype, ver, _auth.user_id)
+                broadcast_sync_event(op, _eid, _etype, ver, "admin")
     except Exception as sync_err:
         logger.debug(f"Sync tracking note (bulk_delete): {sync_err}")
 
@@ -2096,9 +2096,9 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
         from utils.sync import ChangeTracker, broadcast_sync_event
         for _eid, _etype in _bulk_trash_entities:
             op = ("FILE_TRASHED" if _etype == "file" else "FOLDER_TRASHED") if trash else ("FILE_RESTORED" if _etype == "file" else "FOLDER_RESTORED")
-            ver = ChangeTracker.record(op, _eid, _etype, _auth.user_id)
+            ver = ChangeTracker.record(op, _eid, _etype, "admin")
             if ver > 0:
-                broadcast_sync_event(op, _eid, _etype, ver, _auth.user_id)
+                broadcast_sync_event(op, _eid, _etype, ver, "admin")
     except Exception as sync_err:
         logger.debug(f"Sync tracking note (bulk_trash): {sync_err}")
 
