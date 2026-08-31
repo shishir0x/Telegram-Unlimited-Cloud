@@ -205,7 +205,14 @@ async def start_file_uploader(
         filename = unquote_plus(filename)
 
         new_item_id = drive.new_file(directory_path, filename, message.id, size, conflict=conflict)
-        
+
+        # Record change event for sync engine
+        try:
+            from utils.sync import ChangeTracker, broadcast_sync_event
+            ChangeTracker.file_created(new_item_id)
+        except Exception as sync_err:
+            logger.debug(f"Sync tracking note (upload): {sync_err}")
+
         # Extract rich properties (sha256, dimensions, codecs, pages) before temp file deletion
         try:
             from utils.properties import MetadataWorker

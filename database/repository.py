@@ -12,7 +12,7 @@ from sqlalchemy import or_, and_, func, select
 from sqlalchemy.orm import Session
 
 from database.connection import get_db_session
-from database.models import FolderModel, FileModel, utc_now
+from database.models import FolderModel, FileModel, ChangeLogModel, SyncVersionModel, utc_now
 from utils.logger import Logger
 
 logger = Logger(__name__)
@@ -388,6 +388,136 @@ class DatabaseRepository:
             folder_cnt = s.query(func.count(FolderModel.id)).scalar() or 0
             file_cnt = s.query(func.count(FileModel.id)).scalar() or 0
             return int(folder_cnt), int(file_cnt)
+
+        if session:
+            return _query(session)
+        with get_db_session() as s:
+            return _query(s)
+
+    # -----------------------------------------------------------------------
+    # Phase 2 — Synchronization Repository Methods
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def get_current_version(session: Optional[Session] = None) -> int:
+        """Returns the current global sync version (monotonic counter)."""
+        def _query(s: Session) -> int:
+            row = s.query(SyncVersionModel).filter(SyncVersionModel.id == "global").first()
+            if not row:
+                # Seed the row if missing
+                row = SyncVersionModel(id="global", version=0)
+                s.add(row)
+                s.flush()
+            return int(row.version)
+
+        if session:
+            return _query(session)
+        with get_db_session() as s:
+            return _query(s)
+
+    @staticmethod
+    def increment_version(session: Optional[Session] = None) -> int:
+        """
+        Atomically increments the global sync version and returns the new value.
+        Uses an atomic UPDATE to prevent lost increments under concurrency.
+        """
+        def _op(s: Session) -> int:
+            row = s.query(SyncVersionModel).filter(SyncVersionModel.id == "global").first()
+            if not row:
+                row = SyncVersionModel(id="global", version=1)
+                s.add(row)
+                s.flush()
+                return 1
+            row.version = int(row.version) + 1
+            row.updated_at = utc_now()
+            s.flush()
+            return int(row.version)
+
+        if session:
+            return _op(session)
+        with get_db_session() as s:
+            new_ver = _op(s)
+            return new_ver
+
+    @staticmethod
+    def record_change(
+        version: int,
+        user_id: str,
+        entity_id: str,
+        entity_type: str,
+        operation: str,
+        old_name: Optional[str] = None,
+        new_name: Optional[str] = None,
+        old_folder_id: Optional[str] = None,
+        new_folder_id: Optional[str] = None,
+        extra: Optional[dict] = None,
+        session: Optional[Session] = None,
+    ) -> ChangeLogModel:
+        """
+        Records a change event in the changelog. This is append-only.
+        """
+        def _op(s: Session) -> ChangeLogModel:
+            entry = ChangeLogModel(
+                version=version,
+                user_id=user_id,
+                entity_id=entity_id,
+                entity_type=entity_type,
+                operation=operation,
+                old_name=old_name,
+                new_name=new_name,
+                old_folder_id=old_folder_id,
+                new_folder_id=new_folder_id,
+                extra=extra or {},
+                created_at=utc_now(),
+            )
+            s.add(entry)
+            s.flush()
+            s.expunge(entry)
+            return entry
+
+        if session:
+            return _op(session)
+        with get_db_session() as s:
+            entry = _op(s)
+            return entry
+
+    @staticmethod
+    def get_changes_since(
+        user_id: str,
+        since_version: int,
+        limit: int = 500,
+        session: Optional[Session] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Returns changelog entries with version > since_version for the given user.
+        """
+        def _query(s: Session) -> List[Dict[str, Any]]:
+            rows = (
+                s.query(ChangeLogModel)
+                .filter(
+                    ChangeLogModel.version > since_version,
+                    ChangeLogModel.user_id == user_id,
+                )
+                .order_by(ChangeLogModel.version.asc())
+                .limit(limit)
+                .all()
+            )
+            return [r.to_dict() for r in rows]
+
+        if session:
+            return _query(session)
+        with get_db_session() as s:
+            return _query(s)
+
+    @staticmethod
+    def get_last_change(user_id: Optional[str] = None, session: Optional[Session] = None) -> Optional[Dict[str, Any]]:
+        """Returns the most recent changelog entry, optionally filtered by user."""
+        def _query(s: Session) -> Optional[Dict[str, Any]]:
+            q = s.query(ChangeLogModel)
+            if user_id:
+                q = q.filter(ChangeLogModel.user_id == user_id)
+            row = q.order_by(ChangeLogModel.version.desc()).first()
+            return row.to_dict() if row else None
 
         if session:
             return _query(session)

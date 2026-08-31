@@ -827,6 +827,13 @@ class TransferManager:
                     item.target_path, clean_filename, message.id, actual_size, conflict=item.conflict_mode
                 )
 
+                # Record change event for sync engine
+                try:
+                    from utils.sync import ChangeTracker, broadcast_sync_event
+                    ChangeTracker.file_created(new_item_id)
+                except Exception as sync_err:
+                    logger.debug(f"Sync tracking note (transfer_manager upload): {sync_err}")
+
                 # Rich properties extraction
                 try:
                     from utils.properties import MetadataWorker

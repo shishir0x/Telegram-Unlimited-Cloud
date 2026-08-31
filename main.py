@@ -135,6 +135,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 logger = Logger(__name__)
 
+# Phase 2 — Register Synchronization API routes
+try:
+    from utils.sync_routes import register_sync_routes
+    register_sync_routes(app)
+except Exception as sync_reg_err:
+    logger.warning(f"Sync routes registration note: {sync_reg_err}")
+
 
 # Pure ASGI Security Headers Middleware (prevents BaseHTTPMiddleware stream buffering issues)
 from starlette.datastructures import MutableHeaders
@@ -1303,6 +1310,25 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
                     )
 
     drive.new_folder(safe_path, folder_name)
+
+    # Record change event for sync engine
+    try:
+        from utils.sync import ChangeTracker, broadcast_sync_event
+        # Find the newly created folder to get its ID
+        new_folder_id = None
+        target = drive.get_directory(safe_path)
+        if target and hasattr(target, "contents"):
+            for item_id, item in target.contents.items():
+                if getattr(item, "type", "") == "folder" and getattr(item, "name", "").lower() == folder_name.lower():
+                    new_folder_id = item_id
+                    break
+        if new_folder_id:
+            ver = ChangeTracker.folder_created(new_folder_id, user_id=_auth.user_id)
+            if ver > 0:
+                broadcast_sync_event("FOLDER_CREATED", new_folder_id, "folder", ver, _auth.user_id)
+    except Exception as sync_err:
+        logger.debug(f"Sync tracking note (new_folder): {sync_err}")
+
     asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok"})
 
@@ -1754,7 +1780,35 @@ async def rename_file_folder(request: Request, _auth: Session = Depends(require_
     safe_name = sanitize_path(data.get("name", "")).strip("/")
 
     logger.info(f"renameFileFolder path={safe_path} name={safe_name}")
+
+    # Capture old name for change tracking before mutation
+    _old_name = None
+    _entity_id = None
+    _entity_type = "file"
+    try:
+        _clean = safe_path.strip("/")
+        _file_id = _clean.split("/")[-1] if "/" in _clean else _clean
+        _item = drive.find_item_by_id(_file_id)
+        if _item:
+            _old_name = getattr(_item, "name", None)
+            _entity_id = _file_id
+            _entity_type = getattr(_item, "type", "file")
+    except Exception:
+        pass
+
     drive.rename_file_folder(safe_path, safe_name)
+
+    # Record change event for sync engine
+    try:
+        from utils.sync import ChangeTracker, broadcast_sync_event
+        if _entity_id and _old_name:
+            op = "FOLDER_RENAMED" if _entity_type == "folder" else "FILE_RENAMED"
+            ver = ChangeTracker.record(op, _entity_id, _entity_type, _auth.user_id, old_name=_old_name, new_name=safe_name)
+            if ver > 0:
+                broadcast_sync_event(op, _entity_id, _entity_type, ver, _auth.user_id)
+    except Exception as sync_err:
+        logger.debug(f"Sync tracking note (rename): {sync_err}")
+
     asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok"})
 
@@ -1793,7 +1847,33 @@ async def trash_file_folder(request: Request, _auth: Session = Depends(require_a
     trash_val = bool(data.get("trash", True))
 
     logger.info(f"trashFileFolder path={safe_path} trash={trash_val}")
+
+    # Capture entity info for change tracking before mutation
+    _trash_entity_id = None
+    _trash_entity_type = "file"
+    try:
+        _t_clean = safe_path.strip("/")
+        _t_fid = _t_clean.split("/")[-1] if "/" in _t_clean else _t_clean
+        _t_item = drive.find_item_by_id(_t_fid)
+        if _t_item:
+            _trash_entity_id = _t_fid
+            _trash_entity_type = getattr(_t_item, "type", "file")
+    except Exception:
+        pass
+
     drive.trash_file_folder(safe_path, trash_val)
+
+    # Record change event for sync engine
+    try:
+        from utils.sync import ChangeTracker, broadcast_sync_event
+        if _trash_entity_id:
+            op = "FILE_TRASHED" if (trash_val and _trash_entity_type == "file") else ("FILE_RESTORED" if not trash_val and _trash_entity_type == "file" else ("FOLDER_TRASHED" if trash_val else "FOLDER_RESTORED"))
+            ver = ChangeTracker.record(op, _trash_entity_id, _trash_entity_type, _auth.user_id)
+            if ver > 0:
+                broadcast_sync_event(op, _trash_entity_id, _trash_entity_type, ver, _auth.user_id)
+    except Exception as sync_err:
+        logger.debug(f"Sync tracking note (trash): {sync_err}")
+
     asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok"})
 
@@ -1815,7 +1895,31 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
     data = await request.json()
     safe_path = sanitize_path(data.get("path", ""))
     logger.info(f"deleteFileFolder path={safe_path}")
+
+    # Capture entity info for change tracking before mutation
+    _del_entity_id = None
+    _del_entity_type = "file"
+    try:
+        _d_clean = safe_path.strip("/")
+        _d_fid = _d_clean.split("/")[-1] if "/" in _d_clean else _d_clean
+        _d_item = drive.find_item_by_id(_d_fid)
+        if _d_item:
+            _del_entity_id = _d_fid
+            _del_entity_type = getattr(_d_item, "type", "file")
+    except Exception:
+        pass
+
     deleted_msg_ids = drive.delete_file_folder(safe_path)
+
+    # Record change event for sync engine
+    try:
+        from utils.sync import ChangeTracker, broadcast_sync_event
+        if _del_entity_id:
+            ver = ChangeTracker.file_deleted(_del_entity_id, user_id=_auth.user_id) if _del_entity_type == "file" else ChangeTracker.folder_deleted(_del_entity_id, user_id=_auth.user_id)
+            if ver > 0:
+                broadcast_sync_event("FILE_DELETED" if _del_entity_type == "file" else "FOLDER_DELETED", _del_entity_id, _del_entity_type, ver, _auth.user_id)
+    except Exception as sync_err:
+        logger.debug(f"Sync tracking note (delete): {sync_err}")
 
     # Delete message(s) from Telegram Storage Channel
     if deleted_msg_ids:
@@ -1920,7 +2024,30 @@ async def bulk_delete_api(request: Request, _auth: Session = Depends(require_aut
     if not paths:
         return JSONResponse({"status": "ok", "deleted_count": 0})
 
+    # Capture entity info for change tracking before mutation
+    _bulk_del_entities = []
+    try:
+        for bp in paths:
+            _b_clean = bp.strip("/")
+            _b_fid = _b_clean.split("/")[-1] if "/" in _b_clean else _b_clean
+            _b_item = drive.find_item_by_id(_b_fid)
+            if _b_item:
+                _bulk_del_entities.append((_b_fid, getattr(_b_item, "type", "file")))
+    except Exception:
+        pass
+
     deleted_msg_ids = drive.bulk_delete(paths)
+
+    # Record change events for sync engine
+    try:
+        from utils.sync import ChangeTracker, broadcast_sync_event
+        for _eid, _etype in _bulk_del_entities:
+            op = "FILE_DELETED" if _etype == "file" else "FOLDER_DELETED"
+            ver = ChangeTracker.record(op, _eid, _etype, _auth.user_id)
+            if ver > 0:
+                broadcast_sync_event(op, _eid, _etype, ver, _auth.user_id)
+    except Exception as sync_err:
+        logger.debug(f"Sync tracking note (bulk_delete): {sync_err}")
 
     # Delete message(s) from Telegram Storage Channel
     if deleted_msg_ids:
@@ -1949,8 +2076,31 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
     trash = bool(data.get("trash", True))
     logger.info(f"bulkTrash {len(paths)} path(s) to trash={trash}")
 
+    # Capture entity info for change tracking before mutation
+    _bulk_trash_entities = []
+    try:
+        for bp in paths:
+            _bt_clean = bp.strip("/")
+            _bt_fid = _bt_clean.split("/")[-1] if "/" in _bt_clean else _bt_clean
+            _bt_item = drive.find_item_by_id(_bt_fid)
+            if _bt_item:
+                _bulk_trash_entities.append((_bt_fid, getattr(_bt_item, "type", "file")))
+    except Exception:
+        pass
+
     for path in paths:
         drive.trash_file_folder(path, trash)
+
+    # Record change events for sync engine
+    try:
+        from utils.sync import ChangeTracker, broadcast_sync_event
+        for _eid, _etype in _bulk_trash_entities:
+            op = ("FILE_TRASHED" if _etype == "file" else "FOLDER_TRASHED") if trash else ("FILE_RESTORED" if _etype == "file" else "FOLDER_RESTORED")
+            ver = ChangeTracker.record(op, _eid, _etype, _auth.user_id)
+            if ver > 0:
+                broadcast_sync_event(op, _eid, _etype, ver, _auth.user_id)
+    except Exception as sync_err:
+        logger.debug(f"Sync tracking note (bulk_trash): {sync_err}")
 
     asyncio.create_task(backup_drive_data(loop=False))
     return JSONResponse({"status": "ok", "processed_count": len(paths)})

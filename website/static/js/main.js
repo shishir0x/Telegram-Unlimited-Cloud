@@ -2909,6 +2909,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initSharedLinksManager();
     initCommandPalette();
 
+    // Initialize the synchronization client (WebSocket + polling fallback)
+    if (typeof SyncClient !== 'undefined') {
+        SyncClient.init();
+        SyncClient.enable();
+    }
+
     // Initial fetch — server enforces auth via session cookie; 401 triggers login modal
     getCurrentDirectory();
 });

@@ -8,7 +8,7 @@ from database.connection import (
     init_db,
     test_database_connection,
 )
-from database.models import Base, FolderModel, FileModel
+from database.models import Base, FolderModel, FileModel, ChangeLogModel, SyncVersionModel
 from database.repository import DatabaseRepository
 
 __all__ = [
@@ -23,5 +23,7 @@ __all__ = [
     "Base",
     "FolderModel",
     "FileModel",
+    "ChangeLogModel",
+    "SyncVersionModel",
     "DatabaseRepository",
 ]

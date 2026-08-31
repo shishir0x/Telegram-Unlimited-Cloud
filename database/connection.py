@@ -73,6 +73,47 @@ def get_db():
         db.close()
 
 
+def _ensure_sync_tables():
+    """
+    Creates sync tables if they don't exist and seeds the global version row.
+    Handles the case where Alembic migration already ran (indexes exist) by
+    falling back to individual table creation.
+    """
+    from database.models import Base, SyncVersionModel
+    from sqlalchemy import inspect as sa_inspect
+
+    inspector = sa_inspect(sync_engine)
+    existing_tables = set(inspector.get_table_names())
+
+    # Create only missing tables (avoids DuplicateTable index errors from create_all)
+    tables_to_create = []
+    for table_name, table_obj in Base.metadata.tables.items():
+        if table_name not in existing_tables:
+            tables_to_create.append(table_obj)
+
+    if tables_to_create:
+        try:
+            # Use metadata.create_all but only for missing tables
+            for table in tables_to_create:
+                try:
+                    table.create(bind=sync_engine, checkfirst=True)
+                except Exception as tbl_err:
+                    logger.debug(f"Table {table.name} creation note: {tbl_err}")
+        except Exception as e:
+            logger.debug(f"Sync table creation note: {e}")
+
+    # Ensure global version row exists
+    try:
+        with get_db_session() as session:
+            row = session.query(SyncVersionModel).filter(SyncVersionModel.id == "global").first()
+            if not row:
+                row = SyncVersionModel(id="global", version=0)
+                session.add(row)
+                logger.info("Seeded global sync version row (version=0).")
+    except Exception as e:
+        logger.debug(f"Sync version seed note: {e}")
+
+
 def init_db() -> bool:
     """
     Initializes database schema and verifies connectivity.
@@ -81,7 +122,15 @@ def init_db() -> bool:
     from database.models import Base, FolderModel
 
     try:
-        Base.metadata.create_all(bind=sync_engine)
+        # Try full create_all first; fall back to incremental approach
+        try:
+            Base.metadata.create_all(bind=sync_engine)
+        except Exception as ca_err:
+            # DuplicateTable index errors are non-fatal — tables exist
+            logger.debug(f"create_all partial note (non-fatal): {ca_err}")
+            # Ensure any missing tables are created
+            _ensure_sync_tables()
+
         logger.info(f"Database schema initialized ({'PostgreSQL' if config.IS_REMOTE_DB else 'SQLite'}).")
 
         # Ensure root folder exists
