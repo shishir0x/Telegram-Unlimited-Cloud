@@ -122,14 +122,28 @@ def init_db() -> bool:
     from database.models import Base, FolderModel
 
     try:
-        # Try full create_all first; fall back to incremental approach
+        # Check which tables already exist and only create missing ones.
+        # Using checkfirst=True avoids DuplicateTable errors when Alembic
+        # migrations have already created the schema.
         try:
-            Base.metadata.create_all(bind=sync_engine)
-        except Exception as ca_err:
-            # DuplicateTable index errors are non-fatal — tables exist
-            logger.debug(f"create_all partial note (non-fatal): {ca_err}")
-            # Ensure any missing tables are created
-            _ensure_sync_tables()
+            from sqlalchemy import inspect as sa_inspect
+            inspector = sa_inspect(sync_engine)
+            existing = set(inspector.get_table_names())
+            for table_name, table_obj in Base.metadata.tables.items():
+                if table_name not in existing:
+                    try:
+                        table_obj.create(bind=sync_engine, checkfirst=True)
+                    except Exception as tbl_err:
+                        logger.debug(f"Table '{table_name}' creation note: {tbl_err}")
+        except Exception:
+            # Fallback: try create_all with checkfirst (default True)
+            try:
+                Base.metadata.create_all(bind=sync_engine, checkfirst=True)
+            except Exception as ca_err:
+                logger.debug(f"create_all note (non-fatal): {ca_err}")
+
+        # Ensure the sync version seed row exists
+        _ensure_sync_tables()
 
         logger.info(f"Database schema initialized ({'PostgreSQL' if config.IS_REMOTE_DB else 'SQLite'}).")
 
