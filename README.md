@@ -1,831 +1,386 @@
-# TG Drive
+# TG Drive — Enterprise Architecture & Operator Manual
 
-**A self-hosted cloud storage platform that uses Telegram's infrastructure as its file storage backend, providing a Google Drive–class web interface with unlimited storage capacity.**
+**A distributed, Telegram-backed cloud storage platform providing a Google Drive–grade web interface, multi-bot MTProto transfer multiplexing, and real-time multi-client synchronization.**
 
-TG Drive lets you turn Telegram channels into your own private cloud drive. Files are stored permanently in Telegram's distributed cloud, while a shared database tracks metadata. The application provides a full-featured web UI with media streaming, folder hierarchies, sharing, search, and multi-client synchronization.
-
----
-
-## Overview
-
-**What it does:** TG Drive turns any Telegram channel into an unlimited, private cloud storage system. Users upload files through a web interface; the backend stores them in a Telegram channel and records metadata in a database. Multiple browser clients (local and remote) stay synchronized via WebSocket push and polling.
-
-**Problem it solves:** Cloud storage with no recurring costs, no storage limits, and full data ownership — leveraging Telegram's existing infrastructure for file persistence.
-
-**How it works:** When a user uploads a file, the backend sends it to Telegram via the MTProto API using a pool of bot accounts, then records the file's metadata (name, size, Telegram message ID, checksum) in a shared database. Downloads reverse the process: the backend fetches the file from Telegram and streams it to the browser. A synchronization engine tracks every mutation (create, rename, move, trash, delete) with versioned changelog entries, allowing multiple browser clients to stay in sync in real time.
-
-**Who it's for:** Developers and power users who want a self-hosted, Telegram-backed personal cloud storage with a polished web UI.
+[![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/framework-FastAPI%200.115+-009688.svg)](https://fastapi.tiangolo.com/)
+[![Database](https://img.shields.io/badge/database-PostgreSQL%20%7C%20SQLite-4169E1.svg)](https://www.postgresql.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
-## Features
+## Table of Contents
 
-### File & Folder Management
-- Hierarchical nested folder structure with stable IDs
-- List and grid view modes
-- Drag & drop upload (files and entire directories)
-- Multi-select with bulk actions (move, delete, trash, download as ZIP)
-- Right-click context menus and keyboard shortcuts
-- Recycle bin with soft-delete and instant restore
-
-### Media Streaming & Previews
-- In-browser video/audio streaming with HTTP 206 range seeking
-- On-the-fly thumbnail generation with RAM and disk caching
-- PDF document viewer
-- Syntax-highlighted code viewer (30+ languages)
-- Image lightbox with pan, zoom, and full-screen
-
-### Transfer System
-- Multi-bot upload pool for parallel concurrency
-- Live progress tracking (speed, ETA, percentage)
-- Pause, cancel, and auto-retry on failure
-- Telegram Premium session support for files up to 4 GB
-
-### Search & Organization
-- Full-text filename search
-- Type, size, and date range filters
-- Custom color tagging system
-- SHA-256–based duplicate file detection and cleanup
-
-### Sharing
-- Tokenized public share links for files and folders
-- Scoped guest access (isolated to the shared directory)
-- Password-protected shares
-- On-the-fly ZIP downloads for shared folders
-
-### Security
-- Two-factor authentication (password + email OTP)
-- PBKDF2 password hashing with constant-time comparison
-- HttpOnly session cookies with SameSite and Secure attributes
-- Rate limiting on login and OTP endpoints
-- Path traversal and injection prevention
-- Content Security Policy headers
-
-### Synchronization (Multi-Client)
-- WebSocket push notifications for real-time updates
-- Polling fallback (8-second interval)
-- Versioned changelog for reliable catch-up after offline periods
-- Cross-tab synchronization via BroadcastChannel
-- Sync status indicator in the UI
-
-### Administration
-- Health and readiness probes (`/health/live`, `/health/ready`)
-- Automatic database backup to Telegram channel
-- Drive data integrity scanning
-- Channel message scanning and recovery
+1. [System Architecture](#system-architecture)
+2. [Core Subsystems](#core-subsystems)
+   - [MTProto Multi-Bot Multiplexer & Flood-Wait Router](#1-mtproto-multi-bot-multiplexer--flood-wait-router)
+   - [Transfer Manager State Machine](#2-transfer-manager-state-machine)
+   - [Low-Memory Container Engine (Render 512MB RAM Ceiling)](#3-low-memory-container-engine-render-512mb-ram-ceiling)
+   - [Real-Time Distributed Synchronization Engine](#4-real-time-distributed-synchronization-engine)
+   - [Database Connection Pooling & TCP Keepalives](#5-database-connection-pooling--tcp-keepalives)
+3. [Component Hierarchy & Directory Structure](#component-hierarchy--directory-structure)
+4. [Environment Configuration Reference](#environment-configuration-reference)
+5. [Installation & Deployment](#installation--deployment)
+   - [Local Development](#local-development)
+   - [Production Docker Deployment](#production-docker-deployment)
+   - [Render Cloud Deployment](#render-cloud-deployment)
+6. [API Specification](#api-specification)
+7. [Testing & Quality Assurance](#testing--quality-assurance)
+8. [Troubleshooting & Runbook](#troubleshooting--runbook)
+9. [License](#license)
 
 ---
 
-## Technology Stack
+## System Architecture
 
-| Category | Technology |
-| -------- | ---------- |
-| Backend framework | FastAPI + Uvicorn |
-| Telegram client | Pyrogram (MTProto API) |
-| Database ORM | SQLAlchemy 2.0 |
-| Database | PostgreSQL (shared cloud) / SQLite (local fallback) |
-| Migrations | Alembic |
-| Frontend | Vanilla HTML5 / CSS3 / JavaScript (no framework) |
-| Styling | Custom CSS (Google Drive–inspired design) |
-| Image processing | Pillow |
-| Archive handling | Python `zipfile` (with security limits) |
-| Password hashing | PBKDF2-HMAC-SHA256 |
-| Email delivery | Resend API / SMTP |
-| Containerization | Docker + Docker Compose |
-| Android packaging | Capacitor (hybrid native shell) |
-
----
-
-## Architecture
+TG Drive decouples **data storage** from **metadata indexing**:
+- **Data Plane:** Files are chunked and streamed directly to a private Telegram storage channel over the MTProto protocol via a pool of bot accounts and optional Telegram Premium user sessions.
+- **Control Plane:** Metadata (folder hierarchies, permissions, MIME types, content hashes, and versioned audit logs) is persisted in a relational database (PostgreSQL with PgBouncer compatibility in production, SQLite in local development).
+- **Synchronization Plane:** An event-sourced changelog broadcasts atomic mutations over WebSockets to all connected browser clients, with automatic HTTP polling fallback.
 
 ```
-                    ┌─────────────────────────┐
-                    │     Browser (SPA)       │
-                    │  HTML / CSS / Vanilla JS │
-                    └──────────┬──────────────┘
-                               │ REST API + WebSocket + HTTP Streams
-                    ┌──────────▼──────────────┐
-                    │    FastAPI + Uvicorn     │
-                    │  Auth · Upload · Stream  │
-                    │  Sync · Search · Share   │
-                    └─────┬────────────┬──────┘
-                          │            │
-               ┌──────────▼──┐  ┌──────▼──────────┐
-               │  PostgreSQL  │  │ Telegram Cloud   │
-               │  / SQLite    │  │ (MTProto API)    │
-               │  Metadata    │  │ File Storage     │
-               └──────────────┘  └─────────────────┘
+                                 ┌────────────────────────────────────────┐
+                                 │       Client Browser / Web App         │
+                                 │   (HTML5 SPA · WebSockets · Range Req) │
+                                 └──────────────────┬─────────────────────┘
+                                                    │
+                                                    │ HTTPS / WSS
+                                                    ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FastAPI ASGI Application Layer (Uvicorn)                                                              │
+│                                                                                                       │
+│   ┌──────────────────────┐   ┌──────────────────────┐   ┌─────────────────────────────────────────┐   │
+│   │ Security Middleware  │   │  Auth & Session Core │   │ Transfer Manager Subsystem              │   │
+│   │ · CSP / CORS / HSTS  │──▶│  · PBKDF2-HMAC-SHA256│──▶│ · Bounded Concurrency Workers (2-4)     │   │
+│   │ · IP-Bound Sessions  │   │  · 2FA Email / TG OTP│   │ · Resilient Exponential Backoff Retry   │   │
+│   └──────────────────────┘   └──────────────────────┘   └────────────────────┬────────────────────┘   │
+│                                                                              │                        │
+│   ┌──────────────────────────────────────────────────────────────────────┐   │                        │
+│   │ Memory Safety & Host OS Reclamation Layer                            │   │                        │
+│   │ · MALLOC_ARENA_MAX=2 (prevents glibc virtual fragmentation)          │   │                        │
+│   │ · clean_memory() with ctypes.CDLL("libc.so.6").malloc_trim(0)        │   │                        │
+│   │ · 256KB bounded upload chunking · Auto 60s background cycle          │   │                        │
+│   └──────────────────────────────────────────────────────────────────────┘   │                        │
+│                 │                                                            │                        │
+│                 ▼                                                            ▼                        │
+│   ┌───────────────────────────┐                         ┌─────────────────────────────────────────┐   │
+│   │ Directory Tree & Metadata │                         │ MTProto Telegram Gateway (tg_gate)      │   │
+│   │ · In-memory cache + DB    │                         │ · Multi-Bot Token Round-Robin Pool      │   │
+│   │ · Cycle-safe recursion    │                         │ · Per-Bot FloodWait Rate-Limiter        │   │
+│   │ · Atomic JSON mirror      │                         │ · Telegram Premium 4GB Session Router   │   │
+│   └─────────────┬─────────────┘                         └────────────────────┬────────────────────┘   │
+└─────────────────┼────────────────────────────────────────────────────────────┼────────────────────────┘
+                  │                                                            │
+                  ▼                                                            ▼
+    ┌───────────────────────────┐                                ┌───────────────────────────┐
+    │ PostgreSQL / SQLite       │                                │ Telegram Cloud Network    │
+    │ · PgBouncer NullPool      │                                │ · MTProto Distributed DC │
+    │ · TCP Keepalives (idle 30)│                                │ · Storage Channel Backend │
+    │ · sync_version changelog  │                                │ · Infinite Free Capacity  │
+    └───────────────────────────┘                                └───────────────────────────┘
 ```
-
-**Key principle:** The database is the source of truth for metadata. Telegram is the source of truth for file contents. Multiple FastAPI instances (localhost + Render) can connect to the same shared database and Telegram channel, staying synchronized through the versioned changelog system.
 
 ---
 
-## Project Structure
+## Core Subsystems
+
+### 1. MTProto Multi-Bot Multiplexer & Flood-Wait Router
+
+To maximize throughput and bypass Telegram's strict per-account rate limits (FloodWait), the backend deploys a multiplexed bot pool:
+
+- **Load Distribution:** Up to $N$ bot tokens (`BOT_TOKENS=tok1,tok2,tok3,tok4`) are initialized into independent Pyrogram MTProto clients during startup.
+- **Intelligent Flood Routing (`utils/tg_gate.py`):** When Telegram issues a `FloodWait(seconds)` error on Bot $A$, `tg_gate` marks Bot $A$ as cooling down until $t_{\text{now}} + \text{seconds}$, and immediately routes subsequent transmission tasks to Bot $B$, Bot $C$, or Bot $D$.
+- **Per-Bot Concurrency Gates:** Active API calls per bot are throttled via an asynchronous semaphore and minimum inter-request spacing dictionary to eliminate burst-induced 429/420 errors.
+- **Premium 4GB Support:** Standard bot accounts are limited by Telegram to 2GB per file. Providing Pyrogram user string sessions (`STRING_SESSIONS=...`) unlocks 4GB per file; uploads larger than 2GB automatically route exclusively through premium-capable sessions.
+- **Real-Time Health Monitoring:** Inspect active bot connections, channel access status, and cooldown timers via `GET /api/telegram/status`.
+
+### 2. Transfer Manager State Machine
+
+File transfers (both uploads to Telegram and remote downloads from web URLs) are orchestrated by a persistent, background state machine in `utils/transfer_manager.py`:
 
 ```
-tg-drive/
-├── main.py                        # FastAPI application entry point (92+ API routes)
-├── config.py                      # Environment variable loading and validation
-├── start_main.py                  # Quick-start helper (uvicorn --reload)
-├── migrate_to_db.py               # Legacy drive.data → database migration
-├── tgdrive_backup.py              # Telegram backup CLI tool
+                       ┌──────────────┐
+                       │   QUEUED     │
+                       └──────┬───────┘
+                              │ Worker picks up task
+                              ▼
+                       ┌──────────────┐
+              ┌───────▶│  UPLOADING   │──────────────┐
+              │        └──────┬───────┘              │
+              │               │                      │
+       Transient Error        │ Success              │ Cancelled by user
+       Retry Budget Left      ▼                      ▼
+              │        ┌──────────────┐       ┌──────────────┐
+              └────────┤   RETRYING   │       │  CANCELLED   │
+                       └──────┬───────┘       └──────────────┘
+                              │
+                              │ Max retries exceeded
+                              ▼
+                       ┌──────────────┐
+                       │    FAILED    │
+                       └──────────────┘
+```
+
+- **Exponential Backoff:** Transient network drops and rate limits are retried with randomized exponential jitter:
+  $$\Delta t = \min\left(60.0, 2^{\text{retry} - 1} \times 2.0 + \text{Uniform}(0.5, 2.0)\right)$$
+- **Crash Recovery:** Transfer states are written to disk (`cache/transfers.json`). Upon an ungraceful server restart or crash, interrupted jobs in `UPLOADING` state are cleanly recovered and transitioned back to `QUEUED`.
+- **Deduplication:** Multiple concurrent submissions of identical jobs are coalesced into a single active transmission.
+
+### 3. Low-Memory Container Engine (Render 512MB RAM Ceiling)
+
+Free and starter tiers on container hosts like **Render.com** enforce a hard **512MB RAM ceiling** without swap space. Exceeding this limit triggers an immediate kernel `SIGKILL` (exit code 137). The system incorporates deep memory optimizations to ensure deterministic sub-150MB operation:
+
+1. **Glibc Arena Limiting (`MALLOC_ARENA_MAX=2`):** By default, glibc on Linux creates $8 \times N_{\text{cores}}$ independent 64MB memory arenas. On a multi-core cloud host, this fragments virtual address space and causes memory retention. Restricting arenas to 2 keeps heap growth linear and compact.
+2. **Dynamic Host OS Page Trimming (`clean_memory()`):** Python's pymalloc retains freed memory pages inside its internal arenas. In `utils/extra.py`, `clean_memory()` executes `gc.collect()` followed by `ctypes.CDLL("libc.so.6").malloc_trim(0)`, compelling the C runtime to release unused heap pages directly back to the Linux kernel.
+3. **Bounded Chunk Streaming:** In `main.py`, upload streams read in **256KB chunks** (reduced from legacy 8MB buffers), and invoke `await file.close()` in `finally:` blocks to instantly unspool memory buffers.
+4. **Adaptive Concurrency & Thread Scaling:**
+   - On Render (`RENDER=true` or `LOW_MEMORY_MODE=1`), Pyrogram worker threads are capped at **2 per bot** (down from 16), reducing idle thread stacks from 64 to 8–16.
+   - TransferManager worker pools scale to **2 upload / 2 download workers**.
+   - `ThumbnailService` in-memory RAM cache is scaled down to 30 items.
+5. **Pillow Decompression Bomb Safeguard:** Uploaded images larger than 6000px bypass raw decompression; JPEG thumbnails employ `img.draft("RGB", (320, 320))` to decode directly at 1/8th scale without allocating full-sized pixel matrices in RAM.
+6. **Automatic 60s Background Reclamation:** An asynchronous lifecycle task executes memory cleanup every 60 seconds.
+
+### 4. Real-Time Distributed Synchronization Engine
+
+When running multiple instances (e.g. Local developer server + Production Render container) against the same database, consistency is preserved through an event-sourced architecture:
+
+- **Atomic Changelog (`sync_changelog`):** Every mutating operation (creation, rename, move, trash, restore, delete) increments a monotonically increasing global integer version (`sync_version`) within the same database transaction.
+- **WebSocket Push (`/api/sync/ws`):** Once committed, mutations emit lightweight JSON notifications (`FILE_CREATED`, `FOLDER_MOVED`, etc.) to active WebSockets managed by `WebSocketManager`.
+- **Client Catch-Up (`GET /api/sync/changes?since=V`):** Clients that disconnect or miss WebSocket packets supply their last acknowledged version to fetch missing changes and reconcile their UI state without a full reload.
+- **Cross-Tab Synchronization:** Browser tabs communicate via the `BroadcastChannel` API to prevent duplicate fetch requests across open windows.
+
+### 5. Database Connection Pooling & TCP Keepalives
+
+Production PostgreSQL deployments using transaction poolers (e.g. Supabase port 6543, Neon, or PgBouncer) drop idle connections, causing `server closed the connection unexpectedly` errors. TG Drive eliminates this via:
+
+- **`NullPool` Architecture:** Prevents application-side retention of stale sockets in server-side pooled environments.
+- **TCP Keepalive Probing:** Connect arguments explicitly configure operating system socket keepalives:
+  ```python
+  "keepalives": 1,
+  "keepalives_idle": 30,      # Probe after 30 seconds of inactivity
+  "keepalives_interval": 10,   # Probe every 10 seconds
+  "keepalives_count": 5        # Disconnect after 5 failed probes
+  ```
+- **Resilient Context Managers:** `get_db_session()` traps disconnects, performs automatic transaction rollbacks, and safely releases handles.
+
+---
+
+## Component Hierarchy & Directory Structure
+
+```
+d:/Portfolio/Tele Unlim/
+├── main.py                        # FastAPI application entry point, routes & lifespan
+├── config.py                      # Config parser, URL normalizer & env validator
+├── Dockerfile                     # Multi-stage Python 3.12-slim build (MALLOC_ARENA_MAX=2)
+├── docker-compose.yml             # Local production container orchestration
+├── requirements.txt               # Locked Python dependencies
+├── alembic/                       # Database schema migration revisions
 ├── database/
-│   ├── __init__.py
-│   ├── connection.py              # SQLAlchemy engine, session management, init_db()
-│   ├── models.py                  # ORM models (Folder, File, SyncVersion, ChangeLog)
-│   └── repository.py              # CRUD operations, sync queries, version management
-├── alembic/
-│   ├── env.py                     # Alembic configuration
-│   ├── alembic.ini
-│   └── versions/
-│       ├── 0001_initial_schema.py # folders + files tables
-│       └── 0002_sync_tables.py    # sync_version + sync_changelog tables
+│   ├── connection.py              # SQLAlchemy engine, PgBouncer NullPool & session manager
+│   ├── models.py                  # Declarative ORM schemas (Folder, File, SyncVersion, ChangeLog)
+│   └── repository.py              # Atomic database queries and sync change persistence
 ├── utils/
-│   ├── auth.py                    # Session management, OTP, rate limiting
-│   ├── clients.py                 # Telegram client initialization
-│   ├── directoryHandler.py        # In-memory drive tree + DB sync
-│   ├── uploader.py                # Telegram file upload with flood protection
-│   ├── downloader.py              # Telegram file download
-│   ├── transfer_manager.py        # Upload/download queue with retry
-│   ├── streamer.py                # HTTP range-request media streaming
-│   ├── properties.py              # File metadata enrichment
-│   ├── duplicate_manager.py       # SHA-256 duplicate detection
-│   ├── shareManager.py            # Tokenized sharing system
-│   ├── archive_manager.py         # ZIP inspection and extraction
-│   ├── zipper.py                  # On-the-fly ZIP archive creation
-│   ├── email_service.py           # OTP email delivery
-│   ├── bot_mode.py                # Telegram bot direct commands
-│   ├── logger.py                  # Application logging
-│   ├── extra.py                   # Utilities (auto-ping, BroadcastChannel)
-│   ├── tg_gate.py                 # Telegram API flood-wait management
-│   ├── sync.py                    # Change tracking engine (ChangeTracker, SyncService)
-│   ├── sync_routes.py             # /api/sync/* endpoints + WebSocket
-│   └── websocket_manager.py       # WebSocket connection manager
-├── website/
-│   ├── home.html                  # Main SPA shell
-│   ├── share.html                 # Public share page
-│   ├── VideoPlayer.html           # Standalone video player
-│   └── static/
-│       ├── home.css               # Main stylesheet (7400+ lines)
-│       ├── manifest.json          # PWA manifest
-│       ├── sw.js                  # Service worker
-│       ├── assets/                # Icons and static assets
-│       ├── css/                   # Component stylesheets
-│       └── js/
-│           ├── main.js            # Core directory renderer (4600+ lines)
-│           ├── apiHandler.js      # API client, upload queue, search
-│           ├── extra.js           # SPA routing, BroadcastChannel sync
-│           ├── sidebar.js         # Navigation sidebar
-│           ├── fileClickHandler.js # File interactions (preview, rename, delete)
-│           ├── transferManager.js  # Transfer queue UI
-│           ├── archiveManager.js   # Archive extraction UI
-│           ├── duplicates.js       # Duplicate manager UI
-│           ├── syncClient.js       # WebSocket + polling sync client
-│           └── share.js            # Share page logic
-├── tests/                         # Additional test files
-├── test_*.py                      # 14 test suites (security, sync, shares, etc.)
-├── data/                          # SQLite database (local mode)
-├── cache/                         # Thumbnail cache, drive data
-├── downloads/                     # Temporary download storage
-├── Dockerfile                     # Python 3.12 slim multi-stage build
-├── docker-compose.yml             # Container orchestration
-├── requirements.txt               # Python dependencies
-├── .env.example                   # Environment variable template
-├── sample.env                     # Simpler env template
-├── LICENSE                        # MIT License
-├── SECURITY.md                    # Vulnerability reporting policy
-└── CAPACITOR_ANDROID_GUIDE.md     # Android APK packaging guide
+│   ├── extra.py                   # clean_memory(), malloc_trim(), cycle-safe compute_folder_stats()
+│   ├── clients.py                 # Multi-bot Pyrogram initialization & thread pool management
+│   ├── tg_gate.py                 # Rate-limit gating, FloodWait cooldown tracking & slot manager
+│   ├── transfer_manager.py        # Asynchronous state-machine queue (upload/download workers)
+│   ├── uploader.py                # Direct Telegram MTProto document uploader
+│   ├── downloader.py              # URL fetcher & multi-threaded chunk downloader (TechZDL)
+│   ├── streamer/
+│   │   ├── __init__.py            # HTTP Range (206) media streaming & local file streamer
+│   │   ├── custom_dl.py           # MTProto ByteStreamer yielding direct DC chunks
+│   │   └── file_properties.py     # FileId parsing & DC resolution
+│   ├── properties.py              # EXIF, ID3, PDF & video metadata extractor + worker
+│   ├── duplicate_manager.py       # Streaming SHA-256 duplicate scanner with cycle guards
+│   ├── archive_manager.py         # Memory-bounded zip inspection & extraction sandbox
+│   ├── zipper.py                  # On-the-fly zip packaging with stale cache pruner
+│   ├── auth.py                    # Session management, constant-time verification & OTP engine
+│   ├── sync.py                    # ChangeTracker mutation recorder & SyncService
+│   ├── sync_routes.py             # Sync REST endpoints & WebSocket handler
+│   ├── websocket_manager.py       # Active socket registry & dead connection pruner
+│   └── logger.py                  # Standardized colorized console & file logging
+└── website/
+    ├── home.html                  # Core single-page interface shell
+    ├── share.html                 # Tokenized public download portal
+    └── static/
+        ├── css/home.css           # Desktop & mobile responsive styling
+        └── js/                    # Client modular state, transfer manager & sync client
 ```
 
 ---
 
-## Prerequisites
+## Environment Configuration Reference
 
-- **Python** 3.11 or later (tested up to 3.14)
-- **Telegram Bot Token(s)** — obtain from [@BotFather](https://t.me/BotFather)
-- **Telegram API credentials** — obtain from [my.telegram.org](https://my.telegram.org/auth) (`API_ID` and `API_HASH`)
-- **A Telegram storage channel** — created manually; the bot must be added as an Administrator
-- **PostgreSQL** (recommended for multi-client sync) or **SQLite** (local single-instance fallback)
-- **Docker** (optional, for containerized deployment)
+Create a `.env` file in the root directory. Required parameters are indicated below:
 
----
-
-## Installation
-
-### Local Setup
-
-```bash
-git clone <repository-url>
-cd tg-drive
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Create your environment configuration
-cp .env.example .env
-# Edit .env with your Telegram credentials and admin password
-```
-
-### Environment Configuration
-
-Copy `.env.example` to `.env` and fill in the required values:
-
-| Variable | Required | Description |
-| -------- | -------- | ----------- |
-| `TELEGRAM_API_ID` | Yes | Telegram API ID from [my.telegram.org](https://my.telegram.org/auth) |
-| `TELEGRAM_API_HASH` | Yes | Telegram API Hash from [my.telegram.org](https://my.telegram.org/auth) |
-| `TELEGRAM_BOT_TOKEN` | Yes | Bot token(s) from [@BotFather](https://t.me/BotFather), comma-separated for multi-bot pool |
-| `TELEGRAM_CHAT_ID` | Yes | Storage channel ID (e.g. `-1001234567890`) or channel username (`@my_channel`) |
-| `ADMIN_PASSWORD` | Yes | Strong password for the web UI (minimum 8 characters, not a default value) |
-| `DATABASE_URL` | No | PostgreSQL connection string for shared cloud mode. If empty, falls back to local SQLite |
-| `DATABASE_BACKUP_MSG_ID` | No | Set to `0` for new setups (auto-creates backup message). Default: `0` |
-| `ADMIN_EMAIL` | No | Email for OTP 2FA verification codes |
-| `RESEND_API_KEY` | No | Resend API key for reliable OTP email delivery |
-| `SMTP_HOST` | No | SMTP host for OTP delivery (default: `smtp.gmail.com`) |
-| `SMTP_PORT` | No | SMTP port (default: `587`) |
-| `SMTP_USER` | No | SMTP username |
-| `SMTP_PASSWORD` | No | SMTP password / app password |
-| `STRING_SESSIONS` | No | Telegram Premium Pyrogram sessions (unlocks 4 GB upload limit) |
-| `SECRET_KEY` | No | Session signing key (auto-generated if not set) |
-| `CORS_ORIGINS` | No | Allowed CORS origins (default: `*`) |
-| `SESSION_HOURS` | No | Session lifetime in hours (default: `12`) |
-| `DATABASE_BACKUP_TIME` | No | Auto-backup interval in seconds (default: `60`) |
-| `WEBSITE_URL` | No | Public URL for the auto-pinger (keeps free hosting awake) |
-| `MAIN_BOT_TOKEN` | No | Bot token for Telegram Bot Direct Upload Mode |
-| `TELEGRAM_ADMIN_IDS` | No | Comma-separated Telegram User IDs for Bot Mode access |
-| `ARCHIVE_MAX_EXTRACT_SIZE_GB` | No | Max extractable archive size in GB (default: `2`) |
-| `ARCHIVE_MAX_EXTRACT_FILES` | No | Max files per archive extraction (default: `10000`) |
-| `ARCHIVE_MAX_NESTING_DEPTH` | No | Max archive directory depth (default: `32`) |
-| `ARCHIVE_MAX_RATIO` | No | Max compression ratio for zip-bomb detection (default: `200`) |
-
-> **Important:** Your Telegram bot must be added to the storage channel as an **Administrator** with permissions to Post Messages, Edit Messages, Pin Messages, and Delete Messages.
+| Variable | Required | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `TELEGRAM_API_ID` | **Yes** | — | Telegram API ID from [my.telegram.org](https://my.telegram.org/auth). |
+| `TELEGRAM_API_HASH` | **Yes** | — | Telegram API Hash from [my.telegram.org](https://my.telegram.org/auth). |
+| `TELEGRAM_BOT_TOKEN` | **Yes** | — | Comma-separated list of Bot tokens from [@BotFather](https://t.me/BotFather). |
+| `TELEGRAM_CHAT_ID` | **Yes** | — | Channel ID (`-100...`) or `@channel_name` where files are stored. |
+| `ADMIN_PASSWORD` | **Yes** | — | Secure administrative panel password (min. 8 characters). |
+| `DATABASE_URL` | No | SQLite | PostgreSQL connection URL (`postgresql://...`). Falls back to SQLite if omitted. |
+| `STRING_SESSIONS` | No | `""` | Comma-separated Pyrogram session strings for Telegram Premium (enables 4GB uploads). |
+| `ADMIN_EMAIL` | No | `""` | Email for 2FA OTP codes. If omitted, password-only mode is active. |
+| `RESEND_API_KEY` | No | `""` | Resend API key for OTP delivery. |
+| `SMTP_HOST` | No | `smtp.gmail.com` | SMTP relay server for OTP delivery. |
+| `SMTP_PORT` | No | `587` | SMTP port (`587` for STARTTLS, `465` for SSL). |
+| `SMTP_USER` | No | `""` | SMTP authentication username. |
+| `SMTP_PASSWORD` | No | `""` | SMTP password or app-specific password. |
+| `SECRET_KEY` | No | Auto | 256-bit cryptographic secret for session tokens. |
+| `CORS_ORIGINS` | No | `*` | Allowed CORS origins for web requests. |
+| `SESSION_HOURS` | No | `12` | Session lifetime in hours before re-authentication is required. |
+| `LOW_MEMORY_MODE` | No | `0` | Force memory-constrained mode (`1` or `true`) on non-Render hosts. |
+| `WEBSITE_URL` | No | `""` | Public URL for the built-in keepalive pinger (prevents free tier sleep). |
 
 ---
 
-## Running the Project
+## Installation & Deployment
 
-### Development Server
+### Local Development
+
+1. **Clone and create environment:**
+   ```bash
+   git clone https://github.com/shishir0x/Telegram-Unlimited-Cloud.git
+   cd Telegram-Unlimited-Cloud
+   python -m venv venv
+   source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+2. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Populate TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ADMIN_PASSWORD
+   ```
+
+3. **Run database migrations:**
+   ```bash
+   alembic upgrade head
+   ```
+
+4. **Launch development server:**
+   ```bash
+   uvicorn main:app --reload --port 8000
+   ```
+
+### Production Docker Deployment
+
+The included multi-stage `Dockerfile` configures `MALLOC_ARENA_MAX=2`, creates a non-root application user, and incorporates healthcheck probes:
 
 ```bash
-uvicorn main:app --reload --port 8000
-```
-
-Then open [http://localhost:8000](http://localhost:8000) in your browser.
-
-### Quick Start (Alternative)
-
-```bash
-python start_main.py
-```
-
-### Production Server
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
-```
-
----
-
-## Deployment
-
-### Docker
-
-```bash
-# Build and start
+# Build and launch daemonized container
 docker compose up -d --build
 
-# Check health
-curl http://localhost:8000/health/live
-curl http://localhost:8000/health/ready
-
-# View logs
+# Monitor runtime logs
 docker compose logs -f
+
+# Verify container liveness probe
+curl -f http://localhost:8000/health/live
 ```
 
-The Docker Compose configuration mounts `./cache` and `./downloads` as persistent volumes and includes health checks.
+### Render Cloud Deployment
 
-### Render (Cloud)
-
-1. Push the repository to GitHub.
-2. Create a new **Web Service** on [Render Dashboard](https://dashboard.render.com/).
-3. Configure:
-   - **Environment:** Python 3
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips=*`
-4. Add environment variables (same as `.env`).
-5. Deploy.
-
-For multi-client sync (localhost + Render), set `DATABASE_URL` to a shared PostgreSQL database (e.g., [Neon](https://neon.tech), [Supabase](https://supabase.com), or [Railway](https://railway.app)) so both instances read and write the same metadata.
-
-### Android APK
-
-See [`CAPACITOR_ANDROID_GUIDE.md`](CAPACITOR_ANDROID_GUIDE.md) for instructions on packaging the web UI as a native Android application using Capacitor.
+1. Create a new **Web Service** linked to your repository.
+2. Select **Docker** environment (or Native Python 3.12).
+3. Under **Environment Variables**, supply your credentials:
+   - `RENDER=true` (automatically set by Render)
+   - `DATABASE_URL` (points to your shared PostgreSQL instance)
+   - Set other required Telegram and Auth variables.
+4. Set **Health Check Path** to `/health/live`.
 
 ---
 
-## API Documentation
+## API Specification
 
-The backend exposes 92+ API routes. All authenticated endpoints require a valid session cookie.
+All authenticated endpoints require the `tg_session` cookie issued upon successful login/OTP verification.
 
-### Health Probes
+### System & Health
 
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| GET | `/health/live` | Liveness probe — process is alive | No |
-| GET | `/health/ready` | Readiness probe — Telegram + DB connected | No |
-| GET | `/health` | Combined health status | No |
+| Method | Route | Description | Auth |
+| :--- | :--- | :--- | :---: |
+| `GET` | `/health/live` | Process liveness probe | None |
+| `GET` | `/health/ready` | Readiness probe (validates Telegram & Database connections) | None |
+| `GET` | `/api/telegram/status` | Bot pool operational health, active clients & FloodWait status | Admin |
 
-### Authentication
+### File & Directory Operations
 
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| POST | `/api/checkPassword` | Direct password verification (CLI tools) | No |
-| POST | `/api/login` | Step 1: Email + password → sends OTP | No |
-| POST | `/api/verifyOtp` | Step 2: Verify OTP → creates session | No |
-| POST | `/api/logout` | Destroy session | Yes |
+| Method | Route | Description | Auth |
+| :--- | :--- | :--- | :---: |
+| `POST` | `/api/getDirectory` | Fetches directory contents, breadcrumbs, and stats | Admin |
+| `POST` | `/api/createNewFolder` | Creates a new directory at specified path | Admin |
+| `POST` | `/api/upload` | Multipart file upload stream (chunked to TransferManager) | Admin |
+| `GET` | `/file` | Streams file content with HTTP 206 Range support | Cookie / Token |
+| `GET` | `/thumbnail` | Generates / returns cached JPEG thumbnail with ETag | Cookie / Token |
+| `POST` | `/api/renameFileFolder` | Renames an existing file or directory | Admin |
+| `POST` | `/api/moveFileFolder` | Moves entities across the folder hierarchy | Admin |
+| `POST` | `/api/trashFileFolder` | Soft-deletes entities to the recycle bin | Admin |
+| `POST` | `/api/deleteFileFolder` | Permanently removes an entity and cleans storage | Admin |
 
-### Directory Operations
+### Transfer Subsystem
 
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| POST | `/api/getDirectory` | List folder contents with breadcrumbs | Yes |
-| POST | `/api/createNewFolder` | Create a new folder | Yes |
-| POST | `/api/createFolderTree` | Create nested folder hierarchy | Yes |
-| POST | `/api/moveFileFolder` | Move file or folder | Yes |
-| POST | `/api/copyFileFolder` | Copy file or folder | Yes |
-| POST | `/api/renameFileFolder` | Rename file or folder | Yes |
-| POST | `/api/trashFileFolder` | Soft-delete to trash | Yes |
-| POST | `/api/deleteFileFolder` | Permanent delete | Yes |
-| POST | `/api/bulkDelete` | Delete multiple items | Yes |
-| POST | `/api/bulkTrash` | Trash multiple items | Yes |
-
-### Upload & Download
-
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| POST | `/api/upload` | Upload file to Telegram (multipart) | Yes |
-| POST | `/api/checkFileExists` | Pre-upload conflict check | Yes |
-| POST | `/api/getSaveProgress` | Server-side save progress | Yes |
-| POST | `/api/getUploadProgress` | Telegram upload progress | Yes |
-| POST | `/api/getActiveUploads` | List active uploads | Yes |
-| POST | `/api/cancelUpload` | Cancel an upload | Yes |
-| GET | `/file` | Download/preview a file (HTTP range) | Conditional |
-| GET | `/thumbnail` | File thumbnail (with ETag caching) | Conditional |
-| POST | `/api/getFileInfoFromUrl` | Get metadata from URL | Yes |
-| POST | `/api/startFileDownloadFromUrl` | Download file from URL to Telegram | Yes |
-
-### ZIP & Archives
-
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| GET | `/downloadZip` | Download folder/selection as ZIP | Conditional |
-| POST | `/api/downloadZip` | Initiate bulk ZIP preparation | Yes |
-| GET | `/api/archive/list_formats` | List supported archive formats | Yes |
-| POST | `/api/archive/inspect` | Inspect archive contents | Yes |
-| POST | `/api/archive/extract` | Extract archive to drive folder | Yes |
-
-### Search & Properties
-
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| POST | `/api/search` | Deep search with filters | Yes |
-| GET | `/api/files/{id}/properties` | File metadata and properties | Conditional |
-| GET | `/api/folders/{id}/properties` | Folder metadata and properties | Conditional |
-| GET | `/api/files/{id}/activity` | File activity history | Conditional |
-| POST | `/api/properties/enrich` | Trigger metadata extraction | Yes |
-
-### Sharing
-
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| POST | `/api/share/create` | Create share link | Yes |
-| POST | `/api/share/revoke` | Revoke share link | Yes |
-| POST | `/api/share/regenerate` | Regenerate share token | Yes |
-| POST | `/api/share/list` | List active shares | Yes |
-| POST | `/api/share/update` | Update share settings | Yes |
-| GET | `/s/{token}` | Access shared folder | Via token |
-| GET | `/share/{token}/file/{path}` | Download shared file | Via token |
-| GET | `/share/{token}/zip` | Download shared folder as ZIP | Via token |
-
-### Transfer Manager
-
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| GET | `/api/transfers` | List all transfers | Yes |
-| GET | `/api/transfers/{id}` | Get single transfer details | Yes |
-| POST | `/api/transfers/{id}/cancel` | Cancel transfer | Yes |
-| POST | `/api/transfers/{id}/retry` | Retry failed transfer | Yes |
-| POST | `/api/transfers/clear` | Clear finished transfers | Yes |
-
-### Duplicate Detection
-
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| GET | `/api/duplicates/status` | Scan status and stats | Yes |
-| POST | `/api/duplicates/scan` | Start background scan | Yes |
-| POST | `/api/duplicates/list` | Get duplicate groups | Yes |
-| POST | `/api/duplicates/delete` | Delete/trash duplicates | Yes |
+| Method | Route | Description | Auth |
+| :--- | :--- | :--- | :---: |
+| `GET` | `/api/transfers` | Returns active, queued, retrying, and completed transfers | Admin |
+| `GET` | `/api/transfers/{id}` | Fetches individual transfer progress, speed, and ETA | Admin |
+| `POST` | `/api/transfers/{id}/cancel` | Aborts an active transfer and unlinks cache artifacts | Admin |
+| `POST` | `/api/transfers/{id}/retry` | Manually triggers immediate retry of a failed job | Admin |
+| `POST` | `/api/transfers/clear` | Purges completed and cancelled items from the ledger | Admin |
 
 ### Synchronization
 
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| GET | `/api/sync/status` | Current sync version and timestamp | Yes |
-| GET | `/api/sync/changes?since=N` | Changes since version N | Yes |
-| WS | `/api/sync/ws` | WebSocket for real-time push events | Yes |
-
-### Administration
-
-| Method | Endpoint | Description | Auth |
-| ------ | -------- | ----------- | ---- |
-| GET | `/api/admin/integrityReport` | Database vs. in-memory consistency check | Yes |
-| POST | `/api/admin/reloadDriveData` | Force reload from database | Yes |
-| GET | `/api/admin/scanChannelMessages` | Scan Telegram channel messages | Yes |
-| POST | `/api/admin/restoreFromManifest` | Restore from channel backup | Yes |
-| POST | `/api/admin/eraseAllData` | Erase all drive data | Yes |
-| POST | `/api/admin/purgeChannel` | Purge channel messages | Yes |
+| Method | Route | Description | Auth |
+| :--- | :--- | :--- | :---: |
+| `GET` | `/api/sync/status` | Returns current database version and timestamp | Admin |
+| `GET` | `/api/sync/changes?since=V` | Returns ordered mutations recorded since version `V` | Admin |
+| `WS` | `/api/sync/ws` | Bidirectional WebSocket connection for live mutation push | Admin |
 
 ---
 
-## Database
+## Testing & Quality Assurance
 
-### Technology
-
-- **Production:** PostgreSQL (required for multi-client synchronization)
-- **Development:** SQLite (automatic fallback when `DATABASE_URL` is not set)
-
-### Models
-
-```mermaid
-erDiagram
-    folders {
-        string id PK
-        string user_id
-        string name
-        string parent_folder_id FK
-        text path
-        boolean trash
-        json tags
-        json auth_hashes
-        json activity_history
-        datetime created_at
-        datetime updated_at
-    }
-
-    files {
-        string id PK
-        string user_id
-        string name
-        string original_name
-        string mime_type
-        string extension
-        bigint size
-        bigint telegram_message_id
-        string telegram_file_id
-        string folder_id FK
-        string checksum
-        boolean trash
-        json tags
-        json metadata_extra
-        datetime created_at
-        datetime updated_at
-    }
-
-    sync_version {
-        string id PK
-        bigint version
-        datetime updated_at
-    }
-
-    sync_changelog {
-        bigint change_id PK
-        bigint version
-        string user_id
-        string entity_id
-        string entity_type
-        string operation
-        string old_name
-        string new_name
-        string old_folder_id
-        string new_folder_id
-        json extra
-        datetime created_at
-    }
-
-    folders ||--o{ folders : "parent_folder_id"
-    folders ||--o{ files : "folder_id"
-```
-
-### Migrations
-
-Alembic manages schema migrations:
+TG Drive includes comprehensive automated test suites covering concurrency, database integrity, transfer pipelines, and properties enrichment:
 
 ```bash
-# Apply all migrations
-alembic upgrade head
+# Verify Python syntax and AST compilation across entire repository
+python -c "import ast, os; [ast.parse(open(os.path.join(r, f), encoding='utf-8').read()) for r, _, fs in os.walk('.') if not any(x in r for x in ['.git', '__pycache__', 'venv']) for f in fs if f.endswith('.py')]; print('AST syntax check passed.')"
 
-# Create a new migration
-alembic revision --autogenerate -m "description"
+# Run Transfer Manager test suite (state machine, retry backoff, concurrency semaphore)
+python -m unittest test_transfer_manager.py
 
-# Check current migration status
-alembic current
-```
-
-The application also calls `Base.metadata.create_all()` on startup to handle cases where Alembic has not been run, ensuring the schema is always up to date.
-
----
-
-## Storage
-
-File contents are stored in a **Telegram channel** (the "storage channel"). The channel acts as a distributed, permanent file store with no practical size limits.
-
-### Upload Flow
-
-1. Browser sends file to `/api/upload` via multipart form data.
-2. Backend saves file to a local cache directory.
-3. The Transfer Manager queues the file for upload.
-4. A Telegram bot (from the bot pool) sends the file to the storage channel via MTProto.
-5. Telegram returns a message ID, which is stored as the file's `telegram_message_id` in the database.
-6. The local cache file is deleted.
-
-### Download Flow
-
-1. Browser requests `/file?path=...`.
-2. Backend resolves the file's Telegram message ID from the database.
-3. Backend streams the file from Telegram to the browser using HTTP range requests for seeking.
-4. For local files (when the server has a local copy), direct file streaming is used instead.
-
-### Size Limits
-
-| Configuration | Max Single File Size |
-| ------------- | -------------------- |
-| Standard bot tokens | 2.0 GB |
-| With `STRING_SESSIONS` (Premium) | 4.0 GB |
-| Total storage | Unlimited |
-
----
-
-## Authentication & Authorization
-
-### Login Flow
-
-The application supports two authentication modes:
-
-**Two-Factor Mode** (when `ADMIN_EMAIL` is set):
-1. User enters email + password → server validates credentials.
-2. Server generates a 6-digit OTP and delivers it via Email (Resend/SMTP) and/or Telegram.
-3. User enters OTP → server creates an HTTP-only session cookie.
-
-**Password-Only Mode** (when `ADMIN_EMAIL` is not set):
-1. User enters password → server validates and creates session immediately.
-
-### Session Management
-
-- Sessions are cryptographically random 256-bit tokens stored in an in-memory dictionary.
-- Sessions are bound to the client's IP address.
-- Session cookies use `HttpOnly`, `SameSite=Lax`, and `Secure` attributes.
-- Default session lifetime: 12 hours (configurable via `SESSION_HOURS`).
-- Inactivity timeout: 4 hours.
-
-### Access Control
-
-- All management endpoints require a valid session (`require_auth` dependency).
-- Shared folder links use scoped cryptographic tokens that grant access only within the shared directory.
-- Guest users cannot access file IDs, internal metadata, or paths above the shared scope.
-- Public file access is rate-limited.
-
----
-
-## Security
-
-### Implemented
-
-- **PBKDF2-HMAC-SHA256** password hashing with 100,000 iterations and random salt
-- **Constant-time password comparison** via `secrets.compare_digest`
-- **HttpOnly session cookies** with `SameSite=Lax` and `Secure` flags
-- **Rate limiting** on login, OTP request, and OTP verification endpoints
-- **Input sanitization** — file/folder names are cleaned of path traversal sequences, null bytes, and control characters
-- **Path traversal defense** — resolved paths must remain within allowed directories
-- **Content Security Policy** — restrictive CSP headers prevent XSS
-- **CORS** — configurable allowed origins
-- **Brute-force protection** — account lockout after 5 failed OTP attempts
-- **Telegram credentials** are never exposed to the browser
-- **Database credentials** are never exposed to the browser
-
-### Security Notes
-
-- The application is single-admin by design. There is no multi-user system.
-- Session tokens are in-memory only; they are lost on server restart.
-- The `SECRET_KEY` environment variable is used for cryptographic signing. Generate it with:
-  ```bash
-  python -c "import secrets; print(secrets.token_hex(32))"
-  ```
-
----
-
-## Synchronization
-
-When running multiple instances (e.g., localhost + Render) against the same PostgreSQL database, changes made in one environment are automatically detected by the other.
-
-### How It Works
-
-1. Every mutation (create, rename, move, trash, delete) increments a global version counter in the `sync_version` table and appends a row to `sync_changelog`.
-2. Connected browser clients either receive a WebSocket push event or poll `/api/sync/status` to check the current version.
-3. When a client detects a newer version, it fetches `/api/sync/changes?since=<last_known_version>` to get the list of changes.
-4. The client processes each change and updates only the affected UI elements.
-
-### WebSocket Events
-
-```
-FILE_CREATED, FILE_RENAMED, FILE_MOVED, FILE_DELETED, FILE_TRASHED, FILE_RESTORED
-FOLDER_CREATED, FOLDER_RENAMED, FOLDER_MOVED, FOLDER_DELETED, FOLDER_TRASHED, FOLDER_RESTORED
-```
-
-### Conflict Strategy
-
-The server/database always wins. If two clients modify the same entity simultaneously, the version with the higher `updated_at` timestamp takes precedence. A `409 Conflict` response is returned when appropriate.
-
----
-
-## Testing
-
-Test suites are located in the project root (`test_*.py`):
-
-```bash
-# Run all Phase 1 database tests
-python -m unittest test_phase1_database -v
-
-# Run Phase 2 synchronization engine tests
-python -m unittest test_phase2_sync -v
-
-# Run Phase 3 frontend sync tests
-python -m unittest test_phase3_sync -v
-
-# Run security audit
-python test_security_audit.py
-
-# Run duplicate detection tests
-python test_duplicates.py
-
-# Run file system tests
-python test_all_functions.py
-
-# Run security hardening tests
-python test_hardening.py
-
-# Run archive manager tests
-python test_archive_manager.py
-
-# Run folder upload tests
-python test_folder_upload.py
-
-# Run properties system tests
+# Run Google Drive-Style Properties & Details test suite
 python test_properties_system.py
 
-# Run share system tests
-python test_share_system.py
+# Run Database Schema & CRUD tests
+python -m unittest test_phase1_database.py
 
-# Run share E2E tests
-python test_share_e2e_comprehensive.py
-
-# Run transfer manager tests
-python test_transfer_manager.py
-```
-
-Tests use Python's built-in `unittest` framework and `fastapi.testclient.TestClient`. No external test runner is required.
-
----
-
-## Development
-
-### Hot Reload
-
-```bash
-uvicorn main:app --reload --port 8000
-```
-
-The `--reload` flag watches for file changes and restarts the server automatically.
-
-### Database Migrations
-
-After modifying models in `database/models.py`:
-
-```bash
-alembic revision --autogenerate -m "description of changes"
-alembic upgrade head
-```
-
-### Useful Commands
-
-```bash
-# Verify configuration
-python -c "import config; print(config.validate_config())"
-
-# Test database connectivity
-python -c "from database.connection import test_database_connection; print(test_database_connection())"
-
-# Force sync drive data from Telegram
-curl -X POST http://localhost:8000/api/syncDriveData
+# Run Synchronization Engine test suite
+python -m unittest test_phase2_sync.py
 ```
 
 ---
 
-## Troubleshooting
+## Troubleshooting & Runbook
 
-### "ADMIN_PASSWORD is using an insecure default"
+### 1. Render Container Exits with Error 137 (`SIGKILL`)
+- **Root Cause:** Container exceeded the 512MB RAM ceiling.
+- **Remediation:** Verify `MALLOC_ARENA_MAX=2` is present in the container environment. Confirm `LOW_MEMORY_MODE=1` or `RENDER=true` is set. Check that `/api/upload` is receiving files through standard streaming rather than buffering the entire payload in memory.
 
-Set a strong, non-default password in your `.env` file. The application will refuse to start with passwords like `admin`, `password`, `123456`, etc.
+### 2. Database Disconnect (`server closed the connection unexpectedly`)
+- **Root Cause:** PostgreSQL pooler terminated idle TCP socket.
+- **Remediation:** Verify that [database/connection.py](file:///d:/Portfolio/Tele%20Unlim/database/connection.py) has TCP keepalives enabled (`keepalives_idle=30`). If connecting to Supabase, ensure port `6543` (transaction mode) is specified in `DATABASE_URL` with `NullPool` enabled.
 
-### "TELEGRAM_API_ID is missing or not a valid integer"
+### 3. Telegram `FloodWait` (Rate Limited)
+- **Root Cause:** Telegram MTProto API temporarily throttled transmissions.
+- **Remediation:** Check `/api/telegram/status` to review active bot backoffs. Ensure multiple bot tokens (`BOT_TOKENS=tok1,tok2,...`) are configured so the gateway can fail over to unthrottled bots automatically.
 
-Ensure `TELEGRAM_API_ID` (or `API_ID`) is set in your `.env` file with a numeric value from [my.telegram.org](https://my.telegram.org/auth).
-
-### "BOT_TOKENS is empty"
-
-At least one bot token from [@BotFather](https://t.me/BotFather) is required. The bot must be added to your storage channel as an Administrator.
-
-### Database connection failed
-
-- If using PostgreSQL: verify `DATABASE_URL` is correct and the database server is reachable.
-- If no `DATABASE_URL` is set, the application falls back to local SQLite at `data/cloud_drive.db`.
-
-### Port already in use
-
-Start the application on a different port:
-
-```bash
-uvicorn main:app --port 8001
-```
-
-### Files not appearing after upload
-
-Check that the bot has the correct permissions in the storage channel (Post Messages, Edit Messages, Pin Messages, Delete Messages). Check the application logs for Telegram API errors.
-
----
-
-## Limitations
-
-- **Single admin only** — there is no multi-user or role-based access control system.
-- **In-memory sessions** — session tokens are lost on server restart; users must re-authenticate.
-- **Telegram API rate limits** — uploads may be paused during FloodWait periods (auto-resumes).
-- **File size** — limited to 2 GB per file with standard bots, 4 GB with Premium sessions.
-- **No file versioning** — replaced files overwrite the previous Telegram upload.
-- **Local cache required** — files are temporarily cached on disk during upload/download.
-- **WebSocket delivery** — not guaranteed; the changelog system provides reliable catch-up.
-- **Archive extraction** — only ZIP format is supported for in-browser extraction.
-
----
-
-## Roadmap
-
-### Implemented
-- Core file/folder management with full CRUD
-- Multi-bot upload pool with flood protection
-- Telegram Premium session support (4 GB files)
-- Tokenized sharing with scoped access
-- SHA-256 duplicate detection
-- Archive inspection and extraction
-- Two-factor authentication (OTP)
-- Real-time multi-client synchronization (WebSocket + polling)
-- Docker and Render deployment support
-- Android APK packaging (Capacitor)
-
-### Potential Improvements
-- Multi-user support with role-based access control
-- File versioning / revision history
-- Server-side encryption
-- WebDAV protocol support
-- RAR/7z archive format support
-- Collaborative real-time editing indicators
-- Mobile-optimized responsive redesign
-
----
-
-## Contributing
-
-1. Fork the repository.
-2. Create a feature branch (`git checkout -b feature/your-feature`).
-3. Make your changes.
-4. Run the test suites to verify nothing is broken.
-5. Commit your changes with a clear message.
-6. Push to your fork and open a Pull Request.
-
-Please read [`SECURITY.md`](SECURITY.md) for vulnerability reporting guidelines.
+### 4. Admin Authentication Refused at Startup
+- **Root Cause:** `ADMIN_PASSWORD` matches an insecure default value (`admin`, `password`, `123456`).
+- **Remediation:** Set a unique, complex password with at least 8 characters in your `.env` file.
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
-
----
-
-## Acknowledgements
-
-- [Pyrogram](https://docs.pyrogram.org/) — Telegram MTProto API client library
-- [FastAPI](https://fastapi.tiangolo.com/) — Modern Python web framework
-- [SQLAlchemy](https://www.sqlalchemy.org/) — Database toolkit and ORM
-- [Alembic](https://alembic.sqlalchemy.org/) — Database migration tool
-- [Pillow](https://python-pillow.org/) — Image processing library
-- Telegram — File storage infrastructure
+This project is open-source software licensed under the terms of the [MIT License](LICENSE).
