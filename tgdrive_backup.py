@@ -29,6 +29,8 @@ import shutil
 import argparse
 import tempfile
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import requests
 from dotenv import load_dotenv
 from pathlib import Path
@@ -300,6 +302,7 @@ def convert_local_path_to_tg_structure(local_path: Path) -> str:
 class SyncManifest:
     def __init__(self):
         self.data: Dict[str, Dict] = {}
+        self._lock = threading.Lock()
         self.load()
 
     def load(self):
@@ -311,23 +314,30 @@ class SyncManifest:
                 self.data = {}
 
     def save(self):
-        try:
-            with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2)
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+                    json.dump(self.data, f, indent=2)
+            except Exception:
+                pass
 
     def get_file_record(self, rel_key: str) -> Optional[Dict]:
-        return self.data.get(rel_key)
+        with self._lock:
+            return self.data.get(rel_key)
 
     def update_file_record(self, rel_key: str, size: int, mtime: float, fhash: str):
-        self.data[rel_key] = {
-            "size": size,
-            "mtime": mtime,
-            "hash": fhash,
-            "last_synced": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        self.save()
+        with self._lock:
+            self.data[rel_key] = {
+                "size": size,
+                "mtime": mtime,
+                "hash": fhash,
+                "last_synced": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            try:
+                with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+                    json.dump(self.data, f, indent=2)
+            except Exception:
+                pass
 
 
 # ==========================================
@@ -371,16 +381,19 @@ MTP_WORKER_TIMEOUT = int(os.getenv("MTP_WORKER_TIMEOUT", "300"))  # seconds per 
 
 
 class TGDriveBackupClient:
-    def __init__(self, base_url: str, password: str, drive_root: str = ""):
+    def __init__(self, base_url: str, password: str, drive_root: str = "", concurrency: int = 3):
         self.base_url = base_url.rstrip("/")
         self.password = password
         self.drive_root = drive_root.strip("/")
+        self.concurrency = max(1, int(concurrency))
         self.session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=30, max_retries=3)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=64, max_retries=3)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         self.manifest = SyncManifest()
         self._folder_id_cache: Dict[str, str] = {"": "/"}
+        self._folder_lock = threading.Lock()
+        self._console_lock = threading.Lock()
         self.consecutive_upload_failures = 0
 
     # ── Fault-tolerant upload wrappers ────────────────────────────────────────
@@ -495,8 +508,9 @@ class TGDriveBackupClient:
         if not clean_path:
             return "/"
 
-        if clean_path in self._folder_id_cache:
-            return self._folder_id_cache[clean_path]
+        with self._folder_lock:
+            if clean_path in self._folder_id_cache:
+                return self._folder_id_cache[clean_path]
 
         parts = [p for p in clean_path.split("/") if p]
         current_id_path = "/"
@@ -629,8 +643,12 @@ class TGDriveBackupClient:
         remote_id_path = self.resolve_or_create_folder_id_path(human_remote_folder)
 
         rem_str = f"Remaining: {remaining_files} files ({format_size(remaining_bytes)})"
-        print(f"\n[{file_idx}/{total_files}] ⬆️ {file_name} ({format_size(file_size)}) | {rem_str}")
-        print(f"       ➔ Location: /{human_remote_folder}/")
+        with self._console_lock:
+            if self.concurrency > 1:
+                print(f"[{file_idx}/{total_files}] ⬆️ Queued: {file_name} ({format_size(file_size)}) -> /{human_remote_folder}/")
+            else:
+                print(f"\n[{file_idx}/{total_files}] ⬆️ {file_name} ({format_size(file_size)}) | {rem_str}")
+                print(f"       ➔ Location: /{human_remote_folder}/")
 
         self.push_web_sync_status({
             "state": "syncing_files",
@@ -717,14 +735,16 @@ class TGDriveBackupClient:
                                         msg = "server resuming automatically..."
                                 # Extend deadline to cover the full actual cooldown + 15s buffer
                                 poll_deadline = max(poll_deadline, time.time() + actual_wait + 15)
-                                sys.stdout.write(f"\r    ⏳ Telegram rate-limit {msg:<60}")
-                                sys.stdout.flush()
+                                if self.concurrency == 1:
+                                    sys.stdout.write(f"\r    ⏳ Telegram rate-limit {msg:<60}")
+                                    sys.stdout.flush()
                                 continue
 
                             last_was_waiting = False
                             cooldown_ticks = 0
                             if status == "running":
-                                print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
+                                if self.concurrency == 1:
+                                    print_progress_bar(current_bytes, total_bytes, prefix="Syncing:", suffix=f"{format_size(current_bytes)}/{format_size(total_bytes)} ({speed_str})", is_finished=False)
                                 self.push_web_sync_status({
                                     "current_bytes": current_bytes,
                                     "speed_str": speed_str
@@ -733,15 +753,23 @@ class TGDriveBackupClient:
                                     at_100_count += 1
                                     # If at 100% for 4 seconds (10 ticks), auto-advance to next file!
                                     if at_100_count >= 10:
-                                        print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                                         fhash = compute_fast_file_hash(local_file_path)
                                         self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
+                                        with self._console_lock:
+                                            if self.concurrency == 1:
+                                                print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
+                                            else:
+                                                print(f"  ✅ [{file_idx}/{total_files}] Uploaded: {file_name} ({format_size(file_size)}) in {duration:.1f}s ({speed_str})")
                                         time.sleep(0.15)
                                         return True
                             elif status == "completed":
-                                print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
                                 fhash = compute_fast_file_hash(local_file_path)
                                 self.manifest.update_file_record(f"{human_remote_folder}/{file_name}", file_size, mtime, fhash)
+                                with self._console_lock:
+                                    if self.concurrency == 1:
+                                        print_progress_bar(total_bytes, total_bytes, prefix="Syncing:", suffix=f"Done in {duration:.1f}s ({speed_str})", is_finished=True)
+                                    else:
+                                        print(f"  ✅ [{file_idx}/{total_files}] Uploaded: {file_name} ({format_size(file_size)}) in {duration:.1f}s ({speed_str})")
                                 time.sleep(0.15)
                                 return True
                             elif status == "error":
@@ -1032,19 +1060,45 @@ class TGDriveBackupClient:
         total_count = len(files_to_sync)
         remaining_bytes = total_sync_bytes
 
-        for idx, (local_file, human_folder) in enumerate(files_to_sync, start=1):
-            file_size = local_file.stat().st_size
-            rem_count = total_count - idx
-            remaining_bytes = max(0, remaining_bytes - file_size)
+        if self.concurrency > 1 and total_count > 1:
+            print(f"\n🚀 Launching Parallel Multi-Bot Upload Pool ({self.concurrency} concurrent uploads across Telegram bots)...")
+            completed_count = 0
+            completed_lock = threading.Lock()
 
-            self.upload_file(
-                local_file,
-                human_folder,
-                file_idx=idx,
-                total_files=total_count,
-                remaining_files=rem_count,
-                remaining_bytes=remaining_bytes
-            )
+            def _worker_task(task_args):
+                nonlocal completed_count
+                idx, local_file, human_folder = task_args
+                with completed_lock:
+                    rem_c = total_count - completed_count
+                ok = self.upload_file(
+                    local_file,
+                    human_folder,
+                    file_idx=idx,
+                    total_files=total_count,
+                    remaining_files=rem_c,
+                    remaining_bytes=0
+                )
+                with completed_lock:
+                    completed_count += 1
+                return ok
+
+            tasks = [(i, lf, hf) for i, (lf, hf) in enumerate(files_to_sync, start=1)]
+            with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+                list(executor.map(_worker_task, tasks))
+        else:
+            for idx, (local_file, human_folder) in enumerate(files_to_sync, start=1):
+                file_size = local_file.stat().st_size
+                rem_count = total_count - idx
+                remaining_bytes = max(0, remaining_bytes - file_size)
+
+                self.upload_file(
+                    local_file,
+                    human_folder,
+                    file_idx=idx,
+                    total_files=total_count,
+                    remaining_files=rem_count,
+                    remaining_bytes=remaining_bytes
+                )
 
         print("\n" + "=" * 68)
         print("🎉 Sync Completed Successfully!")
@@ -1734,6 +1788,13 @@ def main():
         default=None,
         help="Custom destination folder prefix on TGDrive (optional)",
     )
+    parser.add_argument(
+        "--concurrency",
+        "-c",
+        type=int,
+        default=int(os.getenv("BACKUP_CONCURRENCY", "3")),
+        help="Number of concurrent file uploads across Telegram bots (default: 3)",
+    )
 
     args = parser.parse_args()
 
@@ -1752,6 +1813,7 @@ def main():
     client = TGDriveBackupClient(
         base_url=args.url,
         password=args.password,
+        concurrency=args.concurrency,
     )
 
     print(f"\nConnecting to TGDrive at {args.url}...")

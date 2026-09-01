@@ -125,7 +125,8 @@ async def _send_with_flood_protection(
         client_ref["client"] = client
 
         try:
-            async with tg_gate.send_slot():
+            c_key = _client_key(client)
+            async with tg_gate.send_slot(client_key=c_key):
                 if id in STOP_TRANSMISSION or was_cancelled.is_set():
                     return None
                 message: Message = await client.send_document(
@@ -135,7 +136,7 @@ async def _send_with_flood_protection(
                     progress_args=(id, client, file_path, filename),
                     disable_notification=True,
                 )
-            tg_gate.note_success()
+            tg_gate.note_success(client_key=c_key)
             return message
 
         except FloodWait as fw:
@@ -208,8 +209,8 @@ async def start_file_uploader(
 
         # Record change event for sync engine
         try:
-            from utils.sync import ChangeTracker, broadcast_sync_event
-            ChangeTracker.file_created(new_item_id)
+            from utils.sync import record_change_async
+            await record_change_async("FILE_CREATED", new_item_id, "file")
         except Exception as sync_err:
             logger.debug(f"Sync tracking note (upload): {sync_err}")
 

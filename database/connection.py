@@ -23,11 +23,10 @@ engine_kwargs = {
 }
 
 if config.IS_REMOTE_DB:
-    engine_kwargs.update({
-        "pool_recycle": 300,
-        "pool_size": 10,
-        "max_overflow": 20,
-    })
+    # Supabase Transaction Pooler (port 6543 / pooler.supabase.com) uses server-side PgBouncer.
+    # NullPool avoids client-side stale connection retention and socket termination errors.
+    from sqlalchemy.pool import NullPool
+    engine_kwargs["poolclass"] = NullPool
 else:
     # SQLite local engine settings
     engine_kwargs["connect_args"] = {"check_same_thread": False}
@@ -114,11 +113,18 @@ def _ensure_sync_tables():
         logger.debug(f"Sync version seed note: {e}")
 
 
-def init_db() -> bool:
+_db_initialized = False
+
+
+def init_db(force: bool = False) -> bool:
     """
     Initializes database schema and verifies connectivity.
-    Ensures root folder ('/') exists in the database.
+    Ensures root folder ('/') exists in the database. Idempotent.
     """
+    global _db_initialized
+    if _db_initialized and not force:
+        return True
+
     from database.models import Base, FolderModel
 
     try:
@@ -162,6 +168,7 @@ def init_db() -> bool:
                 session.add(root)
                 logger.info("Initialized root folder in database.")
 
+        _db_initialized = True
         return True
     except Exception as e:
         logger.error(f"Failed to initialize database schema: {e}")

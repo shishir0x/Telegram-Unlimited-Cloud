@@ -209,8 +209,48 @@ def load_drive_data_from_db() -> Optional["NewDriveData"]:
         return None
 
 
+LAST_LOADED_DB_VERSION: int = 0
+_last_version_check_time: float = 0.0
+
+
+def check_and_sync_db_if_stale():
+    """Checks if the shared PostgreSQL database has newer mutations than our in-memory cache.
+    Throttled to at most once every 5 seconds to prevent query overhead during rapid operations."""
+    global _last_version_check_time, LAST_LOADED_DB_VERSION, DRIVE_DATA
+    now = time.time()
+    if now - _last_version_check_time < 5.0:
+        return
+    _last_version_check_time = now
+
+    # Only sync if local has no pending uncommitted in-memory modifications
+    if DRIVE_DATA is not None and getattr(DRIVE_DATA, "isUpdated", False):
+        return
+
+    try:
+        from database.repository import DatabaseRepository
+        curr = DatabaseRepository.get_current_version()
+        if curr > LAST_LOADED_DB_VERSION:
+            logger.info(f"🔄 Shared database update detected (v{LAST_LOADED_DB_VERSION} -> v{curr}). Refreshing in-memory drive...")
+            new_drive = load_drive_data_from_db()
+            if new_drive is not None:
+                DRIVE_DATA = new_drive
+                LAST_LOADED_DB_VERSION = curr
+                try:
+                    from utils.properties import FolderStatsCalculator
+                    FolderStatsCalculator.invalidate_cache()
+                except Exception:
+                    pass
+                logger.info(f"✅ In-memory drive data updated to match cloud database version {curr}.")
+    except Exception as e:
+        logger.debug(f"check_and_sync_db_if_stale note: {e}")
+
+
 def ensure_drive_data(force_reload: bool = False):
-    global DRIVE_DATA
+    global DRIVE_DATA, LAST_LOADED_DB_VERSION
+    if DRIVE_DATA is not None and not force_reload:
+        check_and_sync_db_if_stale()
+        return DRIVE_DATA
+
     if DRIVE_DATA is None or force_reload:
         loaded = False
 
@@ -221,6 +261,11 @@ def ensure_drive_data(force_reload: bool = False):
             DRIVE_DATA = load_drive_data_from_db()
             if DRIVE_DATA is not None and (len(DRIVE_DATA.contents["/"].contents) > 0 or not drive_cache_path.exists()):
                 loaded = True
+                try:
+                    from database.repository import DatabaseRepository
+                    LAST_LOADED_DB_VERSION = DatabaseRepository.get_current_version()
+                except Exception:
+                    pass
         except Exception as db_e:
             logger.warning(f"Database load note: {db_e}")
 
@@ -233,6 +278,11 @@ def ensure_drive_data(force_reload: bool = False):
                 DRIVE_DATA = load_drive_data_from_db()
                 if DRIVE_DATA is not None:
                     loaded = True
+                    try:
+                        from database.repository import DatabaseRepository
+                        LAST_LOADED_DB_VERSION = DatabaseRepository.get_current_version()
+                    except Exception:
+                        pass
             except Exception as mig_e:
                 logger.warning(f"Auto-migration note: {mig_e}")
 
@@ -2195,19 +2245,52 @@ def _persist_backup_msg_id(msg_id: int):
         return
     try:
         content = env_file.read_text(encoding="utf-8")
+        target_line = f"DATABASE_BACKUP_MSG_ID={msg_id}"
+        if target_line in content:
+            return  # Already up to date, skip writing to avoid file watcher triggers
         if "DATABASE_BACKUP_MSG_ID=" in content:
             new_lines = []
             for line in content.splitlines():
                 if line.strip().startswith("DATABASE_BACKUP_MSG_ID="):
-                    new_lines.append(f"DATABASE_BACKUP_MSG_ID={msg_id}")
+                    new_lines.append(target_line)
                 else:
                     new_lines.append(line)
             env_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         else:
             with open(env_file, "a", encoding="utf-8") as f:
-                f.write(f"\nDATABASE_BACKUP_MSG_ID={msg_id}\n")
+                f.write(f"\n{target_line}\n")
     except Exception as e:
         logger.debug(f"Could not persist DATABASE_BACKUP_MSG_ID to .env: {e}")
+
+
+async def auto_sync_database_loop():
+    """Periodic background task that checks PostgreSQL for remote mutations every 20 seconds.
+    Ensures Local and Render instances stay in continuous bi-directional sync without manual reload."""
+    global DRIVE_DATA, LAST_LOADED_DB_VERSION
+    logger.info("Starting PostgreSQL database auto-sync loop (20s interval).")
+    while True:
+        try:
+            await asyncio.sleep(20)
+            if DRIVE_DATA is not None and getattr(DRIVE_DATA, "isUpdated", False):
+                continue
+
+            from database.repository import DatabaseRepository
+            curr = DatabaseRepository.get_current_version()
+            if curr > LAST_LOADED_DB_VERSION:
+                logger.info(f"🔄 Background sync: new database version detected (v{LAST_LOADED_DB_VERSION} -> v{curr}). Synchronizing...")
+                new_drive = load_drive_data_from_db()
+                if new_drive is not None:
+                    DRIVE_DATA = new_drive
+                    LAST_LOADED_DB_VERSION = curr
+                    try:
+                        from utils.properties import FolderStatsCalculator
+                        FolderStatsCalculator.invalidate_cache()
+                    except Exception:
+                        pass
+                    logger.info(f"✅ Drive data synchronized from shared database (v{curr}).")
+        except Exception as e:
+            logger.debug(f"Database auto-sync loop note: {e}")
+            await asyncio.sleep(20)
 
 
 async def auto_sync_telegram_loop():

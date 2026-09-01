@@ -15,8 +15,9 @@ Techniques implemented:
   4. Adaptive pacing (AIMD)            — inter-send gap grows +STEP per FloodWait
                                          (capped), decays multiplicatively after
                                          successful sends; floor = BASE_GAP
-  5. Minimum inter-message spacing     — never lets two channel messages land
-                                         closer than BASE_GAP seconds apart
+  5. Per-client minimum spacing        — each bot tracks its own last-send timestamp
+                                         so multiple bots can pipeline sends fully
+                                         in parallel without global serialization
   6. Jitter                            — randomized sleeps avoid synchronized retry
                                          storms across workers
 
@@ -28,15 +29,18 @@ import os
 import random
 import time
 
+import config
+
 # ---------------------------------------------------------------------------
 # Tunables (env-overridable, sane defaults)
 # ---------------------------------------------------------------------------
-SEND_CONCURRENCY = max(1, int(os.getenv("TG_SEND_CONCURRENCY", "2")))
-BASE_GAP = float(os.getenv("TG_BASE_GAP", "1.2"))      # min seconds between channel sends
-FLOOD_STEP = float(os.getenv("TG_FLOOD_STEP", "2.0"))  # pacing added per FloodWait event
+_default_concurrency = max(4, len(getattr(config, "BOT_TOKENS", [])))
+SEND_CONCURRENCY = max(1, int(os.getenv("TG_SEND_CONCURRENCY", str(_default_concurrency))))
+BASE_GAP = float(os.getenv("TG_BASE_GAP", "0.2"))      # min seconds between sends PER CLIENT (was 0.5)
+FLOOD_STEP = float(os.getenv("TG_FLOOD_STEP", "1.0"))  # pacing added per FloodWait event (was 2.0)
 PACING_MAX = float(os.getenv("TG_PACING_MAX", "90"))   # ceiling for adaptive delay
-PACING_DECAY = 0.55                                    # multiplicative decay on success
-CLIENT_BUFFER = 2.0                                    # extra seconds after FloodWait value
+PACING_DECAY = 0.65                                    # multiplicative decay on success (was 0.55, faster recovery)
+CLIENT_BUFFER = 0.5                                    # extra seconds after FloodWait value (was 2.0)
 MAX_GLOBAL_WAIT = float(os.getenv("TG_MAX_WAIT", "900"))  # give up waiting after 15 min
 
 # ---------------------------------------------------------------------------
@@ -46,8 +50,8 @@ _semaphore: asyncio.Semaphore | None = None     # lazily bound to running loop
 _semaphore_loop = None                           # the loop that created _semaphore
 _flood_until: dict = {}                          # client_key (str) -> epoch ts
 _global_until: float = 0.0                       # epoch ts everyone must wait until
-_last_send_ts: float = 0.0                       # last completed/started channel send
-_pace: float = 0.0                               # current adaptive extra delay
+_last_send_ts: dict = {}                         # PER-CLIENT: client_key -> last send monotonic ts
+_pace: float = 0.0                               # current adaptive extra delay (shared, AIMD)
 
 
 def _sem() -> asyncio.Semaphore:
@@ -77,7 +81,7 @@ def note_flood(client_key=None, wait_seconds: float = 0.0, has_alternatives: boo
 
     if client_key is not None:
         key = str(client_key)
-        _flood_until[key] = now + wait_s + CLIENT_BUFFER + random.uniform(0.2, 1.0)
+        _flood_until[key] = now + wait_s + CLIENT_BUFFER + random.uniform(0.1, 0.5)
 
     if has_alternatives:
         # Other bots are ready: brief 0.2s pause so next bot claims the slot smoothly
@@ -90,10 +94,13 @@ def note_flood(client_key=None, wait_seconds: float = 0.0, has_alternatives: boo
     _pace = min(PACING_MAX, _pace + FLOOD_STEP)
 
 
-def note_success() -> None:
+def note_success(client_key=None) -> None:
     """Report a successful send: decay adaptive pacing toward the base gap."""
     global _pace
     _pace = max(0.0, _pace * PACING_DECAY - 0.1)
+    # Update per-client last send timestamp
+    if client_key is not None:
+        _last_send_ts[str(client_key)] = time.monotonic()
 
 
 def client_available(client_key) -> bool:
@@ -120,28 +127,43 @@ def get_global_cooldown() -> float:
     return max(0.0, _global_until - time.monotonic())
 
 
-async def wait_turn() -> None:
+async def wait_turn(client_key=None) -> None:
     """
     Must be awaited while HOLDING the semaphore, immediately before sending.
-    Enforces: global flood gate -> minimum spacing since last send -> adaptive
-    pacing, all with jitter so parallel workers de-synchronize.
+    Enforces:
+      1. Global flood gate (if all bots flooded)
+      2. Per-client minimum spacing (BASE_GAP) — each bot tracks independently
+         so parallel bots don't block each other
+      3. Adaptive pacing decay (AIMD)
+      4. Jitter to de-synchronize concurrent workers
+
+    With per-client tracking, Bot1 spacing at 0.2s does NOT force Bot2 to wait —
+    all 4 bots can pipeline sends fully in parallel.
     """
-    global _last_send_ts
+    global _last_send_ts, _global_until
+    c_key = str(client_key) if client_key is not None else "__global__"
+
     while True:
         now = time.monotonic()
-        wake = _global_until
 
-        spaced = _last_send_ts + BASE_GAP + _pace
-        if spaced > wake:
-            wake = spaced
+        # 1. Global flood gate (only blocks when ALL bots are flooded)
+        global_remaining = _global_until - now
+        if global_remaining > 0:
+            await asyncio.sleep(min(global_remaining, 30) * random.uniform(0.9, 1.1))
+            continue
 
-        remaining = wake - now
-        if remaining <= 0:
-            break
-        # Jitter: ±10% so concurrent workers don't wake in lockstep
-        await asyncio.sleep(min(remaining, 30) * random.uniform(0.9, 1.1))
+        # 2. Per-client spacing: enforce BASE_GAP + adaptive pace per bot
+        last_ts = _last_send_ts.get(c_key, 0.0)
+        client_wake = last_ts + BASE_GAP + _pace
+        client_remaining = client_wake - now
+        if client_remaining > 0:
+            await asyncio.sleep(min(client_remaining, 30) * random.uniform(0.9, 1.1))
+            continue
 
-    _last_send_ts = time.monotonic()
+        break
+
+    # Record send time for this specific client
+    _last_send_ts[c_key] = time.monotonic()
 
 
 async def acquire() -> asyncio.Semaphore:
@@ -155,16 +177,22 @@ def release(sem: asyncio.Semaphore) -> None:
 
 
 class send_slot:
-    """Async context manager combining concurrency limit + turn waiting.
+    """Async context manager combining concurrency limit + per-client turn waiting.
 
     Usage:
-        async with tg_gate.send_slot():
+        async with tg_gate.send_slot(client_key=client.name):
             await client.send_document(...)
+
+    The client_key enables per-bot spacing so all 4 bots pipeline independently.
+    Backward-compatible: omitting client_key falls back to a shared "__global__" key.
     """
+
+    def __init__(self, client_key=None):
+        self.client_key = client_key
 
     async def __aenter__(self):
         await _sem().acquire()
-        await wait_turn()
+        await wait_turn(self.client_key)
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
@@ -177,8 +205,16 @@ def stats() -> dict:
     now = time.monotonic()
     return {
         "send_concurrency": SEND_CONCURRENCY,
-        "active_slots": getattr(_sem(), "_value", SEND_CONCURRENCY),
+        "active_slots": SEND_CONCURRENCY - getattr(_sem(), "_value", SEND_CONCURRENCY),
+        "available_slots": getattr(_sem(), "_value", SEND_CONCURRENCY),
         "flooded_clients": sum(1 for t in _flood_until.values() if t > now),
         "global_cooldown_s": round(max(0.0, _global_until - now), 1),
         "adaptive_pace_s": round(_pace, 2),
+        "base_gap_s": BASE_GAP,
+        "flood_step_s": FLOOD_STEP,
+        "client_buffer_s": CLIENT_BUFFER,
+        "per_client_spacing": {
+            k: round(max(0.0, v + BASE_GAP + _pace - now), 2)
+            for k, v in _last_send_ts.items()
+        },
     }

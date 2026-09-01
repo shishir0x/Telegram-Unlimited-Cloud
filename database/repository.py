@@ -8,7 +8,7 @@ against the shared database.
 import mimetypes
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
-from sqlalchemy import or_, and_, func, select
+from sqlalchemy import or_, and_, func, select, text
 from sqlalchemy.orm import Session
 
 from database.connection import get_db_session
@@ -104,6 +104,7 @@ class DatabaseRepository:
             )
             s.add(folder)
             s.flush()
+            DatabaseRepository.increment_version(session=s)
             return folder
 
         if session:
@@ -163,6 +164,7 @@ class DatabaseRepository:
             )
             s.add(file_obj)
             s.flush()
+            DatabaseRepository.increment_version(session=s)
             return file_obj
 
         if session:
@@ -179,6 +181,7 @@ class DatabaseRepository:
             if folder:
                 folder.name = new_name
                 folder.updated_at = utc_now()
+                DatabaseRepository.increment_version(session=s)
                 return True
             file_obj = s.query(FileModel).filter(FileModel.id == item_id).first()
             if file_obj:
@@ -187,6 +190,7 @@ class DatabaseRepository:
                     file_obj.extension = "." + new_name.rsplit(".", 1)[-1].lower()
                 file_obj.mime_type = mimetypes.guess_type(new_name)[0] or file_obj.mime_type
                 file_obj.updated_at = utc_now()
+                DatabaseRepository.increment_version(session=s)
                 return True
             return False
 
@@ -206,12 +210,14 @@ class DatabaseRepository:
             if folder:
                 folder.parent_folder_id = dest_folder_id
                 folder.updated_at = utc_now()
+                DatabaseRepository.increment_version(session=s)
                 return True
 
             file_obj = s.query(FileModel).filter(FileModel.id == item_id).first()
             if file_obj:
                 file_obj.folder_id = dest_folder_id
                 file_obj.updated_at = utc_now()
+                DatabaseRepository.increment_version(session=s)
                 return True
 
             return False
@@ -230,6 +236,7 @@ class DatabaseRepository:
                 folder.trash = trash
                 folder.trashed_at = now
                 folder.updated_at = utc_now()
+                DatabaseRepository.increment_version(session=s)
                 return True
 
             file_obj = s.query(FileModel).filter(FileModel.id == item_id).first()
@@ -237,6 +244,7 @@ class DatabaseRepository:
                 file_obj.trash = trash
                 file_obj.trashed_at = now
                 file_obj.updated_at = utc_now()
+                DatabaseRepository.increment_version(session=s)
                 return True
             return False
 
@@ -269,8 +277,9 @@ class DatabaseRepository:
     def delete_item(cls, item_id: str, session: Optional[Session] = None) -> List[int]:
         """
         Permanently deletes an item from the database.
-        If the item is a folder, recursively collects all Telegram message IDs from
-        its contained files and deletes all child folders and files.
+        If the item is a folder, collects all Telegram message IDs from its
+        contained files via recursive query and deletes the folder.
+        PostgreSQL and SQLite foreign key ON DELETE CASCADE ensures all child records are removed.
         Returns list of deleted Telegram message IDs.
         """
         def _op(s: Session):
@@ -280,27 +289,44 @@ class DatabaseRepository:
             file_obj = s.query(FileModel).filter(FileModel.id == item_id).first()
             if file_obj:
                 if file_obj.telegram_message_id:
-                    telegram_ids.append(int(file_obj.telegram_message_id))
-                s.delete(file_obj)
+                    try:
+                        telegram_ids.append(int(file_obj.telegram_message_id))
+                    except (ValueError, TypeError):
+                        pass
+                s.execute(text("DELETE FROM files WHERE id = :fid"), {"fid": item_id})
                 return telegram_ids
 
             # Check if folder
             folder = s.query(FolderModel).filter(FolderModel.id == item_id).first()
             if folder:
-                def _collect_and_delete_folder(fld: FolderModel):
-                    # Child files
-                    for child_file in s.query(FileModel).filter(FileModel.folder_id == fld.id).all():
-                        if child_file.telegram_message_id:
-                            telegram_ids.append(int(child_file.telegram_message_id))
-                        s.delete(child_file)
-                    # Subfolders
-                    for sub in s.query(FolderModel).filter(FolderModel.parent_folder_id == fld.id).all():
-                        _collect_and_delete_folder(sub)
-                    s.delete(fld)
+                # Fast CTE to gather all telegram_message_ids under this folder hierarchy in 1 query
+                try:
+                    q_msgs = text("""
+                        WITH RECURSIVE subfolders AS (
+                            SELECT id FROM folders WHERE id = :fld_id
+                            UNION ALL
+                            SELECT f.id FROM folders f INNER JOIN subfolders sf ON f.parent_folder_id = sf.id
+                        )
+                        SELECT telegram_message_id FROM files 
+                        WHERE folder_id IN (SELECT id FROM subfolders) 
+                          AND telegram_message_id IS NOT NULL;
+                    """)
+                    res = s.execute(q_msgs, {"fld_id": item_id}).fetchall()
+                    for r in res:
+                        if r[0]:
+                            try:
+                                telegram_ids.append(int(r[0]))
+                            except (ValueError, TypeError):
+                                pass
+                except Exception as cte_err:
+                    logger.warning(f"CTE telegram_id collection note: {cte_err}")
 
-                _collect_and_delete_folder(folder)
+                # Delete the root folder. Foreign key ON DELETE CASCADE deletes all descendant folders and files.
+                s.execute(text("DELETE FROM folders WHERE id = :fld_id"), {"fld_id": item_id})
+                DatabaseRepository.increment_version(session=s)
                 return telegram_ids
 
+            DatabaseRepository.increment_version(session=s)
             return telegram_ids
 
         if session:
@@ -310,16 +336,19 @@ class DatabaseRepository:
 
     @classmethod
     def bulk_delete_items(cls, item_ids: List[str], session: Optional[Session] = None) -> List[int]:
-        all_deleted_msg_ids: List[int] = []
-        if session:
-            for iid in item_ids:
-                all_deleted_msg_ids.extend(cls.delete_item(iid, session=session))
-            return all_deleted_msg_ids
+        if not item_ids:
+            return []
 
-        with get_db_session() as s:
+        def _op(s: Session):
+            all_deleted_msg_ids: List[int] = []
             for iid in item_ids:
                 all_deleted_msg_ids.extend(cls.delete_item(iid, session=s))
             return all_deleted_msg_ids
+
+        if session:
+            return _op(session)
+        with get_db_session() as s:
+            return _op(s)
 
     @staticmethod
     def get_all_trashed(session: Optional[Session] = None) -> Tuple[List[FolderModel], List[FileModel]]:

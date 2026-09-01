@@ -309,23 +309,28 @@ class TransferManager:
     def __init__(
         self,
         store_path: Optional[Union[str, Path]] = None,
-        max_concurrent_uploads: int = 3,
-        max_concurrent_downloads: int = 3,
+        max_concurrent_uploads: Optional[int] = None,
+        max_concurrent_downloads: Optional[int] = None,
         is_singleton: bool = True,
     ):
         if self._initialized:
             return
         self._initialized = True
 
-        self.max_concurrent_uploads = max_concurrent_uploads
-        self.max_concurrent_downloads = max_concurrent_downloads
+        import config
+        bot_count = len(getattr(config, "BOT_TOKENS", []))
+        default_uploads = max(4, bot_count)
+        default_downloads = max(4, bot_count)
+
+        self.max_concurrent_uploads = int(os.getenv("MAX_CONCURRENT_UPLOADS", str(default_uploads if max_concurrent_uploads is None else max_concurrent_uploads)))
+        self.max_concurrent_downloads = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", str(default_downloads if max_concurrent_downloads is None else max_concurrent_downloads)))
 
         self.store = TransferStore(filepath=store_path)
         self.upload_queue: asyncio.Queue[str] = asyncio.Queue()
         self.download_queue: asyncio.Queue[str] = asyncio.Queue()
 
-        self.upload_semaphore = asyncio.Semaphore(max_concurrent_uploads)
-        self.download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
+        self.upload_semaphore = asyncio.Semaphore(self.max_concurrent_uploads)
+        self.download_semaphore = asyncio.Semaphore(self.max_concurrent_downloads)
 
         self._workers: List[asyncio.Task] = []
         self._save_task: Optional[asyncio.Task] = None
@@ -795,7 +800,8 @@ class TransferManager:
             item._client_ref["client"] = client
 
             try:
-                async with tg_gate.send_slot():
+                c_key = _client_key(client)
+                async with tg_gate.send_slot(client_key=c_key):
                     if item.state == TransferState.CANCELLED or (item._cancel_event and item._cancel_event.is_set()):
                         item.state = TransferState.CANCELLED
                         self._cleanup_temp_file(item)
@@ -817,7 +823,7 @@ class TransferManager:
                     self.store.mark_dirty()
                     return
 
-                tg_gate.note_success()
+                tg_gate.note_success(client_key=c_key)
                 actual_size = (
                     message.photo or message.document or message.video or message.audio or message.sticker
                 ).file_size
@@ -829,8 +835,8 @@ class TransferManager:
 
                 # Record change event for sync engine
                 try:
-                    from utils.sync import ChangeTracker, broadcast_sync_event
-                    ChangeTracker.file_created(new_item_id)
+                    from utils.sync import record_change_async
+                    await record_change_async("FILE_CREATED", new_item_id, "file")
                 except Exception as sync_err:
                     logger.debug(f"Sync tracking note (transfer_manager upload): {sync_err}")
 

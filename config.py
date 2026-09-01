@@ -51,12 +51,20 @@ API_HASH = (os.getenv("TELEGRAM_API_HASH") or os.getenv("API_HASH") or "").strip
 TELEGRAM_API_HASH = API_HASH
 
 # List of Telegram bot tokens used for file upload/download operations
-_raw_tokens = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKENS") or ""
-BOT_TOKENS = [
-    token.strip().strip('"').strip("'")
-    for token in _raw_tokens.split(",")
-    if token.strip().strip('"').strip("'")
-]
+_raw_token_sources = []
+if os.getenv("BOT_TOKENS"):
+    _raw_token_sources.extend(os.getenv("BOT_TOKENS", "").split(","))
+if os.getenv("TELEGRAM_BOT_TOKEN"):
+    _raw_token_sources.extend(os.getenv("TELEGRAM_BOT_TOKEN", "").split(","))
+
+_seen_tokens = set()
+BOT_TOKENS = []
+for _tok in _raw_token_sources:
+    _clean_tok = _tok.strip().strip('"').strip("'")
+    if _clean_tok and _clean_tok not in _seen_tokens:
+        _seen_tokens.add(_clean_tok)
+        BOT_TOKENS.append(_clean_tok)
+
 TELEGRAM_BOT_TOKEN = BOT_TOKENS[0] if BOT_TOKENS else ""
 
 # List of Premium Telegram Account Pyrogram String Sessions used for file upload/download operations

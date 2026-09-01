@@ -1,7 +1,9 @@
 import asyncio, config
 from pathlib import Path
+from utils import fast_crypto
+fast_crypto.patch_pyrogram()
 from pyrogram import Client
-from utils.directoryHandler import backup_drive_data, loadDriveData, auto_sync_telegram_loop
+from utils.directoryHandler import backup_drive_data, loadDriveData, auto_sync_telegram_loop, auto_sync_database_loop
 from utils.logger import Logger
 import os
 import sys
@@ -169,6 +171,7 @@ async def initialize_clients():
                     config._drive_data_loaded = True
                     asyncio.create_task(backup_drive_data())
                     asyncio.create_task(auto_sync_telegram_loop())
+                    asyncio.create_task(auto_sync_database_loop())
                 except Exception:
                     pass
 
@@ -191,6 +194,7 @@ async def initialize_clients():
                 # Start the backup drive data task and auto-sync loop
                 asyncio.create_task(backup_drive_data())
                 asyncio.create_task(auto_sync_telegram_loop())
+                asyncio.create_task(auto_sync_database_loop())
             except Exception as e:
                 logger.warning(f"Initial drive data load deferred until bot connection: {e}")
     else:

@@ -1,3 +1,6 @@
+from utils import fast_crypto
+fast_crypto.patch_pyrogram()
+
 from utils.downloader import (
     download_file,
     get_file_info_from_url,
@@ -1313,7 +1316,7 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
 
     # Record change event for sync engine
     try:
-        from utils.sync import ChangeTracker, broadcast_sync_event
+        from utils.sync import record_change_async, broadcast_sync_event
         # Find the newly created folder to get its ID
         new_folder_id = None
         target = drive.get_directory(safe_path)
@@ -1323,7 +1326,7 @@ async def api_new_folder(request: Request, _auth: Session = Depends(require_auth
                     new_folder_id = item_id
                     break
         if new_folder_id:
-            ver = ChangeTracker.folder_created(new_folder_id, user_id="admin")
+            ver = await record_change_async("FOLDER_CREATED", new_folder_id, "folder")
             if ver > 0:
                 broadcast_sync_event("FOLDER_CREATED", new_folder_id, "folder", ver, "admin")
     except Exception as sync_err:
@@ -1624,7 +1627,7 @@ async def upload_file(
 
     try:
         async with aiofiles.open(file_location, "wb") as buffer:
-            while chunk := await file.read(1024 * 1024):  # Read file in chunks of 1MB
+            while chunk := await file.read(8 * 1024 * 1024):  # Read file in chunks of 8MB
                 SAVE_PROGRESS[safe_id] = ("running", file_size, total_size)
                 file_size += len(chunk)
                 if file_size > MAX_FILE_SIZE:
@@ -1800,10 +1803,10 @@ async def rename_file_folder(request: Request, _auth: Session = Depends(require_
 
     # Record change event for sync engine
     try:
-        from utils.sync import ChangeTracker, broadcast_sync_event
+        from utils.sync import record_change_async, broadcast_sync_event
         if _entity_id and _old_name:
             op = "FOLDER_RENAMED" if _entity_type == "folder" else "FILE_RENAMED"
-            ver = ChangeTracker.record(op, _entity_id, _entity_type, "admin", old_name=_old_name, new_name=safe_name)
+            ver = await record_change_async(op, _entity_id, _entity_type, old_name=_old_name, new_name=safe_name)
             if ver > 0:
                 broadcast_sync_event(op, _entity_id, _entity_type, ver, "admin")
     except Exception as sync_err:
@@ -1865,10 +1868,10 @@ async def trash_file_folder(request: Request, _auth: Session = Depends(require_a
 
     # Record change event for sync engine
     try:
-        from utils.sync import ChangeTracker, broadcast_sync_event
+        from utils.sync import record_change_async, broadcast_sync_event
         if _trash_entity_id:
             op = "FILE_TRASHED" if (trash_val and _trash_entity_type == "file") else ("FILE_RESTORED" if not trash_val and _trash_entity_type == "file" else ("FOLDER_TRASHED" if trash_val else "FOLDER_RESTORED"))
-            ver = ChangeTracker.record(op, _trash_entity_id, _trash_entity_type, "admin")
+            ver = await record_change_async(op, _trash_entity_id, _trash_entity_type)
             if ver > 0:
                 broadcast_sync_event(op, _trash_entity_id, _trash_entity_type, ver, "admin")
     except Exception as sync_err:
@@ -1913,11 +1916,12 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
 
     # Record change event for sync engine
     try:
-        from utils.sync import ChangeTracker, broadcast_sync_event
+        from utils.sync import record_change_async, broadcast_sync_event
         if _del_entity_id:
-            ver = ChangeTracker.file_deleted(_del_entity_id, user_id="admin") if _del_entity_type == "file" else ChangeTracker.folder_deleted(_del_entity_id, user_id="admin")
+            op = "FILE_DELETED" if _del_entity_type == "file" else "FOLDER_DELETED"
+            ver = await record_change_async(op, _del_entity_id, _del_entity_type)
             if ver > 0:
-                broadcast_sync_event("FILE_DELETED" if _del_entity_type == "file" else "FOLDER_DELETED", _del_entity_id, _del_entity_type, ver, "admin")
+                broadcast_sync_event(op, _del_entity_id, _del_entity_type, ver, "admin")
     except Exception as sync_err:
         logger.debug(f"Sync tracking note (delete): {sync_err}")
 
@@ -1925,8 +1929,14 @@ async def delete_file_folder(request: Request, _auth: Session = Depends(require_
     if deleted_msg_ids:
         try:
             client = get_client()
-            await client.delete_messages(STORAGE_CHANNEL, message_ids=deleted_msg_ids)
-            logger.info(f"Deleted {len(deleted_msg_ids)} message(s) from Telegram Storage Channel.")
+            if client and STORAGE_CHANNEL:
+                for i in range(0, len(deleted_msg_ids), 100):
+                    chunk = deleted_msg_ids[i:i + 100]
+                    try:
+                        await client.delete_messages(STORAGE_CHANNEL, message_ids=chunk)
+                    except Exception as chunk_err:
+                        logger.warning(f"Telegram chunk delete warning: {chunk_err}")
+                logger.info(f"Deleted {len(deleted_msg_ids)} message(s) from Telegram Storage Channel.")
         except Exception as e:
             logger.warning(f"Failed to delete message(s) from Telegram Storage Channel: {e}")
 
@@ -2040,10 +2050,10 @@ async def bulk_delete_api(request: Request, _auth: Session = Depends(require_aut
 
     # Record change events for sync engine
     try:
-        from utils.sync import ChangeTracker, broadcast_sync_event
+        from utils.sync import record_change_async, broadcast_sync_event
         for _eid, _etype in _bulk_del_entities:
             op = "FILE_DELETED" if _etype == "file" else "FOLDER_DELETED"
-            ver = ChangeTracker.record(op, _eid, _etype, "admin")
+            ver = await record_change_async(op, _eid, _etype)
             if ver > 0:
                 broadcast_sync_event(op, _eid, _etype, ver, "admin")
     except Exception as sync_err:
@@ -2053,11 +2063,15 @@ async def bulk_delete_api(request: Request, _auth: Session = Depends(require_aut
     if deleted_msg_ids:
         try:
             client = get_client()
-            # Delete in chunks of 100 to respect Telegram API limits
-            for i in range(0, len(deleted_msg_ids), 100):
-                chunk = deleted_msg_ids[i:i + 100]
-                await client.delete_messages(STORAGE_CHANNEL, message_ids=chunk)
-            logger.info(f"Bulk deleted {len(deleted_msg_ids)} message(s) from Telegram Storage Channel.")
+            if client and STORAGE_CHANNEL:
+                # Delete in chunks of 100 to respect Telegram API limits
+                for i in range(0, len(deleted_msg_ids), 100):
+                    chunk = deleted_msg_ids[i:i + 100]
+                    try:
+                        await client.delete_messages(STORAGE_CHANNEL, message_ids=chunk)
+                    except Exception as chunk_err:
+                        logger.warning(f"Telegram chunk delete warning: {chunk_err}")
+                logger.info(f"Bulk deleted {len(deleted_msg_ids)} message(s) from Telegram Storage Channel.")
         except Exception as e:
             logger.warning(f"Failed to bulk delete messages from Telegram Storage Channel: {e}")
 
@@ -2093,10 +2107,10 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
 
     # Record change events for sync engine
     try:
-        from utils.sync import ChangeTracker, broadcast_sync_event
+        from utils.sync import record_change_async, broadcast_sync_event
         for _eid, _etype in _bulk_trash_entities:
             op = ("FILE_TRASHED" if _etype == "file" else "FOLDER_TRASHED") if trash else ("FILE_RESTORED" if _etype == "file" else "FOLDER_RESTORED")
-            ver = ChangeTracker.record(op, _eid, _etype, "admin")
+            ver = await record_change_async(op, _eid, _etype)
             if ver > 0:
                 broadcast_sync_event(op, _eid, _etype, ver, "admin")
     except Exception as sync_err:
@@ -3301,6 +3315,41 @@ async def api_admin_reload_drive_data(_session: Session = Depends(require_auth))
         pass
     root_items = [c.name for c in drive.contents.get("/", getattr(drive, "contents", {})).contents.values()]
     return JSONResponse({"status": "ok", "message": "Drive data reloaded from disk", "roots": root_items})
+
+
+@app.get("/api/telegram/status")
+async def api_telegram_status():
+    """
+    Returns the health and concurrency state of all Telegram bots/clients.
+    No auth required — safe to poll from monitoring tools.
+
+    Response includes:
+      - clients: list of each bot with connected/flooded/load info
+      - gate:    current tg_gate pacing + concurrency counters
+    """
+    from utils.clients import multi_clients, work_loads, get_client_status
+    from utils import tg_gate
+
+    gate_stats = tg_gate.stats()
+
+    clients_info = []
+    for idx, client in multi_clients.items():
+        c_key = str(getattr(client, "name", None) or id(client))
+        cooldown = round(tg_gate.get_client_cooldown(c_key), 1)
+        clients_info.append({
+            "index": idx,
+            "name": getattr(client, "name", f"client_{idx}"),
+            "connected": getattr(client, "is_connected", lambda: False)(),
+            "flooded": cooldown > 0,
+            "flood_cooldown_s": cooldown,
+            "work_load": work_loads.get(idx, 0),
+        })
+
+    return JSONResponse({
+        "clients": clients_info,
+        "gate": gate_stats,
+        "summary": get_client_status(),
+    })
 
 
 @app.get("/api/admin/scanChannelMessages")

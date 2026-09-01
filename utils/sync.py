@@ -91,6 +91,9 @@ class ChangeTracker:
         This should be called INSIDE the same transaction as the mutation,
         or immediately after a successful mutation before drive.save().
         """
+        if not entity_id:
+            logger.debug("[SYNC] Skipping record: entity_id is empty/None (op=%s)", operation)
+            return 0
         try:
             with get_db_session() as session:
                 new_version = DatabaseRepository.increment_version(session=session)
@@ -314,13 +317,37 @@ class SyncService:
         return {
             "current_version": current_version,
             "changes": changes,
-        }
+        }# ---------------------------------------------------------------------------
+# Non-blocking helpers for use inside async handlers
+# ---------------------------------------------------------------------------
+
+import concurrent.futures
+
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+
+async def record_change_async(
+    operation: str,
+    entity_id: str,
+    entity_type: str = "file",
+    user_id: str = "admin",
+    **kwargs,
+) -> int:
+    """
+    Non-blocking wrapper around ChangeTracker.record() for use in async handlers.
+    Runs the synchronous DB operation in a thread pool so the event loop is never
+    blocked.  Returns 0 on failure (non-fatal).
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        _thread_pool,
+        lambda: ChangeTracker.record(operation, entity_id, entity_type, user_id, **kwargs),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Broadcast helper — notify WebSocket clients after mutations
 # ---------------------------------------------------------------------------
-
 def broadcast_sync_event(operation: str, entity_id: str, entity_type: str, version: int, user_id: str = "admin") -> None:
     """
     Schedules a WebSocket broadcast for connected clients.
@@ -337,10 +364,10 @@ def broadcast_sync_event(operation: str, entity_id: str, entity_type: str, versi
             "user_id": user_id,
         }
         # Fire-and-forget broadcast — runs in the event loop
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        try:
+            loop = asyncio.get_running_loop()
             loop.create_task(ws_manager.broadcast_to_user(user_id, event))
-        else:
-            loop.run_until_complete(ws_manager.broadcast_to_user(user_id, event))
+        except RuntimeError:
+            pass  # No running event loop (e.g. called from CLI)
     except Exception as e:
         logger.debug("WebSocket broadcast skipped: %s", e)

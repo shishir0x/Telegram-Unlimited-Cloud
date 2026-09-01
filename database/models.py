@@ -63,11 +63,13 @@ class FolderModel(Base):
         "FolderModel",
         backref=backref("parent", remote_side=[id]),
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     files = relationship(
         "FileModel",
         back_populates="folder",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     __table_args__ = (
