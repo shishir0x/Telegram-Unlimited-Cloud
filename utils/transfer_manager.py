@@ -318,9 +318,11 @@ class TransferManager:
         self._initialized = True
 
         import config
+        from utils.extra import is_low_memory_env
         bot_count = len(getattr(config, "BOT_TOKENS", []))
-        default_uploads = max(4, bot_count)
-        default_downloads = max(4, bot_count)
+        low_mem = is_low_memory_env()
+        default_uploads = min(2, bot_count) if low_mem else max(4, bot_count)
+        default_downloads = min(2, bot_count) if low_mem else max(4, bot_count)
 
         self.max_concurrent_uploads = int(os.getenv("MAX_CONCURRENT_UPLOADS", str(default_uploads if max_concurrent_uploads is None else max_concurrent_uploads)))
         self.max_concurrent_downloads = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", str(default_downloads if max_concurrent_downloads is None else max_concurrent_downloads)))
@@ -865,7 +867,7 @@ class TransferManager:
                 item.completion_time = time.time()
                 PROGRESS_CACHE[item.id] = ("completed", actual_size, actual_size, item.filename)
 
-                # Generate thumbnail cache if media
+                # Generate thumbnail cache if media (safely without blowing RAM)
                 try:
                     ext = item.filename.rsplit(".", 1)[-1].lower() if "." in item.filename else ""
                     if ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]:
@@ -873,9 +875,16 @@ class TransferManager:
                         thumb_cache_dir = Path("./cache/thumbs")
                         thumb_cache_dir.mkdir(parents=True, exist_ok=True)
                         with Image.open(str(file_path)) as img:
-                            img = img.convert("RGB")
-                            img.thumbnail((320, 320), Image.Resampling.LANCZOS)
-                            img.save(thumb_cache_dir / f"{message.id}.jpg", format="JPEG", quality=75, optimize=True)
+                            # Protect against giant resolution images (decompression bombs)
+                            if img.width <= 6000 and img.height <= 6000:
+                                if hasattr(img, "draft"):
+                                    try:
+                                        img.draft("RGB", (320, 320))
+                                    except Exception:
+                                        pass
+                                img = img.convert("RGB")
+                                img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                                img.save(thumb_cache_dir / f"{message.id}.jpg", format="JPEG", quality=75, optimize=True)
                 except Exception as thumb_err:
                     logger.debug(f"Thumbnail pre-generation note: {thumb_err}")
 
@@ -1052,6 +1061,8 @@ class TransferManager:
                     p.unlink(missing_ok=True)
             except Exception as e:
                 logger.debug(f"Temp file cleanup note for {item.id}: {e}")
+        from utils.extra import clean_memory
+        clean_memory()
 
 
 # Singleton instance

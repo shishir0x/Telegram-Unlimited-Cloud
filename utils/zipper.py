@@ -23,6 +23,9 @@ def cleanup_temp_zip(zip_path: Path):
             logger.info(f"Cleaned up temporary zip archive: {zip_path.name}")
     except Exception as e:
         logger.warning(f"Failed to delete temporary zip {zip_path}: {e}")
+    finally:
+        from utils.extra import clean_memory
+        clean_memory()
 
 
 async def create_zip_archive(
@@ -59,6 +62,15 @@ async def create_zip_archive(
     # preventing OOM when archiving multi-GB selections.
     scratch_path = TEMP_ZIP_DIR / f".scratch_{unique_token}.bin"
     
+    # Prune stale temp zip files older than 1 hour to prevent disk/RAM leak
+    try:
+        now_ts = time.time()
+        for old_f in TEMP_ZIP_DIR.iterdir():
+            if old_f.is_file() and (now_ts - old_f.stat().st_mtime > 3600):
+                old_f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
     total_items = len(items)
     logger.info(f"Starting ZIP creation for {total_items} items into '{final_zip_filename}'")
     

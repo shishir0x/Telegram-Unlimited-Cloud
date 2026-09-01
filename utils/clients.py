@@ -11,6 +11,11 @@ import signal
 
 logger = Logger(__name__)
 
+from utils.extra import is_low_memory_env, clean_memory
+_is_low_mem = is_low_memory_env()
+_CLIENT_WORKERS = int(os.getenv("TG_CLIENT_WORKERS", "2" if _is_low_mem else "4"))
+_CLIENT_MAX_TRANSMISSIONS = int(os.getenv("TG_MAX_TRANSMISSIONS", "2" if _is_low_mem else "4"))
+
 multi_clients = {}
 premium_clients = {}
 work_loads = {}
@@ -48,8 +53,8 @@ async def initialize_clients():
                         api_hash=config.API_HASH,
                         bot_token=token,
                         in_memory=False,
-                        max_concurrent_transmissions=8,
-                        workers=16,
+                        max_concurrent_transmissions=_CLIENT_MAX_TRANSMISSIONS,
+                        workers=_CLIENT_WORKERS,
                         no_updates=True,
                     )
                     client.loop = asyncio.get_running_loop()
@@ -66,8 +71,8 @@ async def initialize_clients():
                             api_hash=config.API_HASH,
                             bot_token=token,
                             in_memory=True,
-                            max_concurrent_transmissions=8,
-                            workers=16,
+                            max_concurrent_transmissions=_CLIENT_MAX_TRANSMISSIONS,
+                            workers=_CLIENT_WORKERS,
                             no_updates=True,
                         )
                         client.loop = asyncio.get_running_loop()
@@ -98,8 +103,8 @@ async def initialize_clients():
                     session_string=token,
                     sleep_threshold=config.SLEEP_THRESHOLD,
                     in_memory=True,
-                    max_concurrent_transmissions=8,
-                    workers=16,
+                    max_concurrent_transmissions=_CLIENT_MAX_TRANSMISSIONS,
+                    workers=_CLIENT_WORKERS,
                     no_updates=True,
                 ).start()
 
@@ -197,8 +202,10 @@ async def initialize_clients():
                 asyncio.create_task(auto_sync_database_loop())
             except Exception as e:
                 logger.warning(f"Initial drive data load deferred until bot connection: {e}")
+        clean_memory()
     else:
         logger.warning("No clients ready at startup; drive data load deferred to retry worker.")
+        clean_memory()
 
 
 def get_client(premium_required=False) -> Client:

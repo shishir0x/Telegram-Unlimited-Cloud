@@ -132,6 +132,18 @@ class MetadataExtractor:
         if not fp.exists() or not fp.is_file():
             return None
         try:
+            from utils.extra import is_low_memory_env
+            file_size = fp.stat().st_size
+            # On low-memory environments (Render 512MB), use fast sample hash for large files (>100MB)
+            if is_low_memory_env() and file_size > 100 * 1024 * 1024:
+                h = hashlib.sha256()
+                with open(fp, "rb") as f:
+                    h.update(f.read(1024 * 1024))
+                    f.seek(max(0, file_size - 1024 * 1024))
+                    h.update(f.read(1024 * 1024))
+                h.update(str(file_size).encode())
+                return f"fast-{h.hexdigest()}"
+
             h = hashlib.sha256()
             with open(fp, "rb") as f:
                 while chunk := f.read(65536):
@@ -724,7 +736,11 @@ class FolderStatsCalculator:
             "calculated_at": get_current_iso_time()
         }
 
-        # Cache result
+        # Cache result (bounded to 300 items to avoid RAM bloat)
+        if len(_FOLDER_STATS_CACHE) > 300:
+            excess = len(_FOLDER_STATS_CACHE) - 300
+            for old_k in list(_FOLDER_STATS_CACHE.keys())[:excess]:
+                _FOLDER_STATS_CACHE.pop(old_k, None)
         _FOLDER_STATS_CACHE[folder_id] = (now, stats)
         return stats
 
@@ -1074,3 +1090,5 @@ class MetadataWorker:
                 file_obj.metadata_extra.update(media_meta)
 
         file_obj.metadata_extra["processing_status"] = "complete"
+        from utils.extra import clean_memory
+        clean_memory()

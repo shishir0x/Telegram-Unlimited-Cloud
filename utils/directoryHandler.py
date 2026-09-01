@@ -588,10 +588,15 @@ class NewDriveData:
 
             # Export JSON metadata mirror
             try:
+                from utils.extra import is_low_memory_env
                 dict_snapshot = self.to_dict()
                 json_tmp = drive_json_mirror_path.with_suffix(".tmp")
-                json_tmp.write_text(json.dumps(dict_snapshot, indent=2, default=str), encoding="utf-8")
+                if is_low_memory_env():
+                    json_tmp.write_text(json.dumps(dict_snapshot, default=str), encoding="utf-8")
+                else:
+                    json_tmp.write_text(json.dumps(dict_snapshot, indent=2, default=str), encoding="utf-8")
                 os.replace(json_tmp, drive_json_mirror_path)
+                del dict_snapshot
             except Exception as json_e:
                 logger.debug(f"JSON mirror export skipped: {json_e}")
 
@@ -604,6 +609,9 @@ class NewDriveData:
                     tmp_path.unlink()
                 except Exception:
                     pass
+        finally:
+            from utils.extra import clean_memory
+            clean_memory()
 
     def _ensure_folder_chain(self, segments: List[str]) -> Folder:
         """

@@ -27,6 +27,12 @@ if config.IS_REMOTE_DB:
     # NullPool avoids client-side stale connection retention and socket termination errors.
     from sqlalchemy.pool import NullPool
     engine_kwargs["poolclass"] = NullPool
+    engine_kwargs["connect_args"] = {
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
 else:
     # SQLite local engine settings
     engine_kwargs["connect_args"] = {"check_same_thread": False}
@@ -57,10 +63,16 @@ def get_db_session() -> Generator[Session, None, None]:
         yield session
         session.commit()
     except Exception:
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        session.close()
+        try:
+            session.close()
+        except Exception:
+            pass
 
 
 def get_db():

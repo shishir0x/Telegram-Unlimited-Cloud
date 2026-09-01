@@ -45,7 +45,8 @@ SUPPORTED_FORMATS = ["zip"]
 @dataclass
 class ArchiveSecurity:
     """Holds per-extraction security limits. Defaults match config.py constants."""
-    max_extract_size: int = 2 * 1024 ** 3   # 2 GB
+    from utils.extra import is_low_memory_env
+    max_extract_size: int = 250 * 1024 * 1024 if is_low_memory_env() else 2 * 1024 ** 3   # 250MB on Render, 2GB default
     max_extract_files: int = 10_000
     max_nesting_depth: int = 32
     max_ratio: int = 200                     # compressed-to-uncompressed ratio cap
@@ -477,6 +478,9 @@ def cleanup_archive_temp(sandbox: Path) -> None:
             logger.info(f"Archive sandbox cleaned up: {sandbox.name}")
     except Exception as e:
         logger.warning(f"Failed to clean archive sandbox {sandbox}: {e}")
+    finally:
+        from utils.extra import clean_memory
+        clean_memory()
 
 
 # ---------------------------------------------------------------------------

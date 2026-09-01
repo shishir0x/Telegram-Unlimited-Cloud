@@ -98,6 +98,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Transfer manager startup note: {e}")
 
+    # Periodic RAM release to host OS (essential for Render 512MB limit)
+    async def auto_memory_cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(60)
+                from utils.extra import clean_memory
+                clean_memory()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(60)
+
+    asyncio.create_task(auto_memory_cleanup_loop())
+
     import socket
     lan_ips = []
     try:
@@ -785,7 +799,14 @@ except ImportError:
 
 
 class ThumbnailService:
-    def __init__(self, max_ram_items: int = 500, max_disk_mb: int = int(os.getenv("THUMB_CACHE_MAX_MB", "500"))):
+    def __init__(self, max_ram_items: int = None, max_disk_mb: int = None):
+        from utils.extra import is_low_memory_env
+        low_mem = is_low_memory_env()
+        if max_ram_items is None:
+            max_ram_items = int(os.getenv("THUMB_MAX_RAM_ITEMS", "30" if low_mem else "100"))
+        if max_disk_mb is None:
+            max_disk_mb = int(os.getenv("THUMB_CACHE_MAX_MB", "150" if low_mem else "500"))
+
         self.ram_cache: collections.OrderedDict[Union[int, str], bytes] = collections.OrderedDict()
         self.max_ram_items = max_ram_items
         self.max_disk_bytes = max_disk_mb * 1024 * 1024
@@ -1626,9 +1647,10 @@ async def upload_file(
     file_size = 0
 
     try:
+        # Stream in conservative 256KB chunks to prevent RAM accumulation on Render (512MB RAM)
+        chunk_size = 256 * 1024
         async with aiofiles.open(file_location, "wb") as buffer:
-            while chunk := await file.read(8 * 1024 * 1024):  # Read file in chunks of 8MB
-                SAVE_PROGRESS[safe_id] = ("running", file_size, total_size)
+            while chunk := await file.read(chunk_size):
                 file_size += len(chunk)
                 if file_size > MAX_FILE_SIZE:
                     raise HTTPException(
@@ -1636,6 +1658,7 @@ async def upload_file(
                         detail=f"File size exceeds {MAX_FILE_SIZE} bytes limit",
                     )
                 await buffer.write(chunk)
+                SAVE_PROGRESS[safe_id] = ("running", file_size, total_size)
     except HTTPException:
         SAVE_PROGRESS[safe_id] = ("error", file_size, total_size)
         file_location.unlink(missing_ok=True)  # Delete partially written file
@@ -1645,6 +1668,12 @@ async def upload_file(
         file_location.unlink(missing_ok=True)
         logger.error(f"Upload {safe_id} failed while streaming to disk: {write_err}")
         raise HTTPException(status_code=500, detail="Failed to store uploaded file")
+    finally:
+        # Immediately close Starlette's SpooledTemporaryFile to free /tmp disk and RAM buffers
+        try:
+            await file.close()
+        except Exception:
+            pass
 
     SAVE_PROGRESS[safe_id] = ("completed", file_size, file_size)
 
@@ -1660,6 +1689,9 @@ async def upload_file(
         relative_path=clean_rel_path,
         batch_id=batch_id,
     )
+
+    from utils.extra import clean_memory
+    clean_memory()
 
     return JSONResponse({"id": safe_id, "status": "ok", "target_path": safe_path})
 

@@ -33,8 +33,10 @@ import config
 
 # ---------------------------------------------------------------------------
 # Tunables (env-overridable, sane defaults)
-# ---------------------------------------------------------------------------
-_default_concurrency = max(4, len(getattr(config, "BOT_TOKENS", [])))
+from utils.extra import is_low_memory_env
+
+_bot_count = len(getattr(config, "BOT_TOKENS", []))
+_default_concurrency = min(2, _bot_count or 1) if is_low_memory_env() else max(4, _bot_count)
 SEND_CONCURRENCY = max(1, int(os.getenv("TG_SEND_CONCURRENCY", str(_default_concurrency))))
 BASE_GAP = float(os.getenv("TG_BASE_GAP", "0.2"))      # min seconds between sends PER CLIENT (was 0.5)
 FLOOD_STEP = float(os.getenv("TG_FLOOD_STEP", "1.0"))  # pacing added per FloodWait event (was 2.0)

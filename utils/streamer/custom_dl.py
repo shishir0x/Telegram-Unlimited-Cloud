@@ -184,6 +184,8 @@ class ByteStreamer:
             client.media_sessions.pop(file_id.dc_id, None)
         finally:
             logger.debug(f"Finished yielding file with {current_part} parts.")
+            from utils.extra import clean_memory
+            clean_memory()
 
     async def clean_cache(self) -> None:
         """
@@ -192,4 +194,6 @@ class ByteStreamer:
         while True:
             await asyncio.sleep(self.clean_timer)
             self.cached_file_ids.clear()
+            from utils.extra import clean_memory
+            clean_memory()
             logger.debug("Cleaned the cache")

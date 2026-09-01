@@ -268,12 +268,18 @@ class DuplicateManager:
                     self._scan_stats["last_error"] = "Drive data not available"
                     return
 
-                # Collect all active non-trashed files
+                # Collect all active non-trashed files with cycle prevention
                 collected_files: List[Tuple[Any, str, str]] = []  # (file_obj, folder_id, display_path)
+                visited_folder_ids: Set[str] = set()
 
                 def traverse(folder_obj, current_path: str = "/"):
                     if getattr(folder_obj, "trash", False):
                         return
+                    f_id = getattr(folder_obj, "id", None) or current_path
+                    if f_id in visited_folder_ids:
+                        return
+                    visited_folder_ids.add(f_id)
+
                     contents = getattr(folder_obj, "contents", {})
                     if not isinstance(contents, dict):
                         return
@@ -389,6 +395,9 @@ class DuplicateManager:
 
                     # Polite background throttling so normal server traffic is unhindered
                     await asyncio.sleep(0.02)
+                    if self._scan_stats["processed_files"] % 25 == 0:
+                        from utils.extra import clean_memory
+                        clean_memory()
 
                 self.save_index()
                 drive.save()
@@ -403,6 +412,8 @@ class DuplicateManager:
                 logger.error(f"Duplicate background scan error: {e}")
             finally:
                 self._is_scanning = False
+                from utils.extra import clean_memory
+                clean_memory()
 
     # --------------------------------------------------------------------------
     # Duplicate Detection & Grouping Engine

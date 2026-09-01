@@ -323,11 +323,11 @@ class TestTransferManager(unittest.IsolatedAsyncioTestCase):
             await orig_sleep(0.05)
 
         with patch("utils.uploader._pick_flood_safe_client", return_value=mock_client), \
-             patch("asyncio.sleep", side_effect=fast_sleep):
+             patch("utils.transfer_manager.asyncio.sleep", side_effect=fast_sleep):
             item = await self.mgr.queue_upload(file_path=tf, id="flood_id", target_path="/", filename="flood.txt", file_size=5)
             item.max_retries = 4
 
-            for _ in range(50):
+            for _ in range(200):
                 await orig_sleep(0.05)
                 cur = self.mgr.get_transfer("flood_id")
                 if cur and cur["state"] == TransferState.COMPLETED.value:

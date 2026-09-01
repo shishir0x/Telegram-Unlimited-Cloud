@@ -56,8 +56,17 @@ def get_file_details(file_name: str):
     return mime_type, category, ext, icon
 
 
-def compute_folder_stats(folder):
-    """Recursively computes total size (bytes), file count, and subfolder count for a folder."""
+def compute_folder_stats(folder, visited=None):
+    """Recursively computes total size (bytes), file count, and subfolder count for a folder with cycle protection."""
+    if visited is None:
+        visited = set()
+
+    folder_id = getattr(folder, "id", None) or (folder.get("id") if isinstance(folder, dict) else None)
+    if folder_id:
+        if folder_id in visited:
+            return 0, 0, 0
+        visited.add(folder_id)
+
     total_size = 0
     file_count = 0
     folder_count = 0
@@ -79,7 +88,7 @@ def compute_folder_stats(folder):
                 file_count += 1
             elif ctype == "folder":
                 folder_count += 1
-                sub_size, sub_files, sub_folders = compute_folder_stats(child)
+                sub_size, sub_files, sub_folders = compute_folder_stats(child, visited)
                 total_size += sub_size
                 file_count += sub_files
                 folder_count += sub_folders
@@ -199,19 +208,25 @@ def reset_cache_dir():
     shutil.rmtree(downloads_dir, ignore_errors=True)
     downloads_dir.mkdir(parents=True, exist_ok=True)
     
-    # In cache directory, only remove temp chunks and files, preserve .session and drive.data files
+    # In cache directory, preserve sessions, drive state, transfers, activity and hashes
+    preserved_names = {
+        "drive.data", "drive.data.bak", "drive.data.checksum", "drive.json",
+        "auth_sessions.json", "transfers.json", "activity_history.json", "hash_index.json"
+    }
     cache_dir.mkdir(parents=True, exist_ok=True)
     for item in cache_dir.iterdir():
-        if item.is_file() and not item.name.endswith(".session") and not item.name.endswith(".session-journal") and item.name != "drive.data" and item.name != "auth_sessions.json":
+        if item.is_file():
+            if item.name.endswith(".session") or item.name.endswith(".session-journal") or item.name in preserved_names:
+                continue
             try:
                 item.unlink(missing_ok=True)
             except Exception:
                 pass
-        elif item.is_dir() and item.name != "thumbs":
+        elif item.is_dir() and item.name not in ("thumbs", "temp_zips", "temp_archives"):
             shutil.rmtree(item, ignore_errors=True)
             
     (cache_dir / "thumbs").mkdir(parents=True, exist_ok=True)
-    logger.info("Cache and downloads directory reset (sessions, drive.data and thumbs dir preserved)")
+    logger.info("Cache and downloads directory reset (state and config files preserved)")
 
 
 def parse_content_disposition(content_disposition):
@@ -267,3 +282,38 @@ def get_filename(headers, url):
             filename = getRandomID()
 
     return filename
+
+
+def is_low_memory_env() -> bool:
+    """Returns True if running on Render or any constrained container (<1GB RAM)."""
+    import os
+    if os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"):
+        return True
+    if os.getenv("LOW_MEMORY_MODE", "0").lower() in ("1", "true", "yes"):
+        return True
+    return False
+
+
+def clean_memory():
+    """
+    Forces Python garbage collection and returns freed memory arenas
+    directly back to the host operating system (via glibc malloc_trim on Linux/Render).
+    Prevents RSS bloat and OOM kills on Render's 512MB RAM tier.
+    """
+    import gc
+    import sys
+    try:
+        gc.collect()
+        if sys.platform.startswith("linux"):
+            import ctypes
+            try:
+                libc = ctypes.CDLL("libc.so.6")
+                if hasattr(libc, "malloc_trim"):
+                    libc.malloc_trim(0)
+            except Exception:
+                try:
+                    ctypes.CDLL(None).malloc_trim(0)
+                except Exception:
+                    pass
+    except Exception:
+        pass

@@ -31,6 +31,11 @@ def validate_download_url(url: str) -> str:
 async def download_progress_callback(status, current, total, id):
     global DOWNLOAD_PROGRESS
 
+    if len(DOWNLOAD_PROGRESS) > 200:
+        excess = len(DOWNLOAD_PROGRESS) - 200
+        for old_k in list(DOWNLOAD_PROGRESS.keys())[:excess]:
+            DOWNLOAD_PROGRESS.pop(old_k, None)
+
     DOWNLOAD_PROGRESS[id] = (
         status,
         current,
@@ -90,6 +95,15 @@ async def download_file(url, id, path, filename, singleThreaded):
     except Exception as e:
         DOWNLOAD_PROGRESS[id] = ("error", 0, 0)
         logger.error(f"Failed to download file: {clean_url} {e}")
+        try:
+            if 'downloader' in locals() and hasattr(downloader, "output_path") and downloader.output_path:
+                p = Path(downloader.output_path)
+                if p.exists():
+                    p.unlink(missing_ok=True)
+        except Exception:
+            pass
+        from utils.extra import clean_memory
+        clean_memory()
 
 
 async def get_file_info_from_url(url):

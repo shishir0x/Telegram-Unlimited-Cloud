@@ -234,7 +234,7 @@ async def start_file_uploader(
             for old_k in list(PROGRESS_CACHE.keys())[:excess]:
                 PROGRESS_CACHE.pop(old_k, None)
 
-        # Pre-generate 10KB thumbnail for instant browser rendering
+        # Pre-generate 10KB thumbnail for instant browser rendering (safely without blowing RAM)
         try:
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
             if ext in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "tiff"]:
@@ -242,9 +242,15 @@ async def start_file_uploader(
                 thumb_cache_dir = os.path.join(".", "cache", "thumbs")
                 os.makedirs(thumb_cache_dir, exist_ok=True)
                 with Image.open(str(file_path)) as img:
-                    img = img.convert("RGB")
-                    img.thumbnail((320, 320), Image.Resampling.LANCZOS)
-                    img.save(os.path.join(thumb_cache_dir, f"{message.id}.jpg"), format="JPEG", quality=75, optimize=True)
+                    if img.width <= 6000 and img.height <= 6000:
+                        if hasattr(img, "draft"):
+                            try:
+                                img.draft("RGB", (320, 320))
+                            except Exception:
+                                pass
+                        img = img.convert("RGB")
+                        img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                        img.save(os.path.join(thumb_cache_dir, f"{message.id}.jpg"), format="JPEG", quality=75, optimize=True)
         except Exception as e:
             logger.warning(f"Failed to pre-generate upload thumbnail for {filename}: {e}")
 
@@ -258,3 +264,5 @@ async def start_file_uploader(
                 os.remove(file_path)
             except Exception:
                 pass
+        from utils.extra import clean_memory
+        clean_memory()

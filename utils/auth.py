@@ -610,6 +610,13 @@ async def _cleanup_expired_stores() -> None:
             for k in old_keys:
                 del _RATE_WINDOWS[k]
 
+            if len(_RATE_WINDOWS) > 1000:
+                excess = len(_RATE_WINDOWS) - 1000
+                for k in list(_RATE_WINDOWS.keys())[:excess]:
+                    _RATE_WINDOWS.pop(k, None)
+
+            from utils.extra import clean_memory
+            clean_memory()
         except Exception as e:
             logger.error(f"Error in auth cleanup task: {e}")
 
