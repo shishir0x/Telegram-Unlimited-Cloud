@@ -199,10 +199,11 @@ app.add_middleware(SecurityHeadersMiddleware)
 from fastapi.middleware.cors import CORSMiddleware
 from config import CORS_ORIGINS
 
+is_wildcard_cors = any(orig == "*" for orig in CORS_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=not is_wildcard_cors,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -281,11 +282,11 @@ async def static_files(file_path):
             content = content.replace("MAX_FILE_SIZE__SDGJDG", str(MAX_FILE_SIZE))
         return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-cache, must-revalidate"})
 
-    # Path traversal shield: resolved target must remain inside website/static
+    # Path traversal shield: resolved target must remain strictly inside website/static and be a regular file
     webroot = Path("website/static").resolve()
     try:
         target = (webroot / file_path).resolve()
-        if not str(target).startswith(str(webroot)):
+        if not target.is_relative_to(webroot) or not target.is_file():
             raise HTTPException(status_code=404, detail="Not found")
     except (ValueError, OSError):
         raise HTTPException(status_code=404, detail="Not found")
@@ -1103,6 +1104,18 @@ async def api_check_password(request: Request):
         return JSONResponse({"status": "Invalid password"}, status_code=401)
 
     client_ip = get_client_ip(request)
+
+    # Two-factor enforcement: if 2FA is active (ADMIN_EMAIL set), remote requests must provide valid OTP
+    if bool(ADMIN_EMAIL):
+        is_local = client_ip in ("127.0.0.1", "::1", "localhost", "testclient")
+        if not is_local:
+            submitted_otp = str(data.get("otp") or "").strip()
+            if not submitted_otp or not verify_otp(submitted_otp):
+                return JSONResponse(
+                    {"status": "otp_required", "detail": "Two-factor authentication code (OTP) required for remote login"},
+                    status_code=401,
+                )
+
     old_token = request.cookies.get(SESSION_COOKIE_NAME)
     token = create_session(ip=client_ip, previous_token=old_token)
     from utils.auth import is_secure_cookie
@@ -1192,16 +1205,22 @@ async def api_login(request: Request):
             except Exception as ee:
                 logger.warning(f"SMTP OTP delivery skipped/failed: {ee}")
 
-        # Always log the OTP code to terminal console for easy developer access
-        logger.info(f"🔑 [VERIFICATION CODE]: {otp} (for {submitted_email})")
+        # Log confirmation without exposing the raw secret code unless in explicit debug mode
+        if os.getenv("LOG_OTP_CONSOLE", "").strip().lower() in ("true", "1", "yes"):
+            logger.info(f"🔑 [DEBUG VERIFICATION CODE]: {otp} (for {submitted_email})")
+        else:
+            masked_email = (submitted_email[:2] + "***@" + submitted_email.split("@")[-1]) if "@" in submitted_email else "***"
+            logger.info(f"🔑 Verification code dispatched successfully for {masked_email}")
 
         # If at least one channel delivered the OTP:
         if delivery_channels:
             msg_text = f"Verification code sent to {' & '.join(delivery_channels)} ({submitted_email}). Check your Telegram Storage Channel or Email inbox."
             return JSONResponse({"status": "otp_sent", "message": msg_text})
 
-        # Fallback
-        return JSONResponse({"status": "otp_sent", "message": f"Verification code generated: {otp}"})
+        # Fallback if no delivery channel succeeded
+        if os.getenv("LOG_OTP_CONSOLE", "").strip().lower() in ("true", "1", "yes"):
+            return JSONResponse({"status": "otp_sent", "message": f"Verification code generated (debug mode): {otp}"})
+        return JSONResponse({"status": "otp_sent", "message": "Verification code generated. Please configure Telegram bot or SMTP to receive codes."})
 
     # ---- Single-factor mode: no ADMIN_EMAIL configured ----
     password_ok = bool(ADMIN_PASSWORD) and verify_password(str(submitted_password), str(ADMIN_PASSWORD))
@@ -1799,8 +1818,10 @@ async def cancel_upload(request: Request, _auth: Session = Depends(require_auth)
         return JSONResponse({"status": "Upload id is required"}, status_code=400)
 
     logger.info(f"cancelUpload id={upload_id}")
-    STOP_TRANSMISSION.append(upload_id)
-    STOP_DOWNLOAD.append(upload_id)
+    if upload_id not in STOP_TRANSMISSION:
+        STOP_TRANSMISSION.append(upload_id)
+    if upload_id not in STOP_DOWNLOAD:
+        STOP_DOWNLOAD.append(upload_id)
     await transfer_manager.cancel_transfer(upload_id)
     return JSONResponse({"status": "ok"})
 

@@ -338,7 +338,7 @@ async def record_change_async(
     Runs the synchronous DB operation in a thread pool so the event loop is never
     blocked.  Returns 0 on failure (non-fatal).
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         _thread_pool,
         lambda: ChangeTracker.record(operation, entity_id, entity_type, user_id, **kwargs),

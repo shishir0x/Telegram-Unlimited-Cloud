@@ -231,6 +231,19 @@ def _check_rate_limit(category: str, ip: str, limit: int, window_seconds: int) -
     key = f"{category}:{ip}"
     now = time.time()
 
+    # Periodic cleanup of expired rate windows to prevent unbounded memory growth
+    if len(_RATE_WINDOWS) > 300:
+        stale_keys = [
+            k for k, v in _RATE_WINDOWS.items()
+            if now - v.get("window_start", 0) > 300
+        ]
+        for k in stale_keys:
+            _RATE_WINDOWS.pop(k, None)
+        if len(_RATE_WINDOWS) > 1000:
+            sorted_keys = sorted(_RATE_WINDOWS.keys(), key=lambda k: _RATE_WINDOWS[k].get("window_start", 0))
+            for k in sorted_keys[: len(_RATE_WINDOWS) - 500]:
+                _RATE_WINDOWS.pop(k, None)
+
     entry = _RATE_WINDOWS.get(key)
     if entry is None or now - entry["window_start"] > window_seconds:
         _RATE_WINDOWS[key] = {"count": 1, "window_start": now}

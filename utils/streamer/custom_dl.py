@@ -1,5 +1,6 @@
 import asyncio
-from typing import Dict, Union
+import time
+from typing import Dict, Union, Tuple
 from pyrogram import Client, utils, raw
 from .file_properties import get_file_ids
 from pyrogram.session import Session, Auth
@@ -14,25 +15,36 @@ class ByteStreamer:
     def __init__(self, client: Client):
         self.clean_timer = 30 * 60
         self.client: Client = client
-        self.cached_file_ids: Dict[int, FileId] = {}
-        try:
-            asyncio.get_running_loop()
-            asyncio.create_task(self.clean_cache())
-        except RuntimeError:
-            # Not inside a running event loop yet; schedule on first call instead
-            pass
+        self.cached_file_ids: Dict[int, Tuple[float, FileId]] = {}
+        self.last_cleaned: float = time.time()
+
+    def _prune_cache_if_needed(self) -> None:
+        now = time.time()
+        if now - self.last_cleaned > self.clean_timer or len(self.cached_file_ids) > 200:
+            expired = [mid for mid, (ts, _) in self.cached_file_ids.items() if now - ts > self.clean_timer]
+            for mid in expired:
+                self.cached_file_ids.pop(mid, None)
+            if len(self.cached_file_ids) > 200:
+                sorted_keys = sorted(self.cached_file_ids.keys(), key=lambda k: self.cached_file_ids[k][0])
+                for mid in sorted_keys[: len(self.cached_file_ids) - 200]:
+                    self.cached_file_ids.pop(mid, None)
+            self.last_cleaned = now
+            from utils.extra import clean_memory
+            clean_memory()
 
     async def get_file_properties(self, channel, message_id: int) -> FileId:
+        self._prune_cache_if_needed()
         if message_id not in self.cached_file_ids:
             await self.generate_file_properties(channel, message_id)
-        return self.cached_file_ids[message_id]
+        return self.cached_file_ids[message_id][1]
 
     async def generate_file_properties(self, channel, message_id: int) -> FileId:
+        self._prune_cache_if_needed()
         file_id = await get_file_ids(self.client, channel, message_id)
         if not file_id:
             raise Exception("FileNotFound")
-        self.cached_file_ids[message_id] = file_id
-        return self.cached_file_ids[message_id]
+        self.cached_file_ids[message_id] = (time.time(), file_id)
+        return file_id
 
     async def generate_media_session(self, client: Client, file_id: FileId) -> Session:
         """
@@ -189,11 +201,10 @@ class ByteStreamer:
 
     async def clean_cache(self) -> None:
         """
-        function to clean the cache to reduce memory usage
+        Function to clean the cache to reduce memory usage.
         """
-        while True:
-            await asyncio.sleep(self.clean_timer)
-            self.cached_file_ids.clear()
-            from utils.extra import clean_memory
-            clean_memory()
-            logger.debug("Cleaned the cache")
+        self.cached_file_ids.clear()
+        self.last_cleaned = time.time()
+        from utils.extra import clean_memory
+        clean_memory()
+        logger.debug("Cleaned the cache")

@@ -211,14 +211,15 @@ def load_drive_data_from_db() -> Optional["NewDriveData"]:
 
 LAST_LOADED_DB_VERSION: int = 0
 _last_version_check_time: float = 0.0
+_is_syncing_db: bool = False
 
 
 def check_and_sync_db_if_stale():
     """Checks if the shared PostgreSQL database has newer mutations than our in-memory cache.
     Throttled to at most once every 5 seconds to prevent query overhead during rapid operations."""
-    global _last_version_check_time, LAST_LOADED_DB_VERSION, DRIVE_DATA
+    global _last_version_check_time, LAST_LOADED_DB_VERSION, DRIVE_DATA, _is_syncing_db
     now = time.time()
-    if now - _last_version_check_time < 5.0:
+    if now - _last_version_check_time < 5.0 or _is_syncing_db:
         return
     _last_version_check_time = now
 
@@ -226,6 +227,7 @@ def check_and_sync_db_if_stale():
     if DRIVE_DATA is not None and getattr(DRIVE_DATA, "isUpdated", False):
         return
 
+    _is_syncing_db = True
     try:
         from database.repository import DatabaseRepository
         curr = DatabaseRepository.get_current_version()
@@ -240,9 +242,11 @@ def check_and_sync_db_if_stale():
                     FolderStatsCalculator.invalidate_cache()
                 except Exception:
                     pass
-                logger.info(f"✅ In-memory drive data updated to match cloud database version {curr}.")
+                logger.info(f"✅ In-memory drive synchronized from database (v{curr}).")
     except Exception as e:
-        logger.debug(f"check_and_sync_db_if_stale note: {e}")
+        logger.debug(f"DB stale check note: {e}")
+    finally:
+        _is_syncing_db = False
 
 
 def ensure_drive_data(force_reload: bool = False):
@@ -312,8 +316,9 @@ def getRandomID():
     drive = ensure_drive_data()
     if drive and not isinstance(drive.used_ids, set):
         drive.used_ids = set(drive.used_ids)
+    alphabet = string.ascii_uppercase + string.digits
     while True:
-        id = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        id = "".join(secrets.choice(alphabet) for _ in range(6))
         if not drive:
             return id
         # used_ids is a set for O(1) lookup

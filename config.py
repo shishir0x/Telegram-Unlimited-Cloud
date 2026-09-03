@@ -197,6 +197,8 @@ def validate_config(raise_on_error: bool = False) -> tuple[bool, list[str]]:
         errors.append("ADMIN_PASSWORD is using an insecure default or empty value. Set a strong password.")
     if not ADMIN_EMAIL:
         warnings.append("ADMIN_EMAIL is not set. OTP 2FA verification will not be available.")
+    if "*" in CORS_ORIGINS:
+        warnings.append("CORS_ORIGINS contains '*'. Cross-origin credentials are disabled for security. Specify explicit origins to allow credentials.")
 
     is_valid = len(errors) == 0
 

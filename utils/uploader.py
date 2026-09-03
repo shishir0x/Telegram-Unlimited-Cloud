@@ -209,8 +209,10 @@ async def start_file_uploader(
 
         # Record change event for sync engine
         try:
-            from utils.sync import record_change_async
-            await record_change_async("FILE_CREATED", new_item_id, "file")
+            from utils.sync import record_change_async, broadcast_sync_event
+            ver = await record_change_async("FILE_CREATED", new_item_id, "file")
+            if ver and ver > 0:
+                broadcast_sync_event("FILE_CREATED", new_item_id, "file", ver, "admin")
         except Exception as sync_err:
             logger.debug(f"Sync tracking note (upload): {sync_err}")
 
@@ -227,12 +229,6 @@ async def start_file_uploader(
         from utils.directoryHandler import backup_drive_data
         asyncio.create_task(backup_drive_data(loop=False))
         PROGRESS_CACHE[id] = ("completed", size, size, filename)
-
-        # Keep cache bounded to latest 200 upload items
-        if len(PROGRESS_CACHE) > 200:
-            excess = len(PROGRESS_CACHE) - 200
-            for old_k in list(PROGRESS_CACHE.keys())[:excess]:
-                PROGRESS_CACHE.pop(old_k, None)
 
         # Pre-generate 10KB thumbnail for instant browser rendering (safely without blowing RAM)
         try:
@@ -259,6 +255,11 @@ async def start_file_uploader(
         logger.error(f"Failed to upload file {file_path} {id}: {e}")
         PROGRESS_CACHE[id] = ("error", 0, file_size, filename)
     finally:
+        # Keep cache bounded to latest 200 upload items across all outcomes (success/error/cancel)
+        if len(PROGRESS_CACHE) > 200:
+            excess = len(PROGRESS_CACHE) - 200
+            for old_k in list(PROGRESS_CACHE.keys())[:excess]:
+                PROGRESS_CACHE.pop(old_k, None)
         if delete:
             try:
                 os.remove(file_path)

@@ -280,6 +280,8 @@ class TransferStore:
                 
                 # Atomic replace
                 temp_file.replace(self.filepath)
+                # Synchronize in-memory dict so historical transfers do not leak memory in RAM
+                self.transfers = {t.id: t for t in (active_items + trimmed_inactive)}
                 self._dirty = False
             except Exception as e:
                 logger.error(f"Failed to persist transfers: {e}")
@@ -775,6 +777,10 @@ class TransferManager:
         # Resilient loop with exponential backoff
         while item.retry_count <= item.max_retries and self._running:
             if item.state == TransferState.CANCELLED or (item._cancel_event and item._cancel_event.is_set()) or item.id in STOP_TRANSMISSION:
+                try:
+                    STOP_TRANSMISSION.remove(item.id)
+                except ValueError:
+                    pass
                 item.state = TransferState.CANCELLED
                 item.error_reason = "Cancelled by user"
                 item.completion_time = time.time()
@@ -837,8 +843,10 @@ class TransferManager:
 
                 # Record change event for sync engine
                 try:
-                    from utils.sync import record_change_async
-                    await record_change_async("FILE_CREATED", new_item_id, "file")
+                    from utils.sync import record_change_async, broadcast_sync_event
+                    ver = await record_change_async("FILE_CREATED", new_item_id, "file")
+                    if ver and ver > 0:
+                        broadcast_sync_event("FILE_CREATED", new_item_id, "file", ver, "admin")
                 except Exception as sync_err:
                     logger.debug(f"Sync tracking note (transfer_manager upload): {sync_err}")
 
@@ -972,6 +980,10 @@ class TransferManager:
 
         while item.retry_count <= item.max_retries and self._running:
             if item.state == TransferState.CANCELLED or (item._cancel_event and item._cancel_event.is_set()) or item.id in STOP_DOWNLOAD:
+                try:
+                    STOP_DOWNLOAD.remove(item.id)
+                except ValueError:
+                    pass
                 item.state = TransferState.CANCELLED
                 item.error_reason = "Cancelled by user"
                 item.completion_time = time.time()
@@ -996,6 +1008,10 @@ class TransferManager:
 
                 while downloader.is_running and self._running:
                     if item.state == TransferState.CANCELLED or (item._cancel_event and item._cancel_event.is_set()) or item.id in STOP_DOWNLOAD:
+                        try:
+                            STOP_DOWNLOAD.remove(item.id)
+                        except ValueError:
+                            pass
                         await downloader.stop()
                         item.state = TransferState.CANCELLED
                         item.error_reason = "Cancelled by user"

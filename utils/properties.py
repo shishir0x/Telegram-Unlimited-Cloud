@@ -436,6 +436,16 @@ class ActivityTracker:
             last_ts = _ACTIVITY_THROTTLE.get(throttle_key, 0.0)
             if now_ts - last_ts < _ACTIVITY_THROTTLE_WINDOW:
                 return
+
+            # Bound cache to avoid memory leak under high item volume
+            if len(_ACTIVITY_THROTTLE) > 300:
+                expired = [k for k, ts in _ACTIVITY_THROTTLE.items() if now_ts - ts > _ACTIVITY_THROTTLE_WINDOW]
+                for k in expired:
+                    _ACTIVITY_THROTTLE.pop(k, None)
+                if len(_ACTIVITY_THROTTLE) > 1000:
+                    for old_k in list(_ACTIVITY_THROTTLE.keys())[: len(_ACTIVITY_THROTTLE) - 500]:
+                        _ACTIVITY_THROTTLE.pop(old_k, None)
+
             _ACTIVITY_THROTTLE[throttle_key] = now_ts
 
         if not hasattr(item, "activity_history") or not isinstance(item.activity_history, list):
