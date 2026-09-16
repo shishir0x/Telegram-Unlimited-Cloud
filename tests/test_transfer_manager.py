@@ -40,6 +40,18 @@ class TestTransferManager(unittest.IsolatedAsyncioTestCase):
         self.cache_dir = os.path.join(self.test_dir, "cache")
         os.makedirs(self.cache_dir, exist_ok=True)
 
+        self.mock_drive = MagicMock()
+        self.mock_drive.new_file.return_value = "mock_file_id"
+        self.mock_drive.find_item_by_id.return_value = None
+        self.patcher_drive = patch("utils.directoryHandler.ensure_drive_data", return_value=self.mock_drive)
+        self.patcher_backup = patch("utils.directoryHandler.backup_drive_data", new_callable=AsyncMock)
+        self.patcher_sync = patch("utils.sync.record_change_async", new_callable=AsyncMock, return_value=1)
+        self.patcher_broadcast = patch("utils.sync.broadcast_sync_event")
+        self.patcher_drive.start()
+        self.patcher_backup.start()
+        self.patcher_sync.start()
+        self.patcher_broadcast.start()
+
         self.mgr = TransferManager(
             store_path=self.store_path,
             max_concurrent_uploads=2,
@@ -50,6 +62,10 @@ class TestTransferManager(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.mgr.shutdown()
+        self.patcher_drive.stop()
+        self.patcher_backup.stop()
+        self.patcher_sync.stop()
+        self.patcher_broadcast.stop()
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     async def test_1_successful_upload(self):
