@@ -2161,8 +2161,7 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
     except Exception:
         pass
 
-    for path in paths:
-        drive.trash_file_folder(path, trash)
+    processed_count = drive.bulk_trash(paths, trash)
 
     # Record change events for sync engine
     try:
@@ -2176,7 +2175,7 @@ async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth
         logger.debug(f"Sync tracking note (bulk_trash): {sync_err}")
 
     asyncio.create_task(backup_drive_data(loop=False))
-    return JSONResponse({"status": "ok", "processed_count": len(paths)})
+    return JSONResponse({"status": "ok", "processed_count": processed_count})
 
 
 @app.post("/api/getFileInfoFromUrl")

@@ -251,6 +251,30 @@ class DatabaseRepository:
             return _op(session)
         return DatabaseRepository._run_with_retry(_op)
 
+    @classmethod
+    def bulk_trash_items(cls, item_ids: List[str], trash: bool, session: Optional[Session] = None) -> int:
+        if not item_ids:
+            return 0
+
+        def _op(s: Session) -> int:
+            now = utc_now() if trash else None
+            # Update folders
+            s.query(FolderModel).filter(FolderModel.id.in_(item_ids)).update(
+                {FolderModel.trash: trash, FolderModel.trashed_at: now, FolderModel.updated_at: utc_now()},
+                synchronize_session=False,
+            )
+            # Update files
+            s.query(FileModel).filter(FileModel.id.in_(item_ids)).update(
+                {FileModel.trash: trash, FileModel.trashed_at: now, FileModel.updated_at: utc_now()},
+                synchronize_session=False,
+            )
+            DatabaseRepository.increment_version(session=s)
+            return len(item_ids)
+
+        if session:
+            return _op(session)
+        return DatabaseRepository._run_with_retry(_op)
+
     @staticmethod
     def update_tags(item_id: str, tags: List[str], session: Optional[Session] = None) -> bool:
         def _op(s: Session):

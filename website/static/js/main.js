@@ -1653,7 +1653,9 @@ async function bulkDeleteSelected() {
     if (!confirm(msg)) return;
 
     const paths = Array.from(window.SELECTED_ITEMS.values()).map(item => {
-        return (item.path + '/' + item.id).replaceAll('//', '/');
+        const itemPath = (item && item.path) ? item.path : (typeof getCurrentPath === 'function' ? getCurrentPath() : '/');
+        const itemId = (item && item.id) ? item.id : item;
+        return (itemPath + '/' + itemId).replaceAll('//', '/');
     });
 
     if (isTrash) {
@@ -1663,7 +1665,7 @@ async function bulkDeleteSelected() {
             deselectAllItems();
             getCurrentDirectory();
         } else {
-            alert('Failed to delete selected items.');
+            showToast('Failed to delete selected items.', 'error');
         }
     } else {
         const res = await postJson('/api/bulkTrash', { paths, trash: true });
@@ -1672,7 +1674,7 @@ async function bulkDeleteSelected() {
             deselectAllItems();
             getCurrentDirectory();
         } else {
-            alert('Failed to trash selected items.');
+            showToast('Failed to trash selected items.', 'error');
         }
     }
 }

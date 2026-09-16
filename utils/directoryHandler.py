@@ -1184,6 +1184,58 @@ class NewDriveData:
             self.save()
             logger.info(f"Item at path '{path}' {action.lower()} successfully.")
 
+    def bulk_trash(self, paths: list[str], trash: bool = True) -> int:
+        action = "Trashing" if trash else "Restoring"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        affected_ids = []
+
+        for path in paths:
+            clean = path.strip("/")
+            if "/" in clean:
+                folder_path = "/" + "/".join(clean.split("/")[:-1])
+                file_id = clean.split("/")[-1]
+            else:
+                folder_path = "/"
+                file_id = clean
+
+            folder_data = self.get_directory(folder_path)
+            target_item = None
+            if folder_data and hasattr(folder_data, "contents") and file_id in folder_data.contents:
+                target_item = folder_data.contents[file_id]
+            else:
+                target_item = self.find_item_by_id(file_id)
+
+            if target_item:
+                target_item.trash = trash
+                if trash:
+                    target_item.trashed_at = now_iso
+                else:
+                    target_item.restored_at = now_iso
+                affected_ids.append(target_item.id)
+                try:
+                    from utils.properties import ActivityTracker
+                    ActivityTracker.record_activity(target_item, "trashed" if trash else "restored")
+                except Exception:
+                    pass
+
+        # Update database in single bulk transaction
+        if affected_ids:
+            try:
+                from database.repository import DatabaseRepository
+                DatabaseRepository.bulk_trash_items(affected_ids, trash)
+            except Exception as db_err:
+                logger.warning(f"Database sync note (bulk_trash): {db_err}")
+
+        try:
+            from utils.properties import FolderStatsCalculator
+            FolderStatsCalculator.invalidate_cache()
+        except Exception:
+            pass
+
+        self.save()
+        logger.info(f"Bulk {action.lower()} {len(affected_ids)} item(s) successfully.")
+        return len(affected_ids)
+
     def get_trashed_files_folders(self):
         root_dir = self.get_directory("/")
         trash_data = {}

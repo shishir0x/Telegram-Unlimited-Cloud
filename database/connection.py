@@ -195,6 +195,20 @@ def init_db(force: bool = False) -> bool:
         # Ensure the sync version seed row exists
         _ensure_sync_tables()
 
+        # Enforce Row Level Security (RLS) on public schema tables if PostgreSQL
+        if config.IS_REMOTE_DB:
+            try:
+                with sync_engine.connect() as conn:
+                    for tbl in ["folders", "files", "sync_version", "sync_changelog"]:
+                        try:
+                            conn.execute(text(f"ALTER TABLE public.{tbl} ENABLE ROW LEVEL SECURITY;"))
+                        except Exception:
+                            pass
+                    conn.commit()
+                logger.info("Enforced Row Level Security (RLS) on public tables.")
+            except Exception as rls_err:
+                logger.debug(f"RLS enforcement note: {rls_err}")
+
         logger.info(f"Database schema initialized ({'PostgreSQL' if config.IS_REMOTE_DB else 'SQLite'}).")
 
         # Ensure root folder exists
