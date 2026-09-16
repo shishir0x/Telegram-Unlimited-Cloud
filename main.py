@@ -211,7 +211,7 @@ app.add_middleware(
 
 # Page Routes
 
-@app.api_route("/", methods=["GET", "HEAD"])
+@app.api_route("/", methods=["GET", "HEAD", "POST", "OPTIONS"])
 async def home_page():
     return FileResponse("website/home.html")
 
@@ -232,13 +232,13 @@ async def health_check():
     )
 
 
-@app.get("/health/live")
+@app.api_route("/health/live", methods=["GET", "HEAD", "POST", "OPTIONS"])
 async def liveness_check():
     """Liveness probe: verifies process is alive and responsive."""
     return JSONResponse({"status": "alive"}, status_code=200)
 
 
-@app.get("/health/ready")
+@app.api_route("/health/ready", methods=["GET", "HEAD", "POST", "OPTIONS"])
 async def readiness_check():
     """Readiness probe: verifies Telegram connectivity, database connectivity, and metadata readiness."""
     from utils.clients import is_telegram_ready
