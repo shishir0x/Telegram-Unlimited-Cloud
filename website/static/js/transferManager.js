@@ -113,9 +113,13 @@ window.TRANSFER_MANAGER = (function () {
         }
         _pollInterval = setTimeout(runLoop, pollDelay);
 
+        let _visTransferDebounce = null;
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
-                fetchTransfers();
+                if (_visTransferDebounce) clearTimeout(_visTransferDebounce);
+                _visTransferDebounce = setTimeout(() => {
+                    fetchTransfers();
+                }, 800);
             }
         });
     }

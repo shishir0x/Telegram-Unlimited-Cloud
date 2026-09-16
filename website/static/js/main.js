@@ -3828,9 +3828,13 @@ function initSyncActivityManager() {
     }
     scheduleNextSyncPoll();
 
+    let _visPollDebounce = null;
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
-            pollSyncStatus();
+            if (_visPollDebounce) clearTimeout(_visPollDebounce);
+            _visPollDebounce = setTimeout(() => {
+                pollSyncStatus();
+            }, 600);
         }
     });
 }

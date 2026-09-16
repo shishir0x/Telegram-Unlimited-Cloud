@@ -263,7 +263,7 @@ def ensure_drive_data(force_reload: bool = False):
             from database.connection import init_db
             init_db()
             DRIVE_DATA = load_drive_data_from_db()
-            if DRIVE_DATA is not None and (len(DRIVE_DATA.contents["/"].contents) > 0 or not drive_cache_path.exists()):
+            if DRIVE_DATA is not None:
                 loaded = True
                 try:
                     from database.repository import DatabaseRepository
@@ -273,12 +273,17 @@ def ensure_drive_data(force_reload: bool = False):
         except Exception as db_e:
             logger.warning(f"Database load note: {db_e}")
 
-        # 2. If DB has no content yet, auto-migrate from legacy local files
-        if not loaded and (drive_cache_path.exists() or drive_json_mirror_path.exists()):
+        # 2. If DB has no content yet, auto-migrate from legacy local files ONLY ONCE on clean setup
+        migration_marker = cache_dir / ".db_migrated"
+        if not loaded and not migration_marker.exists() and (drive_cache_path.exists() or drive_json_mirror_path.exists()):
             try:
                 from migrate_to_db import migrate_data
                 logger.info("Migrating existing local drive metadata to shared database...")
                 migrate_data(dry_run=False)
+                try:
+                    migration_marker.touch()
+                except Exception:
+                    pass
                 DRIVE_DATA = load_drive_data_from_db()
                 if DRIVE_DATA is not None:
                     loaded = True
@@ -2359,8 +2364,11 @@ async def auto_sync_database_loop():
 
 
 async def auto_sync_telegram_loop():
-    """Periodic background task that checks Telegram for remote metadata updates every 180 seconds (3 mins).
-    Safe interval to prevent Telegram channel API rate limiting."""
+    """Periodic background task that checks Telegram for remote metadata updates in legacy non-database setups.
+    When database is active, PostgreSQL sync engine handles cross-instance updates."""
+    if config.IS_REMOTE_DB or getattr(config, "SYNC_DATABASE_URL", None):
+        logger.debug("Database sync engine active; skipping Telegram auto-sync loop.")
+        return
     logger.info("Starting Telegram metadata auto-sync loop (180s interval).")
     while True:
         try:
@@ -2561,11 +2569,8 @@ async def init_drive_data():
 async def loadDriveData():
     global DRIVE_DATA, BOT_MODE
 
-    logger.info("Loading drive data from Telegram backup...")
-    success = await sync_drive_data_from_telegram(force=True)
-    if not success:
-        logger.info("Remote sync skipped or offline, falling back to local cached drive.data...")
-        DRIVE_DATA = ensure_drive_data()
+    logger.info("Loading drive data from authoritative database...")
+    DRIVE_DATA = ensure_drive_data()
 
     await init_drive_data()
 

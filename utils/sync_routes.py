@@ -39,7 +39,7 @@ async def sync_status(request: Request, _auth: Session = Depends(require_auth)):
     - last_change: most recent changelog entry for this user
     """
     # Single-admin system: always use "admin" as the user_id
-    status = SyncService.get_status(user_id="admin")
+    status = await asyncio.to_thread(SyncService.get_status, "admin")
     return JSONResponse({
         "status": "ok",
         **status,
@@ -74,7 +74,8 @@ async def sync_changes(
     }
     """
     # Single-admin system: always use "admin" as the user_id
-    result = SyncService.get_changes_since(
+    result = await asyncio.to_thread(
+        SyncService.get_changes_since,
         user_id="admin",
         since_version=since,
         limit=limit,

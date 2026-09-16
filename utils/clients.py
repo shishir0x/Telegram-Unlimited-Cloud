@@ -175,7 +175,8 @@ async def initialize_clients():
                     await loadDriveData()
                     config._drive_data_loaded = True
                     asyncio.create_task(backup_drive_data())
-                    asyncio.create_task(auto_sync_telegram_loop())
+                    if not config.IS_REMOTE_DB and not getattr(config, "SYNC_DATABASE_URL", None):
+                        asyncio.create_task(auto_sync_telegram_loop())
                     asyncio.create_task(auto_sync_database_loop())
                 except Exception:
                     pass
@@ -198,7 +199,8 @@ async def initialize_clients():
                 config._drive_data_loaded = True
                 # Start the backup drive data task and auto-sync loop
                 asyncio.create_task(backup_drive_data())
-                asyncio.create_task(auto_sync_telegram_loop())
+                if not config.IS_REMOTE_DB and not getattr(config, "SYNC_DATABASE_URL", None):
+                    asyncio.create_task(auto_sync_telegram_loop())
                 asyncio.create_task(auto_sync_database_loop())
             except Exception as e:
                 logger.warning(f"Initial drive data load deferred until bot connection: {e}")

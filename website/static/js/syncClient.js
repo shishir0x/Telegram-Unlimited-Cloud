@@ -72,6 +72,35 @@
         console.log('[SyncClient] Initialized (version:', _version, ')');
     }
 
+    let _pageVisibleDebounceTimer = null;
+
+    function _onPageVisible() {
+        if (_pageVisibleDebounceTimer) clearTimeout(_pageVisibleDebounceTimer);
+        _pageVisibleDebounceTimer = setTimeout(() => {
+            if (!_enabled) return;
+            // Catch up version on return to tab
+            _fetchVersion().then(serverVersion => {
+                if (serverVersion > _version) {
+                    console.log('[SyncClient] Catching up from', _version, 'to', serverVersion);
+                    _fetchChangesSince(_version);
+                }
+            }).catch(() => {});
+            // Ensure connection alive
+            if (!_ws || _ws.readyState !== WebSocket.OPEN) {
+                _connectWebSocket();
+            } else {
+                _sendPing();
+            }
+        }, 500);
+    }
+
+    function _onPageHidden() {
+        if (_pageVisibleDebounceTimer) {
+            clearTimeout(_pageVisibleDebounceTimer);
+            _pageVisibleDebounceTimer = null;
+        }
+    }
+
     function enable() {
         if (_enabled) return;
         _enabled = true;
