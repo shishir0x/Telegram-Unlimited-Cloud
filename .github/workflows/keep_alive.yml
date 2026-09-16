@@ -1,0 +1,30 @@
+name: Keep Supabase & Web Alive
+
+on:
+  schedule:
+    # Runs every 3 days at 06:00 UTC
+    - cron: '0 6 */3 * *'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Website Health and Readiness
+        if: env.WEBSITE_URL != ''
+        env:
+          WEBSITE_URL: ${{ secrets.WEBSITE_URL }}
+        run: |
+          echo "Pinging Website /health/ready endpoint..."
+          curl -f -s -m 30 "${WEBSITE_URL%/}/health/ready" || curl -f -s -m 30 "${WEBSITE_URL%/}/health" || echo "Website ping attempted"
+
+      - name: Direct Supabase Database Ping
+        if: env.SUPABASE_URL != '' && env.SUPABASE_ANON_KEY != ''
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          echo "Pinging Supabase REST API directly to keep database active..."
+          curl -f -s -m 30 "${SUPABASE_URL%/}/rest/v1/" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" || echo "Supabase ping completed"

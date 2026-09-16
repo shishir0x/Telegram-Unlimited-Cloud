@@ -246,7 +246,7 @@ async def readiness_check():
     from database.connection import test_database_connection
     drive = ensure_drive_data()
     is_tg_ready = is_telegram_ready()
-    is_db_ready = test_database_connection()
+    is_db_ready, db_msg = test_database_connection()
     is_ready = is_tg_ready and drive is not None and is_db_ready
     if is_ready:
         return JSONResponse(
@@ -263,6 +263,7 @@ async def readiness_check():
             "status": "initializing",
             "telegram_ready": is_tg_ready,
             "database_connected": is_db_ready,
+            "database_message": db_msg,
             "drive_loaded": drive is not None,
         },
         status_code=503,

@@ -172,9 +172,9 @@ async def auto_ping_website():
         if not url.startswith("http://") and not url.startswith("https://"):
             url = f"https://{url}"
         
-        # Ensure we ping the health endpoint
-        if not url.endswith("/health") and not url.endswith("/ping"):
-            target_url = f"{url.rstrip('/')}/health"
+        # Ensure we ping the health/ready endpoint to keep both web & Supabase DB awake
+        if not url.endswith("/health") and not url.endswith("/ping") and not url.endswith("/health/ready") and not url.endswith("/health/live"):
+            target_url = f"{url.rstrip('/')}/health/ready"
         else:
             target_url = url
 

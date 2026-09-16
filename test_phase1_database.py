@@ -50,7 +50,7 @@ class Phase1DatabaseTestSuite(unittest.TestCase):
 
     def test_02_database_connectivity(self):
         """Test B: Verifies database connection pool and responsiveness."""
-        connected = test_database_connection()
+        connected, _ = test_database_connection()
         self.assertTrue(connected, "Database connection test failed")
 
     def test_03_repository_crud_and_telegram_id_collection(self):
