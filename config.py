@@ -17,6 +17,13 @@ def normalize_database_urls(raw_url: str) -> tuple[str, str]:
         os.makedirs("./data", exist_ok=True)
         sync_url = "sqlite:///./data/cloud_drive.db"
         async_url = "sqlite+aiosqlite:///./data/cloud_drive.db"
+        if os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production":
+            import logging
+            logging.getLogger("config").warning(
+                "⚠️ DATABASE_URL is not set in Render/production environment! "
+                "The server will use local SQLite, which is ephemeral across deployments. "
+                "Set DATABASE_URL to your Supabase PostgreSQL pooler string for persistent shared storage."
+            )
         return sync_url, async_url
 
     clean = raw_url.strip()
@@ -199,6 +206,8 @@ def validate_config(raise_on_error: bool = False) -> tuple[bool, list[str]]:
         warnings.append("ADMIN_EMAIL is not set. OTP 2FA verification will not be available.")
     if "*" in CORS_ORIGINS:
         warnings.append("CORS_ORIGINS contains '*'. Cross-origin credentials are disabled for security. Specify explicit origins to allow credentials.")
+    if not IS_REMOTE_DB and os.getenv("RENDER"):
+        warnings.append("DATABASE_URL is not set on Render. The service is running on ephemeral SQLite instead of shared PostgreSQL.")
 
     is_valid = len(errors) == 0
 

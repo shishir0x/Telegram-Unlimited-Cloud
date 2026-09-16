@@ -55,13 +55,45 @@ except Exception as e:
     AsyncSessionLocal = None
 
 
+import time
+from sqlalchemy.exc import OperationalError, DBAPIError, DisconnectionError
+
+def execute_with_retry(func, max_retries: int = 3, base_delay: float = 0.2):
+    """
+    Executes a callable with automatic retries on transient database connectivity errors.
+    """
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return func()
+        except (OperationalError, DBAPIError, DisconnectionError) as e:
+            last_err = e
+            if attempt == max_retries:
+                logger.error(f"Database operation failed after {max_retries} attempts: {e}")
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning(f"Transient DB connection error (attempt {attempt}/{max_retries}): {e}. Retrying in {delay:.2f}s...")
+            time.sleep(delay)
+        except Exception:
+            raise
+    if last_err:
+        raise last_err
+
+
 @contextmanager
-def get_db_session() -> Generator[Session, None, None]:
-    """Context manager for scoped database sessions with automatic rollback on exception."""
+def get_db_session(max_retries: int = 3) -> Generator[Session, None, None]:
+    """Context manager for scoped database sessions with automatic rollback and reconnection support."""
     session: Session = SyncSessionLocal()
     try:
         yield session
         session.commit()
+    except (OperationalError, DBAPIError, DisconnectionError) as e:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        logger.warning(f"Database session encountered connection error: {e}")
+        raise
     except Exception:
         try:
             session.rollback()

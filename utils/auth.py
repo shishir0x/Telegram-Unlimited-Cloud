@@ -306,6 +306,15 @@ def rate_limit_strict(request: Request, category: str, limit: int, window_second
     _check_rate_limit(category, identity, limit, window_seconds)
 
 
+def rate_limit_destructive(request: Request, limit: int = 120, window_seconds: int = 60) -> None:
+    """
+    Rate limiter for destructive or bulk deletion/trash operations.
+    Protects against runaway scripts or accidental rapid mass-deletion loops.
+    """
+    ip = get_client_ip(request)
+    _check_rate_limit("destructive_op", ip, limit, window_seconds)
+
+
 # ---------------------------------------------------------------------------
 # OTP management
 # ---------------------------------------------------------------------------

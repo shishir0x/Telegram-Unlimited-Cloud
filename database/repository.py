@@ -11,7 +11,7 @@ from typing import List, Optional, Tuple, Dict, Any
 from sqlalchemy import or_, and_, func, select, text
 from sqlalchemy.orm import Session
 
-from database.connection import get_db_session
+from database.connection import get_db_session, execute_with_retry
 from database.models import FolderModel, FileModel, ChangeLogModel, SyncVersionModel, utc_now
 from utils.logger import Logger
 
@@ -22,17 +22,32 @@ class DatabaseRepository:
     """Repository handling all database operations for folders and files."""
 
     @staticmethod
+    def _run_with_retry(op):
+        """Helper to run a database operation within a scoped session and automatic retry."""
+        def _exec():
+            with get_db_session() as s:
+                res = op(s)
+                if isinstance(res, (FolderModel, FileModel)):
+                    s.expunge(res)
+                elif isinstance(res, (list, tuple)):
+                    for it in res:
+                        if isinstance(it, (FolderModel, FileModel)):
+                            s.expunge(it)
+                        elif isinstance(it, (list, tuple)):
+                            for sub in it:
+                                if isinstance(sub, (FolderModel, FileModel)):
+                                    s.expunge(sub)
+                return res
+        return execute_with_retry(_exec)
+
+    @staticmethod
     def get_folder(folder_id: str, session: Optional[Session] = None) -> Optional[FolderModel]:
         def _query(s: Session):
             return s.query(FolderModel).filter(FolderModel.id == folder_id).first()
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            f = _query(s)
-            if f:
-                s.expunge(f)
-            return f
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def get_file(file_id: str, session: Optional[Session] = None) -> Optional[FileModel]:
@@ -41,11 +56,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            f = _query(s)
-            if f:
-                s.expunge(f)
-            return f
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def get_folder_children(
@@ -65,11 +76,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            folders, files = _query(s)
-            for item in folders + files:
-                s.expunge(item)
-            return folders, files
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def create_folder(
@@ -109,10 +116,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            f = _op(s)
-            s.expunge(f)
-            return f
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def create_file(
@@ -169,10 +173,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            f = _op(s)
-            s.expunge(f)
-            return f
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def rename_item(item_id: str, new_name: str, session: Optional[Session] = None) -> bool:
@@ -196,8 +197,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            return _op(s)
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def move_item(item_id: str, dest_folder_id: str, session: Optional[Session] = None) -> bool:
@@ -224,8 +224,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            return _op(s)
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def trash_item(item_id: str, trash: bool, session: Optional[Session] = None) -> bool:
@@ -250,8 +249,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            return _op(s)
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def update_tags(item_id: str, tags: List[str], session: Optional[Session] = None) -> bool:
@@ -270,8 +268,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            return _op(s)
+        return DatabaseRepository._run_with_retry(_op)
 
     @classmethod
     def delete_item(cls, item_id: str, session: Optional[Session] = None) -> List[int]:
@@ -331,8 +328,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            return _op(s)
+        return DatabaseRepository._run_with_retry(_op)
 
     @classmethod
     def bulk_delete_items(cls, item_ids: List[str], session: Optional[Session] = None) -> List[int]:
@@ -347,8 +343,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            return _op(s)
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def get_all_trashed(session: Optional[Session] = None) -> Tuple[List[FolderModel], List[FileModel]]:
@@ -359,11 +354,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            folders, files = _query(s)
-            for item in folders + files:
-                s.expunge(item)
-            return folders, files
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def get_recent_files(limit: int = 50, session: Optional[Session] = None) -> List[FileModel]:
@@ -378,11 +369,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            files = _query(s)
-            for f in files:
-                s.expunge(f)
-            return files
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def search_items(query: str, session: Optional[Session] = None) -> Tuple[List[FolderModel], List[FileModel]]:
@@ -405,11 +392,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            folders, files = _query(s)
-            for item in folders + files:
-                s.expunge(item)
-            return folders, files
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def count_total_items(session: Optional[Session] = None) -> Tuple[int, int]:
@@ -420,8 +403,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            return _query(s)
+        return DatabaseRepository._run_with_retry(_query)
 
     # -----------------------------------------------------------------------
     # Phase 2 — Synchronization Repository Methods
@@ -441,8 +423,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            return _query(s)
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def increment_version(session: Optional[Session] = None) -> int:
@@ -464,9 +445,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            new_ver = _op(s)
-            return new_ver
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def record_change(
@@ -506,9 +485,7 @@ class DatabaseRepository:
 
         if session:
             return _op(session)
-        with get_db_session() as s:
-            entry = _op(s)
-            return entry
+        return DatabaseRepository._run_with_retry(_op)
 
     @staticmethod
     def get_changes_since(
@@ -535,8 +512,7 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            return _query(s)
+        return DatabaseRepository._run_with_retry(_query)
 
     @staticmethod
     def get_last_change(user_id: Optional[str] = None, session: Optional[Session] = None) -> Optional[Dict[str, Any]]:
@@ -550,5 +526,4 @@ class DatabaseRepository:
 
         if session:
             return _query(session)
-        with get_db_session() as s:
-            return _query(s)
+        return DatabaseRepository._run_with_retry(_query)

@@ -30,6 +30,7 @@ from utils.auth import (
     rate_limit_otp_verify,
     rate_limit_public_media,
     rate_limit_strict,
+    rate_limit_destructive,
     is_secure_cookie,
     start_cleanup_task,
     SESSION_COOKIE_NAME,
@@ -1896,6 +1897,7 @@ async def tag_file_folder(request: Request, _auth: Session = Depends(require_aut
 
 @app.post("/api/trashFileFolder")
 async def trash_file_folder(request: Request, _auth: Session = Depends(require_auth)):
+    rate_limit_destructive(request)
     from utils.directoryHandler import ensure_drive_data, backup_drive_data
     drive = ensure_drive_data()
 
@@ -1945,6 +1947,7 @@ async def api_sync_drive_data(request: Request, _auth: Session = Depends(require
 
 @app.post("/api/deleteFileFolder")
 async def delete_file_folder(request: Request, _auth: Session = Depends(require_auth)):
+    rate_limit_destructive(request)
     from utils.directoryHandler import ensure_drive_data, backup_drive_data
     from utils.clients import get_client
     drive = ensure_drive_data()
@@ -2077,6 +2080,7 @@ async def api_search_drive(request: Request, _auth: Session = Depends(require_au
 
 @app.post("/api/bulkDelete")
 async def bulk_delete_api(request: Request, _auth: Session = Depends(require_auth)):
+    rate_limit_destructive(request)
     from utils.directoryHandler import ensure_drive_data, backup_drive_data
     from utils.clients import get_client
     drive = ensure_drive_data()
@@ -2135,6 +2139,7 @@ async def bulk_delete_api(request: Request, _auth: Session = Depends(require_aut
 
 @app.post("/api/bulkTrash")
 async def bulk_trash_api(request: Request, _auth: Session = Depends(require_auth)):
+    rate_limit_destructive(request)
     from utils.directoryHandler import ensure_drive_data, backup_drive_data
     drive = ensure_drive_data()
 
