@@ -2472,8 +2472,9 @@ async def api_get_file_properties(request: Request, file_id: Optional[str] = Non
 @app.get("/api/folders/{folder_id}/properties")
 @app.post("/api/getFolderProperties")
 async def api_get_folder_properties(request: Request, folder_id: Optional[str] = None):
-    from utils.directoryHandler import ensure_drive_data
+    from utils.directoryHandler import ensure_drive_data, check_and_sync_db_if_stale
     from utils.properties import PropertiesFormatter
+    check_and_sync_db_if_stale()
     drive = ensure_drive_data()
     is_admin = is_admin_authenticated(request)
 
@@ -2499,6 +2500,29 @@ async def api_get_folder_properties(request: Request, folder_id: Optional[str] =
             pass
 
     folder_obj = drive.find_item_by_id(target_id)
+    if not folder_obj:
+        if target_id in ("root", "/"):
+            folder_obj = drive.get_directory("/")
+        elif target_id.startswith("/"):
+            folder_obj = drive.get_directory(target_id)
+        else:
+            folder_obj = drive.get_directory("/" + target_id)
+        if folder_obj and getattr(folder_obj, "id", "") == "root" and target_id not in ("root", "/"):
+            folder_obj = None
+
+    if not folder_obj or getattr(folder_obj, "type", "") != "folder":
+        def find_folder_fallback(folder):
+            if hasattr(folder, "contents"):
+                for child in folder.contents.values():
+                    if getattr(child, "type", "") == "folder":
+                        if child.id == target_id or getattr(child, "name", "") == target_id:
+                            return child
+                        res = find_folder_fallback(child)
+                        if res:
+                            return res
+            return None
+        folder_obj = find_folder_fallback(drive.contents.get("/"))
+
     if not folder_obj or getattr(folder_obj, "type", "") != "folder":
         raise HTTPException(status_code=404, detail="Folder not found")
 
@@ -2521,8 +2545,9 @@ async def api_get_folder_properties(request: Request, folder_id: Optional[str] =
 @app.get("/api/files/{file_id}/activity")
 @app.post("/api/getFileActivity")
 async def api_get_file_activity(request: Request, file_id: Optional[str] = None):
-    from utils.directoryHandler import ensure_drive_data
+    from utils.directoryHandler import ensure_drive_data, check_and_sync_db_if_stale
     from utils.properties import ActivityTracker
+    check_and_sync_db_if_stale()
     drive = ensure_drive_data()
     is_admin = is_admin_authenticated(request)
 
@@ -2553,8 +2578,9 @@ async def api_get_file_activity(request: Request, file_id: Optional[str] = None)
 @app.get("/api/folders/{folder_id}/activity")
 @app.post("/api/getFolderActivity")
 async def api_get_folder_activity(request: Request, folder_id: Optional[str] = None):
-    from utils.directoryHandler import ensure_drive_data
+    from utils.directoryHandler import ensure_drive_data, check_and_sync_db_if_stale
     from utils.properties import ActivityTracker
+    check_and_sync_db_if_stale()
     drive = ensure_drive_data()
     is_admin = is_admin_authenticated(request)
 
@@ -2575,6 +2601,29 @@ async def api_get_folder_activity(request: Request, folder_id: Optional[str] = N
         raise HTTPException(status_code=401, detail="Authentication required")
 
     folder_obj = drive.find_item_by_id(target_id)
+    if not folder_obj:
+        if target_id in ("root", "/"):
+            folder_obj = drive.get_directory("/")
+        elif target_id.startswith("/"):
+            folder_obj = drive.get_directory(target_id)
+        else:
+            folder_obj = drive.get_directory("/" + target_id)
+        if folder_obj and getattr(folder_obj, "id", "") == "root" and target_id not in ("root", "/"):
+            folder_obj = None
+
+    if not folder_obj or getattr(folder_obj, "type", "") != "folder":
+        def find_folder_fallback(folder):
+            if hasattr(folder, "contents"):
+                for child in folder.contents.values():
+                    if getattr(child, "type", "") == "folder":
+                        if child.id == target_id or getattr(child, "name", "") == target_id:
+                            return child
+                        res = find_folder_fallback(child)
+                        if res:
+                            return res
+            return None
+        folder_obj = find_folder_fallback(drive.contents.get("/"))
+
     if not folder_obj or getattr(folder_obj, "type", "") != "folder":
         raise HTTPException(status_code=404, detail="Folder not found")
 
