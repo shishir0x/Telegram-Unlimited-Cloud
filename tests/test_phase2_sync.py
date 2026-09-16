@@ -8,7 +8,12 @@ Does NOT require Telegram connectivity (tests database-level operations only).
 Does NOT test FastAPI endpoints (those require session auth and Telegram clients).
 """
 
+import sys
+import os
 import unittest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from database.connection import init_db, get_db_session
 from database.models import FileModel, FolderModel, utc_now
 from database.repository import DatabaseRepository

@@ -2,8 +2,12 @@
 Unit tests for Security, Metadata Integrity, Conflict Handling, and Path Traversal Protections.
 """
 import os
+import sys
 import shutil
 import tempfile
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from utils.auth import hash_password, verify_password, sanitize_path
 from utils.directoryHandler import calculate_file_sha256, verify_file_checksum, NewDriveData
 

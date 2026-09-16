@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 # Ensure project root is in path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from utils.directoryHandler import (
     NewDriveData,

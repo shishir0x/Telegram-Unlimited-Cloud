@@ -6,6 +6,10 @@ Tests:
 3. /api/share/regenerate creates a new token and revokes the old one.
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 os.environ.setdefault("TESTING", "1")
 
 from fastapi.testclient import TestClient

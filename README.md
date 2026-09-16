@@ -346,17 +346,14 @@ TG Drive includes comprehensive automated test suites covering concurrency, data
 # Verify Python syntax and AST compilation across entire repository
 python -c "import ast, os; [ast.parse(open(os.path.join(r, f), encoding='utf-8').read()) for r, _, fs in os.walk('.') if not any(x in r for x in ['.git', '__pycache__', 'venv']) for f in fs if f.endswith('.py')]; print('AST syntax check passed.')"
 
-# Run Transfer Manager test suite (state machine, retry backoff, concurrency semaphore)
-python -m unittest test_transfer_manager.py
+# Discover and run all automated test suites
+python -m unittest discover tests
 
-# Run Google Drive-Style Properties & Details test suite
-python test_properties_system.py
-
-# Run Database Schema & CRUD tests
-python -m unittest test_phase1_database.py
-
-# Run Synchronization Engine test suite
-python -m unittest test_phase2_sync.py
+# Or run individual test suites from the tests/ folder:
+python -m unittest tests/test_transfer_manager.py
+python -m unittest tests/test_properties_system.py
+python -m unittest tests/test_phase1_database.py
+python -m unittest tests/test_phase2_sync.py
 ```
 
 ---

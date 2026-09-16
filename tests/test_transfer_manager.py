@@ -1,9 +1,12 @@
 import asyncio
 import os
+import sys
 import shutil
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from utils.transfer_manager import (
     TransferItem,
