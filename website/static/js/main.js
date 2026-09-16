@@ -331,7 +331,8 @@ window.copyCurrentFolderPath = function() {
 
 // Drag & Drop Helpers for Items (Supports cross-window / browser-to-browser drag & drop)
 function handleItemDragStart(e) {
-    if (getCurrentPath().startsWith('/trash')) {
+    const cur = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+    if (cur.startsWith('/trash') || cur.startsWith('/recent')) {
         e.preventDefault();
         return;
     }
@@ -371,7 +372,8 @@ function handleItemDragEnd(e) {
 }
 
 function handleFolderDragOver(e) {
-    if (getCurrentPath().startsWith('/trash')) {
+    const cur = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+    if (cur.startsWith('/trash') || cur.startsWith('/recent')) {
         e.preventDefault();
         return;
     }
@@ -386,7 +388,8 @@ function handleFolderDragLeave(e) {
 }
 
 function handleFolderDrop(e) {
-    if (getCurrentPath().startsWith('/trash')) {
+    const cur = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+    if (cur.startsWith('/trash') || cur.startsWith('/recent')) {
         e.preventDefault();
         return;
     }
@@ -676,14 +679,36 @@ function showDirectory(data, breadcrumbs) {
     // Handle Enhanced Empty State
     if (folders.length === 0 && files.length === 0) {
         const isFiltered = window.CURRENT_FILTER && window.CURRENT_FILTER !== 'all';
+        const cur = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+        const isRecent = cur.startsWith('/recent');
+        const isTrash = cur.startsWith('/trash');
+
+        let emptyTitle = 'This folder is empty';
+        let emptyDesc = 'Use "+ New" button or drag & drop files here to upload instantly.';
+        let emptyIcon = '📂';
+
+        if (isFiltered) {
+            emptyIcon = '🔍';
+            emptyTitle = 'No matching items found';
+            emptyDesc = 'Try selecting a different filter above to find what you are looking for.';
+        } else if (isRecent) {
+            emptyIcon = '🕒';
+            emptyTitle = 'No recent files';
+            emptyDesc = 'Files you recently uploaded or opened will appear here.';
+        } else if (isTrash) {
+            emptyIcon = '🗑️';
+            emptyTitle = 'Trash is empty';
+            emptyDesc = 'Items in trash will be shown here.';
+        }
+
         const emptyHtml = `
             <tr>
                 <td colspan="7" style="text-align: center; padding: 48px 20px;">
                     <div class="gd-empty-card">
-                        <div class="gd-empty-icon-wrap">${isFiltered ? '🔍' : '📂'}</div>
-                        <div class="gd-empty-title">${isFiltered ? 'No matching items found' : 'This folder is empty'}</div>
-                        <div class="gd-empty-desc">${isFiltered ? 'Try selecting a different filter above to find what you are looking for.' : 'Use "+ New" button or drag & drop files here to upload instantly.'}</div>
-                        ${!isFiltered ? `
+                        <div class="gd-empty-icon-wrap">${emptyIcon}</div>
+                        <div class="gd-empty-title">${emptyTitle}</div>
+                        <div class="gd-empty-desc">${emptyDesc}</div>
+                        ${(!isFiltered && !isRecent && !isTrash) ? `
                         <div class="gd-empty-actions">
                             <button class="gd-retry-btn" onclick="const fi = document.getElementById('fileInput'); if (fi) fi.click();">
                                 <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor;"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
@@ -698,9 +723,9 @@ function showDirectory(data, breadcrumbs) {
         gridFolders.innerHTML = `
             <div style="grid-column: 1/-1;">
                 <div class="gd-empty-card">
-                    <div class="gd-empty-icon-wrap">${isFiltered ? '🔍' : '📂'}</div>
-                    <div class="gd-empty-title">${isFiltered ? 'No matching items found' : 'This folder is empty'}</div>
-                    <div class="gd-empty-desc">${isFiltered ? 'Try selecting a different filter above.' : 'Drag & drop files or click "+ New" to upload.'}</div>
+                    <div class="gd-empty-icon-wrap">${emptyIcon}</div>
+                    <div class="gd-empty-title">${emptyTitle}</div>
+                    <div class="gd-empty-desc">${emptyDesc}</div>
                 </div>
             </div>
         `;
@@ -1980,6 +2005,10 @@ function setupDragAndDrop() {
     let dragCounter = 0;
 
     window.addEventListener('dragenter', (e) => {
+        const cur = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+        if (cur.startsWith('/trash') || cur.startsWith('/recent')) {
+            return;
+        }
         e.preventDefault();
         dragCounter++;
         // Show drop overlay when dragging external files or cross-window items
@@ -1989,6 +2018,15 @@ function setupDragAndDrop() {
     });
 
     window.addEventListener('dragover', (e) => {
+        const cur = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+        if (cur.startsWith('/trash') || cur.startsWith('/recent')) {
+            e.preventDefault();
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'none';
+            }
+            if (dropOverlay) dropOverlay.classList.remove('active');
+            return;
+        }
         e.preventDefault();
         if (dropOverlay) {
             dropOverlay.classList.add('active');
@@ -2007,7 +2045,8 @@ function setupDragAndDrop() {
         dragCounter = 0;
         if (dropOverlay) dropOverlay.classList.remove('active');
 
-        if (getCurrentPath().startsWith('/trash')) {
+        const cur = typeof getCurrentPath === 'function' ? getCurrentPath() : '';
+        if (cur.startsWith('/trash') || cur.startsWith('/recent')) {
             e.preventDefault();
             return;
         }
